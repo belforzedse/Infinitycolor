@@ -1,3 +1,13 @@
+const mockTriggerFrontendRevalidation = jest.fn();
+
+jest.mock("../../../utils/revalidate", () => ({
+  triggerFrontendRevalidation: (...args: unknown[]) => mockTriggerFrontendRevalidation(...args),
+}));
+
+jest.mock("../../../utils/migration-context", () => ({
+  isTrustedWordPressMigrationRequest: () => false,
+}));
+
 import lifecycles from "../content-types/product-category/lifecycles";
 
 describe("product-category main category lifecycle rules", () => {
@@ -5,6 +15,20 @@ describe("product-category main category lifecycle rules", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTriggerFrontendRevalidation.mockResolvedValue({
+      attempted: 1,
+      successful: 1,
+      failed: 0,
+    });
+  });
+
+  it("revalidates the storefront category cache after a write", async () => {
+    await lifecycles.afterUpdate();
+
+    expect(mockTriggerFrontendRevalidation).toHaveBeenCalledWith(
+      { tag: "product-categories" },
+      "Product Category Lifecycle",
+    );
   });
 
   it("forces isMainCategory=false for child categories during create", async () => {

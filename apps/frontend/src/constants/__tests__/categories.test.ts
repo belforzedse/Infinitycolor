@@ -19,7 +19,7 @@ describe("STOREFRONT_MAIN_CATEGORY_OPTIONS", () => {
   it("matches the homepage featured main-category rail", () => {
     expect(STOREFRONT_MAIN_CATEGORY_OPTIONS).toEqual({
       mainOnly: true,
-      sort: "Title:asc",
+      sort: ["homepageOrder:asc", "Title:asc"],
       featuredOnly: true,
       allowedNameSubstrings: ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS,
     });

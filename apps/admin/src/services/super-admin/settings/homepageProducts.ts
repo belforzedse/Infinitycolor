@@ -8,16 +8,24 @@ export async function getHomepageProductSettings(): Promise<SuperAdminSettings> 
   return normalizeSettingsApiResponse(response) ?? defaultSettings();
 }
 
+/**
+ * Partial on purpose: the backend writes only the fields the payload actually carries
+ * (see `updateHomepageProducts`' `hasOwnProperty` loop in the settings controller), so
+ * a caller that owns one product — ProductHomepageSectionsCard — can send just the
+ * sections it changed instead of rewriting all seven from a stale snapshot.
+ */
 export async function updateHomepageProductSettings(
-  settings: Pick<
-    SuperAdminSettings,
-    | "homeNewestProductIds"
-    | "homeFavoriteProductIds"
-    | "homeDiscountedProductIds"
-    | "homeWeeklyPicksEnabled"
-    | "homeWeeklyPicksProductIds"
-    | "homeEveryoneFollowsEnabled"
-    | "homeEveryoneFollowsProductIds"
+  settings: Partial<
+    Pick<
+      SuperAdminSettings,
+      | "homeNewestProductIds"
+      | "homeFavoriteProductIds"
+      | "homeDiscountedProductIds"
+      | "homeWeeklyPicksEnabled"
+      | "homeWeeklyPicksProductIds"
+      | "homeEveryoneFollowsEnabled"
+      | "homeEveryoneFollowsProductIds"
+    >
   >,
 ): Promise<SuperAdminSettings> {
   const response = await apiClient.put("/settings/homepage-products", { data: settings });

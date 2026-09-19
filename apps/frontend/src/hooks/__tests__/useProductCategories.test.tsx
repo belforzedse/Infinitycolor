@@ -12,19 +12,20 @@
  */
 import { renderHook, waitFor } from "@testing-library/react";
 import {
-  getCachedNavbarProductCategories,
+  getCachedNavigationProductCategories,
   getProductCategories,
 } from "@/services/product/categories";
 import { useProductCategories } from "../useProductCategories";
 
 jest.mock("@/services/product/categories", () => ({
-  getCachedNavbarProductCategories: jest.fn(),
+  getCachedNavigationProductCategories: jest.fn(),
   getProductCategories: jest.fn(),
   getNavbarProductCategories: jest.fn(),
 }));
 
 const mockedGetProductCategories = getProductCategories as jest.Mock;
-const mockedGetCachedNavbarProductCategories = getCachedNavbarProductCategories as jest.Mock;
+const mockedGetCachedNavigationProductCategories =
+  getCachedNavigationProductCategories as jest.Mock;
 
 const category = (id: number, slug: string) => ({
   id,
@@ -132,17 +133,18 @@ describe("useProductCategories", () => {
     expect(mockedGetProductCategories).not.toHaveBeenCalled();
   });
 
-  it("routes navbar reads through the shared storefront cache", async () => {
-    mockedGetCachedNavbarProductCategories.mockResolvedValue([category(12, "navbar")]);
+  it("routes navigation reads through the shared storefront cache", async () => {
+    mockedGetCachedNavigationProductCategories.mockResolvedValue([category(12, "navbar")]);
 
     const { result } = renderHook(() =>
-      useProductCategories({ navbarAssignedOnly: true, includeChildren: true }),
+      useProductCategories({ navigationSource: "catalog", includeChildren: true }),
     );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.categories.map((item) => item.slug)).toEqual(["navbar"]);
-    expect(mockedGetCachedNavbarProductCategories).toHaveBeenCalledWith({
+    expect(mockedGetCachedNavigationProductCategories).toHaveBeenCalledWith({
       includeChildren: true,
+      source: "catalog",
     });
     expect(mockedGetProductCategories).not.toHaveBeenCalled();
   });

@@ -290,6 +290,7 @@ textarea:focus-visible {
     :where(
       .storefront-mega-backdrop,
       .storefront-mega-panel,
+      .storefront-mega-flyout,
       .storefront-mobile-menu-backdrop,
       .storefront-mobile-menu-panel,
       .storefront-account-menu,
@@ -724,6 +725,28 @@ textarea:focus-visible {
   }
 }
 
+@keyframes storefront-mega-flyout-in {
+  from {
+    opacity: 0;
+    transform: translate3d(10px, 0, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes storefront-mega-flyout-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(8px, 0, 0) scale(0.99);
+  }
+}
+
 @keyframes storefront-mobile-backdrop-in {
   from {
     opacity: 0;
@@ -842,6 +865,19 @@ textarea:focus-visible {
     animation: storefront-mega-panel-out 170ms var(--ease-crystal) both;
   }
 
+  .storefront-mega-flyout {
+    transform-origin: right center;
+  }
+
+  .storefront-mega-flyout[data-state="open"] {
+    animation: storefront-mega-flyout-in 180ms var(--ease-butter) both;
+  }
+
+  .storefront-mega-flyout[data-state="closed"] {
+    animation: storefront-mega-flyout-out 150ms var(--ease-crystal) both;
+    pointer-events: none;
+  }
+
   .storefront-mobile-menu-backdrop[data-state="open"] {
     animation: storefront-mobile-backdrop-in 180ms var(--ease-butter) both;
   }
@@ -924,6 +960,7 @@ textarea:focus-visible {
   @media (prefers-reduced-motion: reduce) {
     .storefront-mega-backdrop,
     .storefront-mega-panel,
+    .storefront-mega-flyout,
     .storefront-mobile-menu-backdrop,
     .storefront-mobile-menu-panel,
     .storefront-account-menu,

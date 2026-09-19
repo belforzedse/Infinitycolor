@@ -13,97 +13,148 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent, KeyboardEvent } from "react";
 import type { ProductCategorySummary } from "@/services/product/categories";
 import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
+import {
+  buildStorefrontMenuTaxonomy,
+  type StorefrontMenuTaxonomyItem,
+} from "@/utils/storefrontMenuTaxonomy";
 
-interface NavItem {
-  key: string;
-  label: string;
-  href: string;
-  category?: ProductCategorySummary;
-  icon?: "sale";
+type MenuItem = StorefrontMenuTaxonomyItem<ProductCategorySummary>;
+
+type NavItem =
+  | {
+      kind: "link";
+      key: string;
+      label: string;
+      href: string;
+      icon?: "sale";
+    }
+  | {
+      kind: "taxonomy";
+      key: string;
+      label: string;
+      href?: string;
+      item: MenuItem;
+      hasChildren: boolean;
+    };
+
+function getMenuItemLabel(item: MenuItem): string {
+  return item.type === "group" ? item.label : item.category.name;
+}
+
+function menuItemHasChildren(item: MenuItem): boolean {
+  return item.type === "group"
+    ? item.categories.length > 0
+    : Boolean(item.category.children?.length);
+}
+
+function categoryTreeIsActive(
+  category: ProductCategorySummary,
+  pathname: string,
+  searchParams: URLSearchParams,
+): boolean {
+  if (isActiveNavHref(getCategoryPlpHref(category.slug), pathname, searchParams)) return true;
+  return (category.children ?? []).some((child) =>
+    categoryTreeIsActive(child, pathname, searchParams),
+  );
+}
+
+function menuItemIsActive(
+  item: MenuItem,
+  pathname: string,
+  searchParams: URLSearchParams,
+): boolean {
+  return item.type === "group"
+    ? item.categories.some((category) => categoryTreeIsActive(category, pathname, searchParams))
+    : categoryTreeIsActive(item.category, pathname, searchParams);
 }
 
 export default function PLPHeaderDesktopNav() {
-  const { categories: navbarCategories, isLoading: loading } = useProductCategories({
-    navbarAssignedOnly: true,
+  const { categories: catalogCategories, isLoading: loading } = useProductCategories({
+    navigationSource: "catalog",
     includeChildren: true,
   });
   const categories = useMemo(
-    () => withHeaderExtraCategories(navbarCategories),
-    [navbarCategories],
+    () => withHeaderExtraCategories(catalogCategories),
+    [catalogCategories],
   );
+  const taxonomyItems = useMemo(() => buildStorefrontMenuTaxonomy(categories), [categories]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
-  const [renderedCategory, setRenderedCategory] = useState<ProductCategorySummary | null>(null);
+  const suppressNextFocusOpenRef = useRef(false);
+  const [activeMenuKey, setActiveMenuKey] = useState<string | null>(null);
+  const [renderedMenuItem, setRenderedMenuItem] = useState<MenuItem | null>(null);
 
   const navItems: NavItem[] = useMemo(
     () => [
-      { key: "home", label: "خانه", href: "/" },
-      ...categories.map((item) => ({
-        key: `category-${item.id}`,
-        label: item.name,
-        href: getCategoryPlpHref(item.slug),
-        category: item,
+      { kind: "link", key: "home", label: "خانه", href: "/" },
+      { kind: "link", key: "shop", label: "فروشگاه", href: "/plp" },
+      ...taxonomyItems.map((item) => ({
+        kind: "taxonomy" as const,
+        key: `taxonomy-${item.key}`,
+        label: getMenuItemLabel(item),
+        href: item.type === "category" ? getCategoryPlpHref(item.category.slug) : undefined,
+        item,
+        hasChildren: menuItemHasChildren(item),
       })),
       {
+        kind: "link",
         key: OPPSI_HEADER_ITEM.key,
         label: OPPSI_HEADER_ITEM.label,
         href: OPPSI_HEADER_ITEM.href,
       },
       {
+        kind: "link",
         key: "discounts",
         label: "تخفیف‌ها",
         href: "/plp?hasDiscount=true",
-        icon: "sale",
+        icon: "sale" as const,
       },
-      { key: "blog", label: "مقالات", href: "/blog" },
+      { kind: "link", key: "blog", label: "مقالات", href: "/blog" },
     ],
-    [categories],
+    [taxonomyItems],
   );
 
-  const activeCategory = categories.find((category) => category.id === activeCategoryId) ?? null;
-  const megaMenuCategory = activeCategory ?? renderedCategory;
+  const activeMenuItem = taxonomyItems.find((item) => item.key === activeMenuKey) ?? null;
+  const megaMenuItem = activeMenuItem ?? renderedMenuItem;
 
-  const closeMegaMenu = () => setActiveCategoryId(null);
+  const closeMegaMenu = () => setActiveMenuKey(null);
 
-  useEffect(() => {
-    if (!activeCategoryId) return;
-    if (!categories.some((category) => category.id === activeCategoryId)) {
-      closeMegaMenu();
+  const openMegaMenu = (item: MenuItem) => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
     }
-  }, [activeCategoryId, categories]);
+    setRenderedMenuItem(item);
+    setActiveMenuKey(item.key);
+  };
 
-  useEffect(() => {
-    if (activeCategory) {
-      if (closeTimeoutRef.current) {
-        clearTimeout(closeTimeoutRef.current);
-        closeTimeoutRef.current = null;
-      }
-      setRenderedCategory(activeCategory);
+  const openMenuFromFocus = (item: MenuItem) => {
+    if (suppressNextFocusOpenRef.current) {
+      suppressNextFocusOpenRef.current = false;
+      return;
     }
-  }, [activeCategory]);
+    openMegaMenu(item);
+  };
 
   useEffect(() => {
-    if (activeCategoryId !== null || !renderedCategory) return;
+    if (activeMenuKey !== null || !renderedMenuItem) return;
 
     const timeout = setTimeout(() => {
-      setRenderedCategory(null);
+      setRenderedMenuItem(null);
       closeTimeoutRef.current = null;
     }, 220);
     closeTimeoutRef.current = timeout;
 
     return () => {
       clearTimeout(timeout);
-      if (closeTimeoutRef.current === timeout) {
-        closeTimeoutRef.current = null;
-      }
+      if (closeTimeoutRef.current === timeout) closeTimeoutRef.current = null;
     };
-  }, [activeCategoryId, renderedCategory]);
+  }, [activeMenuKey, renderedMenuItem]);
 
   useEffect(() => {
-    if (!activeCategoryId) return;
+    if (!activeMenuKey) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
@@ -113,7 +164,7 @@ export default function PLPHeaderDesktopNav() {
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [activeCategoryId]);
+  }, [activeMenuKey]);
 
   const handleRootBlur = (event: FocusEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
@@ -122,9 +173,17 @@ export default function PLPHeaderDesktopNav() {
   };
 
   const handleRootKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      closeMegaMenu();
-    }
+    if (event.key !== "Escape" || activeMenuKey === null) return;
+    const triggerKey = activeMenuKey;
+    event.preventDefault();
+    closeMegaMenu();
+    window.requestAnimationFrame(() => {
+      const trigger = document.getElementById(`desktop-nav-menu-${triggerKey}`);
+      if (trigger && document.activeElement !== trigger) {
+        suppressNextFocusOpenRef.current = true;
+        trigger.focus();
+      }
+    });
   };
 
   const isActiveHref = (href: string) => isActiveNavHref(href, pathname, searchParams);
@@ -133,9 +192,9 @@ export default function PLPHeaderDesktopNav() {
     return (
       <nav className="bg-stone-50/80 py-3">
         <StorefrontContainer className="flex items-center justify-center gap-4">
-          <div className="skeleton-shimmer-light h-5 w-24 rounded"></div>
-          <div className="skeleton-shimmer-light h-5 w-24 rounded"></div>
-          <div className="skeleton-shimmer-light h-5 w-24 rounded"></div>
+          <div className="skeleton-shimmer-light h-5 w-24 rounded" />
+          <div className="skeleton-shimmer-light h-5 w-24 rounded" />
+          <div className="skeleton-shimmer-light h-5 w-24 rounded" />
         </StorefrontContainer>
       </nav>
     );
@@ -149,80 +208,111 @@ export default function PLPHeaderDesktopNav() {
       onBlur={handleRootBlur}
       onKeyDown={handleRootKeyDown}
       onPointerLeave={closeMegaMenu}
-      onPointerEnter={() => {
-        if (activeCategory) setActiveCategoryId(activeCategory.id);
-      }}
     >
       <nav className="relative z-[120] bg-stone-50/80 py-3" aria-label="منوی اصلی فروشگاه">
-        <StorefrontContainer className="flex items-center justify-center gap-4">
+        <StorefrontContainer className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 xl:gap-x-4">
           {navItems.map((item) => {
-            const isActive = isActiveHref(item.href);
-            const isCategoryActive =
-              Boolean(item.category) && item.category?.id === activeCategoryId;
+            if (item.kind === "link") {
+              const isActive = isActiveHref(item.href);
+              return (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  prefetch={item.href === "/plp" ? undefined : false}
+                  aria-current={isActive ? "page" : undefined}
+                  onFocus={closeMegaMenu}
+                  onPointerEnter={closeMegaMenu}
+                  onClick={closeMegaMenu}
+                  className={[
+                    "pressable flex items-center gap-1 rounded-full text-sm underline-offset-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white",
+                    isActive
+                      ? "bg-infinity-primary-lighter/20 px-3 py-1 text-infinity-primary"
+                      : "text-neutral-800 transition-colors hover:text-infinity-primary",
+                  ].join(" ")}
+                >
+                  {item.label}
+                  {item.icon === "sale" && <SaleBadgeIcon className="h-5 w-5 shrink-0" />}
+                </Link>
+              );
+            }
+
+            const isExpanded = item.item.key === activeMenuKey;
+            const isTreeActive = menuItemIsActive(item.item, pathname, searchParams);
+            const className = [
+              "pressable flex items-center gap-1 rounded-full text-sm underline-offset-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white",
+              isTreeActive
+                ? "bg-infinity-primary-lighter/20 px-3 py-1 text-infinity-primary"
+                : "text-neutral-800 transition-colors hover:text-infinity-primary",
+              isExpanded && !isTreeActive ? "text-infinity-primary" : "",
+            ].join(" ");
+
+            if (!item.hasChildren && item.href) {
+              return (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  prefetch={false}
+                  aria-current={isActiveHref(item.href) ? "page" : undefined}
+                  data-testid="desktop-nav-category"
+                  onFocus={closeMegaMenu}
+                  onPointerEnter={closeMegaMenu}
+                  onClick={closeMegaMenu}
+                  className={className}
+                >
+                  {item.label}
+                </Link>
+              );
+            }
+
             return (
-              <Link
+              <button
                 key={item.key}
-                href={item.href}
-                prefetch={false}
-                aria-current={isActive ? "page" : undefined}
-                aria-haspopup={item.category ? "menu" : undefined}
-                aria-expanded={item.category ? isCategoryActive : undefined}
-                data-testid={item.category ? "desktop-nav-category" : undefined}
-                onFocus={() => {
-                  if (item.category) {
-                    setActiveCategoryId(item.category.id);
-                  } else {
-                    closeMegaMenu();
-                  }
-                }}
-                onPointerEnter={() => {
-                  if (item.category) {
-                    setActiveCategoryId(item.category.id);
-                  } else {
-                    closeMegaMenu();
-                  }
-                }}
-                onClick={closeMegaMenu}
-                className={[
-                  "pressable flex items-center gap-1 rounded-full text-sm underline-offset-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white",
-                  isActive
-                    ? "bg-infinity-primary-lighter/20 px-3 py-1 text-infinity-primary"
-                    : "text-neutral-800 transition-colors hover:text-infinity-primary",
-                  isCategoryActive && !isActive ? "text-infinity-primary" : "",
-                ].join(" ")}
+                id={`desktop-nav-menu-${item.item.key}`}
+                type="button"
+                aria-haspopup="true"
+                aria-expanded={isExpanded}
+                data-testid="desktop-nav-category"
+                onFocus={() => openMenuFromFocus(item.item)}
+                onPointerEnter={() => openMegaMenu(item.item)}
+                onClick={() => (isExpanded ? closeMegaMenu() : openMegaMenu(item.item))}
+                className={className}
               >
                 {item.label}
-                {item.icon === "sale" && <SaleBadgeIcon className="h-5 w-5 shrink-0" />}
-                {item.category && <ChevronDownIcon />}
-              </Link>
+                <ChevronDownIcon />
+              </button>
             );
           })}
         </StorefrontContainer>
       </nav>
 
-      {megaMenuCategory && (
+      {megaMenuItem && (
         <>
           <div
             className="storefront-mega-backdrop pointer-events-none fixed inset-x-0 bottom-0 z-[100] bg-black/35 backdrop-blur-[3px]"
             style={{ top: "var(--header-offset, 82px)" }}
-            data-state={activeCategory ? "open" : "closed"}
+            data-state={activeMenuItem ? "open" : "closed"}
             data-testid="desktop-mega-menu-backdrop"
             aria-hidden
           />
           <div
             className="storefront-mega-panel absolute left-0 right-0 top-full z-[110] overflow-hidden"
-            data-state={activeCategory ? "open" : "closed"}
+            data-state={activeMenuItem ? "open" : "closed"}
             onAnimationEnd={() => {
-              if (!activeCategory) {
+              if (!activeMenuItem) {
                 if (closeTimeoutRef.current) {
                   clearTimeout(closeTimeoutRef.current);
                   closeTimeoutRef.current = null;
                 }
-                setRenderedCategory(null);
+                setRenderedMenuItem(null);
+                setActiveMenuKey(null);
               }
             }}
           >
-            <DesktopMegaMenu category={megaMenuCategory} onLinkClick={closeMegaMenu} />
+            <DesktopMegaMenu
+              key={megaMenuItem.key}
+              item={megaMenuItem}
+              onLinkClick={closeMegaMenu}
+            />
           </div>
         </>
       )}

@@ -1,7 +1,4 @@
-import {
-  OPERATIONAL_CATEGORY_FIELDS,
-  remapLegacyCategoryParentField,
-} from "../lib/write-payload";
+import { OPERATIONAL_CATEGORY_FIELDS, remapLegacyCategoryParentField } from "../lib/write-payload";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 
 const strapi = {} as never;
@@ -15,6 +12,20 @@ function context(role: string, data: Record<string, unknown>) {
 }
 
 describe("product-category legacy Parent remap", () => {
+  it("allows the persisted homepage order field", async () => {
+    const data: Record<string, unknown> = {
+      Title: "شومیز",
+      Slug: "women-blouse",
+      homepageOrder: 1,
+    };
+
+    const ctx = context("Founder", data);
+    await expect(
+      enforceOperationalDataFields(ctx, strapi, OPERATIONAL_CATEGORY_FIELDS),
+    ).resolves.toBe(true);
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+  });
+
   it("copies Parent onto parent so Founder can write the relation", async () => {
     const data: Record<string, unknown> = {
       Title: "کیف",

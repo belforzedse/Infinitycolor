@@ -22,7 +22,7 @@ export const ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS: readonly string[] = [
  */
 export const STOREFRONT_MAIN_CATEGORY_OPTIONS = {
   mainOnly: true,
-  sort: "Title:asc",
+  sort: ["homepageOrder:asc", "Title:asc"],
   featuredOnly: true,
   allowedNameSubstrings: ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS,
 } as const;

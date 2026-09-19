@@ -44,6 +44,7 @@ interface RawProductCategory {
     Slug?: string;
     isMainCategory?: boolean | null;
     featured?: boolean | null;
+    homepageOrder?: number | null;
     Image?: CategoryImageField | null;
     MegaMenuImage?: CategoryImageField | null;
     parent?: CategoryRelation | null;
@@ -54,6 +55,7 @@ interface RawProductCategory {
   Color?: string | null;
   isMainCategory?: boolean | null;
   featured?: boolean | null;
+  homepageOrder?: number | null;
   Image?: CategoryImageField | null;
   MegaMenuImage?: CategoryImageField | null;
   parent?: CategoryRelation | null;
@@ -64,10 +66,10 @@ interface RawProductCategory {
  * The only category fields the PLP filter reads.
  *
  * `resolveCategoryFilterRule` walks `parentId`, and `buildGroupedCategorySections`
- * groups on `name`/`slug` and rebuilds the tree from `parentId`. The other twelve
+ * groups on `name`/`slug` and rebuilds the tree from `parentId`. The other thirteen
  * fields on `ProductCategorySummary` — both image sets, their dimensions, the
- * mega-menu alt text, `isMainCategory`, `featured`, `hasChildren` — are never read
- * there, yet the whole 238-entry array was serialized into the PLP's client
+ * mega-menu alt text, `isMainCategory`, `featured`, `homepageOrder`, `hasChildren` —
+ * are never read there, yet the whole 238-entry array was serialized into the PLP's client
  * boundary (~85 KB of the RSC payload) on every category page.
  *
  * `ProductCategorySummary` satisfies this structurally, so a caller holding full
@@ -113,6 +115,8 @@ export interface ProductCategorySummary {
   children?: ProductCategorySummary[];
   /** True when category is marked as featured in Strapi (for carousel / bottom nav). */
   featured?: boolean;
+  /** Lower values appear earlier in the RTL homepage/category rails. */
+  homepageOrder?: number;
 }
 
 export interface FetchProductCategoriesOptions {
@@ -132,19 +136,17 @@ export interface FetchProductCategoriesOptions {
    */
   includeChildren?: boolean;
   /**
-   * When true, read categories assigned to the Navigation single type instead of all product categories.
-   */
-  navbarAssignedOnly?: boolean;
-  /**
    * When provided, only return categories whose name includes at least one of these substrings.
    * Fallback when featured is not used; used for homepage carousel and bottom nav category sheet.
    */
   allowedNameSubstrings?: readonly string[];
   limit?: number;
-  sort?: string;
+  sort?: string | readonly string[];
   cache?: RequestCache;
   revalidate?: number;
 }
+
+export type NavigationCategorySource = "assigned" | "catalog";
 
 interface RawNavigationResponse {
   data?: {
@@ -219,6 +221,7 @@ function mapProductCategory(
   const isMainCategory = Boolean(attrs.isMainCategory);
   const image = resolveCategoryImage(attrs.Image);
   const megaMenuImage = resolveCategoryImage(attrs.MegaMenuImage);
+  const parsedHomepageOrder = Number(attrs.homepageOrder ?? 1000);
   const childrenData = attrs.children?.data ?? item.children?.data;
   const hasChildren = Array.isArray(childrenData) && childrenData.length > 0;
   const children =
@@ -246,6 +249,7 @@ function mapProductCategory(
       options.parentsWithChildrenOnly || options.includeChildren ? hasChildren : undefined,
     children,
     featured: Boolean(attrs.featured),
+    homepageOrder: Number.isFinite(parsedHomepageOrder) ? parsedHomepageOrder : 1000,
   };
 }
 
@@ -261,11 +265,17 @@ export async function getProductCategories(
   } else {
     params.set("pagination[limit]", String(options.limit ?? -1));
   }
-  params.set("sort", options.sort || "Title:asc");
+  const sort = options.sort || "Title:asc";
+  if (typeof sort === "string") {
+    params.set("sort", sort);
+  } else {
+    sort.forEach((value, index) => params.set(`sort[${index}]`, value));
+  }
   params.append("fields[0]", "Title");
   params.append("fields[1]", "Slug");
   params.append("fields[2]", "isMainCategory");
   params.append("fields[3]", "featured");
+  params.append("fields[4]", "homepageOrder");
   params.append("populate[0]", "Image");
   params.append("populate[1]", "MegaMenuImage");
   params.append("populate[2]", "parent");
@@ -423,11 +433,14 @@ export async function getProductCategories(
  * availability. This same-origin endpoint is backed by the storefront's shared
  * Redis Cache Components handler, so normal traffic does not reach Strapi at all.
  */
-export async function getCachedNavbarProductCategories(
-  options: Pick<FetchProductCategoriesOptions, "includeChildren" | "cache"> = {},
+export async function getCachedNavigationProductCategories(
+  options: Pick<FetchProductCategoriesOptions, "includeChildren" | "cache"> & {
+    source: NavigationCategorySource;
+  },
 ): Promise<ProductCategorySummary[]> {
   const params = new URLSearchParams();
   params.set("includeChildren", options.includeChildren ? "1" : "0");
+  params.set("source", options.source);
   params.set("_skip_global_loader", "1");
 
   try {
@@ -491,6 +504,7 @@ export async function getNavbarProductCategories(
   params.append("populate[product_categories][fields][1]", "Slug");
   params.append("populate[product_categories][fields][2]", "isMainCategory");
   params.append("populate[product_categories][fields][3]", "featured");
+  params.append("populate[product_categories][fields][4]", "homepageOrder");
   params.append("populate[product_categories][populate][0]", "Image");
   params.append("populate[product_categories][populate][1]", "MegaMenuImage");
   params.append("populate[product_categories][populate][2]", "parent");

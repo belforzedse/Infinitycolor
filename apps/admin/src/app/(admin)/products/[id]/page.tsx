@@ -25,6 +25,7 @@ import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import ProductActivityLogs from "@/components/SuperAdmin/Activity/ProductActivityLogs";
 import ProductDisplayDateCard from "@/components/SuperAdmin/Product/ProductDisplayDateCard";
 import ProductPublicationCard from "@/components/SuperAdmin/Product/ProductPublicationCard";
+import ProductHomepageSectionsCard from "@/components/SuperAdmin/Product/ProductHomepageSectionsCard";
 import type { ProductPublicationAction } from "@/services/super-admin/product/publication";
 
 export default function EditProductsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -40,6 +41,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   const canManageVariations = useCan("product.variation.manage");
   const canManageSizeGuide = useCan("product.size-guide.manage");
   const canReadAudit = useCan("system.audit.read");
+  const canManageHomepage = useCan("product.homepage.manage");
   const { fetchAllCategories } = useProductCategory();
   const { handleFetchTags } = useProductTag();
   const sizeGuideRef = useRef<SizeGuideHandle | null>(null);
@@ -335,6 +337,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         <SetStatus /> */}
         <SetDetails isEditMode />
         {canSchedule && <ProductDisplayDateCard productId={id} initialDate={displayDate} />}
+        {loaded && canManageHomepage && <ProductHomepageSectionsCard productId={Number(id)} />}
         {canReadAudit && (
           <ProductActivityLogs productId={id} pageSize={20} title="رویدادهای محصول" />
         )}

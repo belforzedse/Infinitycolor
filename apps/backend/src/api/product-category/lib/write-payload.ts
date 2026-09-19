@@ -6,6 +6,7 @@ export const OPERATIONAL_CATEGORY_FIELDS = [
   "Color",
   "isMainCategory",
   "featured",
+  "homepageOrder",
   "parent",
 ] as const;
 

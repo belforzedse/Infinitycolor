@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import {
-  getCachedNavbarProductCategories,
+  getCachedNavigationProductCategories,
   getProductCategories,
+  type NavigationCategorySource,
   type ProductCategorySummary,
 } from "@/services/product/categories";
 
@@ -12,8 +13,8 @@ interface UseProductCategoriesOptions {
   featuredOnly?: boolean;
   /** When true, fetch direct children for desktop megamenu links. */
   includeChildren?: boolean;
-  /** When true, read categories assigned to the Navigation single type. */
-  navbarAssignedOnly?: boolean;
+  /** When set, read navigation data through the shared storefront cache. */
+  navigationSource?: NavigationCategorySource;
   /** When provided, only categories whose name includes one of these substrings are returned. */
   allowedNameSubstrings?: readonly string[];
   initial?: ProductCategorySummary[];
@@ -29,7 +30,7 @@ const getCategoryCacheKey = (options: Omit<UseProductCategoriesOptions, "initial
     mainOnly: options.mainOnly ?? false,
     featuredOnly: options.featuredOnly ?? null,
     includeChildren: options.includeChildren ?? false,
-    navbarAssignedOnly: options.navbarAssignedOnly ?? false,
+    navigationSource: options.navigationSource ?? null,
     allowedNameSubstrings: options.allowedNameSubstrings ?? [],
   });
 
@@ -39,7 +40,7 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
     mainOnly = false,
     featuredOnly,
     includeChildren,
-    navbarAssignedOnly,
+    navigationSource,
     allowedNameSubstrings,
     initial,
     enabled = true,
@@ -49,7 +50,7 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
     mainOnly,
     featuredOnly,
     includeChildren,
-    navbarAssignedOnly,
+    navigationSource,
     allowedNameSubstrings,
   });
   const cached = categoryDataCache.get(cacheKey);
@@ -82,8 +83,11 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
           // derived promise while awaiting the original would leave the derived rejection
           // unhandled.
           request = (
-            navbarAssignedOnly
-              ? getCachedNavbarProductCategories({ includeChildren })
+            navigationSource
+              ? getCachedNavigationProductCategories({
+                  includeChildren,
+                  source: navigationSource,
+                })
               : getProductCategories({
                   parentOnly,
                   mainOnly,
@@ -126,7 +130,7 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
     mainOnly,
     featuredOnly,
     includeChildren,
-    navbarAssignedOnly,
+    navigationSource,
     allowedNameSubstrings,
   ]);
 

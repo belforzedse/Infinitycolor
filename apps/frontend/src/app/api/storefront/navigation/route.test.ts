@@ -5,6 +5,7 @@
 const mockCacheLife = jest.fn();
 const mockCacheTag = jest.fn();
 const mockGetNavbarProductCategories = jest.fn();
+const mockGetProductCategories = jest.fn();
 
 jest.mock("next/cache", () => ({
   cacheLife: (...args: unknown[]) => mockCacheLife(...args),
@@ -13,6 +14,7 @@ jest.mock("next/cache", () => ({
 
 jest.mock("@/services/product/categories", () => ({
   getNavbarProductCategories: (...args: unknown[]) => mockGetNavbarProductCategories(...args),
+  getProductCategories: (...args: unknown[]) => mockGetProductCategories(...args),
 }));
 
 import { GET } from "./route";
@@ -35,6 +37,25 @@ describe("GET /api/storefront/navigation", () => {
     expect(mockCacheLife).toHaveBeenCalledWith("storefrontPublic");
     expect(mockCacheTag).toHaveBeenCalledWith("navigation", "product-categories");
     expect(response.headers.get("cache-control")).toContain("stale-while-revalidate=3300");
+  });
+
+  it("serves the catalog menu tree through the same shared cache", async () => {
+    mockGetProductCategories.mockResolvedValue([{ id: 2, slug: "shirts" }]);
+
+    const response = await GET(
+      new Request(
+        "https://storefront.test/api/storefront/navigation?source=catalog&includeChildren=1",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([{ id: 2, slug: "shirts" }]);
+    expect(mockGetProductCategories).toHaveBeenCalledWith({
+      parentOnly: true,
+      includeChildren: true,
+    });
+    expect(mockGetNavbarProductCategories).not.toHaveBeenCalled();
+    expect(mockCacheTag).toHaveBeenCalledWith("navigation", "product-categories");
   });
 
   it("returns an uncached 503 when a cache fill fails", async () => {

@@ -87,7 +87,7 @@ describe("MobileMenu", () => {
     await screen.findByRole("button", { name: "بالا تنه" });
 
     expect(mockedUseProductCategories).toHaveBeenCalledWith({
-      parentOnly: true,
+      navigationSource: "catalog",
       includeChildren: true,
       enabled: true,
     });
@@ -101,7 +101,10 @@ describe("MobileMenu", () => {
 
     expect(screen.getByRole("button", { name: "پایین تنه" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "لباس ورزشی" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "کفش" })).toHaveAttribute("href", "/plp/category/shoes");
+    expect(screen.getByRole("link", { name: "کفش" })).toHaveAttribute(
+      "href",
+      "/plp/category/shoes",
+    );
     expect(screen.getByRole("button", { name: "شال" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "کلاه" })).toHaveAttribute(
       "href",
@@ -130,7 +133,9 @@ describe("MobileMenu", () => {
     fireEvent.click(coatButton);
 
     expect(coatButton).toHaveAttribute("aria-expanded", "true");
-    expect(within(upperBodyGroup).queryByRole("link", { name: /مشاهده همه/ })).not.toBeInTheDocument();
+    expect(
+      within(upperBodyGroup).queryByRole("link", { name: /مشاهده همه/ }),
+    ).not.toBeInTheDocument();
     expect(within(upperBodyGroup).getByRole("link", { name: "پالتو" })).toHaveAttribute(
       "href",
       "/plp/category/coat",

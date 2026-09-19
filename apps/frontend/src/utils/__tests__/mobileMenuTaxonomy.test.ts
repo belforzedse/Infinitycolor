@@ -1,8 +1,8 @@
 import type { CategoryFilterOption } from "@/services/product/categories";
 import {
-  buildMobileMenuTaxonomy,
-  isSyntheticMobileMenuCategory,
-} from "../mobileMenuTaxonomy";
+  buildStorefrontMenuTaxonomy,
+  isSyntheticStorefrontMenuCategory,
+} from "../storefrontMenuTaxonomy";
 
 const category = (
   id: number,
@@ -46,9 +46,9 @@ const catalog = [
   category(19, "کمربند زنانه", "womens-belt"),
 ];
 
-describe("buildMobileMenuTaxonomy", () => {
+describe("buildStorefrontMenuTaxonomy", () => {
   it("orders groups and standalone categories to match the mobile merchandising tree", () => {
-    const items = buildMobileMenuTaxonomy(catalog);
+    const items = buildStorefrontMenuTaxonomy(catalog);
 
     expect(items.map((item) => (item.type === "group" ? item.label : item.category.name))).toEqual([
       "بالا تنه",
@@ -65,7 +65,7 @@ describe("buildMobileMenuTaxonomy", () => {
   });
 
   it("renames and combines upper-body slots without flattening pants children", () => {
-    const items = buildMobileMenuTaxonomy(catalog);
+    const items = buildStorefrontMenuTaxonomy(catalog);
     const upperBody = items.find((item) => item.type === "group" && item.key === "upper-body");
     expect(upperBody?.type).toBe("group");
     if (upperBody?.type !== "group") return;
@@ -80,7 +80,7 @@ describe("buildMobileMenuTaxonomy", () => {
     ]);
 
     const coatMantle = upperBody.categories.find((item) => item.name === "پالتو و مانتو");
-    expect(coatMantle && isSyntheticMobileMenuCategory(coatMantle)).toBe(true);
+    expect(coatMantle && isSyntheticStorefrontMenuCategory(coatMantle)).toBe(true);
     expect(coatMantle?.children?.map((child) => child.name)).toEqual([
       "پالتو",
       "شکت",
@@ -91,12 +91,17 @@ describe("buildMobileMenuTaxonomy", () => {
     const lowerBody = items.find((item) => item.type === "group" && item.key === "lower-body");
     expect(lowerBody?.type).toBe("group");
     if (lowerBody?.type !== "group") return;
-    expect(lowerBody.categories.map((item) => item.name)).toEqual(["شلوار", "شلوارک", "دامن", "لگ"]);
+    expect(lowerBody.categories.map((item) => item.name)).toEqual([
+      "شلوار",
+      "شلوارک",
+      "دامن",
+      "لگ",
+    ]);
     expect(lowerBody.categories[0]?.children?.map((child) => child.name)).toEqual(["شلوار جین"]);
   });
 
   it("promotes کلاه out of شال and aliases sportswear children", () => {
-    const items = buildMobileMenuTaxonomy(catalog);
+    const items = buildStorefrontMenuTaxonomy(catalog);
     const shawl = items.find((item) => item.type === "category" && item.key === "shawl");
     const hat = items.find((item) => item.type === "category" && item.key === "hat");
     const sportswear = items.find((item) => item.type === "group" && item.key === "sportswear");
@@ -110,7 +115,12 @@ describe("buildMobileMenuTaxonomy", () => {
 
     expect(sportswear?.type).toBe("group");
     if (sportswear?.type !== "group") return;
-    expect(sportswear.categories.map((item) => item.name)).toEqual(["نیم تنه", "لگ", "شلوارک", "دامن"]);
+    expect(sportswear.categories.map((item) => item.name)).toEqual([
+      "نیم تنه",
+      "لگ",
+      "شلوارک",
+      "دامن",
+    ]);
     expect(sportswear.categories[0]?.slug).toBe("match-bust");
 
     expect(underwear?.type).toBe("category");
@@ -123,7 +133,7 @@ describe("buildMobileMenuTaxonomy", () => {
   });
 
   it("skips missing catalogue slots instead of rendering empty groups", () => {
-    const items = buildMobileMenuTaxonomy([category(1, "پیراهن", "shirt")]);
+    const items = buildStorefrontMenuTaxonomy([category(1, "پیراهن", "shirt")]);
     expect(items).toEqual([
       {
         type: "group",

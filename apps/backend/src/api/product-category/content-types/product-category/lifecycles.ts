@@ -1,3 +1,6 @@
+import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
+import { triggerFrontendRevalidation } from "../../../../utils/revalidate";
+
 const extractParentId = (parent: any): number | null | undefined => {
   if (parent === null) return null;
   if (parent === undefined) return undefined;
@@ -47,11 +50,19 @@ const stripParentOnlyFields = (data: Record<string, any>) => {
   data.Color = null;
 };
 
-const enforceMainCategoryRules = (data: Record<string, any>, parentId: number | null | undefined) => {
+const enforceMainCategoryRules = (
+  data: Record<string, any>,
+  parentId: number | null | undefined,
+) => {
   if (parentId) {
     data.isMainCategory = false;
   }
 };
+
+async function revalidateStorefrontCategories() {
+  if (isTrustedWordPressMigrationRequest()) return;
+  await triggerFrontendRevalidation({ tag: "product-categories" }, "Product Category Lifecycle");
+}
 
 export default {
   async beforeCreate(event) {
@@ -83,5 +94,17 @@ export default {
     if (parentId) {
       stripParentOnlyFields(data);
     }
+  },
+
+  async afterCreate() {
+    await revalidateStorefrontCategories();
+  },
+
+  async afterUpdate() {
+    await revalidateStorefrontCategories();
+  },
+
+  async afterDelete() {
+    await revalidateStorefrontCategories();
   },
 };

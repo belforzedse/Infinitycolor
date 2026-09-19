@@ -40,7 +40,11 @@ export default function AdminServiceWorker() {
   if (!waiting) return null;
   return (
     <div
-      className="fixed bottom-4 left-4 right-4 z-[2147483646] mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+      // `print:hidden` because this banner is fixed-position and app-wide: the
+      // invoice/barcode routes under app/(print) live under the same root layout
+      // and call window.print() on their own, so a pending service-worker update
+      // would otherwise land on the printed sheet.
+      className="fixed bottom-4 left-4 right-4 z-[2147483646] mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-xl print:hidden"
       role="status"
       dir="rtl"
     >

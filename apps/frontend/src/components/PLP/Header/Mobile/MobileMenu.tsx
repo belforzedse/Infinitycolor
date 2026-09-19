@@ -14,9 +14,10 @@ import { API_BASE_URL } from "@/constants/api";
 import { OPPSI_HEADER_ITEM } from "@/constants/categories";
 import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
 import {
-  buildMobileMenuTaxonomy,
-  isSyntheticMobileMenuCategory,
-} from "@/utils/mobileMenuTaxonomy";
+  buildStorefrontMenuTaxonomy,
+  getViewAllCategoryLabel,
+  isSyntheticStorefrontMenuCategory,
+} from "@/utils/storefrontMenuTaxonomy";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
@@ -61,14 +62,6 @@ type SearchSuggestion = {
   category?: string;
   image?: string;
   isAvailable?: boolean;
-};
-
-const getViewAllCategoryLabel = (label: string) => {
-  const trimmed = label.trim();
-  if (!trimmed) return "مشاهده همه";
-  const normalized = trimmed.replace(/\u200c/g, " ");
-  const isPlural = /(^|\s)ها$/.test(normalized) || /های$/.test(normalized);
-  return `مشاهده همه ${trimmed}${isPlural ? "" : "‌ها"}`;
 };
 
 function MobileMenuSkeleton() {
@@ -120,7 +113,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
   const { categories: catalogCategories, isLoading: loading } = useProductCategories({
-    parentOnly: true,
+    navigationSource: "catalog",
     includeChildren: true,
     enabled: isOpen,
   });
@@ -129,7 +122,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
     [catalogCategories],
   );
 
-  const taxonomyItems = useMemo(() => buildMobileMenuTaxonomy(categories), [categories]);
+  const taxonomyItems = useMemo(() => buildStorefrontMenuTaxonomy(categories), [categories]);
 
   const menuItems: MobileNavItem[] = useMemo(
     () => [
@@ -424,7 +417,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
           data-state={isExpanded ? "open" : "closed"}
         >
           <div className="storefront-mobile-category-panel-inner min-h-0 overflow-hidden">
-            {!isSyntheticMobileMenuCategory(item.category) && (
+            {!isSyntheticStorefrontMenuCategory(item.category) && (
               <Link
                 href={item.href}
                 prefetch={false}
@@ -608,108 +601,108 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
           }}
           onAnimationEnd={handlePanelAnimationEnd}
         >
-            <Dialog.Title className="sr-only">منوی فروشگاه</Dialog.Title>
+          <Dialog.Title className="sr-only">منوی فروشگاه</Dialog.Title>
 
-            <div
-              className="sticky top-0 z-20 rounded-b-none border-b border-stone-100/80 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/70"
-              data-adaptive-surface
-            >
-              <div className="flex min-h-[4.25rem] items-center gap-2 px-5 py-2" dir="ltr">
+          <div
+            className="sticky top-0 z-20 rounded-b-none border-b border-stone-100/80 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/70"
+            data-adaptive-surface
+          >
+            <div className="flex min-h-[4.25rem] items-center gap-2 px-5 py-2" dir="ltr">
+              <button
+                type="button"
+                onClick={handleCartClick}
+                className="pressable relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-infinity-primary text-white transition-colors hover:bg-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                aria-label="Cart"
+              >
+                <ShoppingCartIcon className="h-5 w-5 [&_path]:stroke-white" />
+                {visibleTotalItems > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-infinity-primary-dark px-1 text-[10px] font-medium leading-none text-white">
+                    {visibleTotalItems > 9 ? "9+" : visibleTotalItems}
+                  </span>
+                )}
+              </button>
+
+              <a
+                href="/orders"
+                onClick={onClose}
+                className="pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-neutral-700 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                dir="rtl"
+              >
+                <OrderTrackingIcon className="h-4 w-4 shrink-0" />
+                <span>پیگیری سفارش</span>
+              </a>
+
+              <div className="ml-auto flex items-center gap-2">
+                <AccountAccessMenu
+                  triggerAriaLabel="Account"
+                  triggerClassName="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                  triggerIconClassName="h-4 w-4"
+                  menuAlign="center"
+                  onNavigate={onClose}
+                />
+
                 <button
                   type="button"
-                  onClick={handleCartClick}
-                  className="pressable relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-infinity-primary text-white transition-colors hover:bg-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                  aria-label="Cart"
+                  onClick={requestClose}
+                  className="pressable flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                  aria-label="Close menu"
                 >
-                  <ShoppingCartIcon className="h-5 w-5 [&_path]:stroke-white" />
-                  {visibleTotalItems > 0 && (
-                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-infinity-primary-dark px-1 text-[10px] font-medium leading-none text-white">
-                      {visibleTotalItems > 9 ? "9+" : visibleTotalItems}
-                    </span>
-                  )}
+                  <X className="h-5 w-5" aria-hidden="true" />
                 </button>
+              </div>
+            </div>
 
-                <a
-                  href="/orders"
-                  onClick={onClose}
-                  className="pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-neutral-700 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+            <div className="px-5 pb-3" data-mobile-menu-search>
+              <form onSubmit={handleSearchSubmit} className="relative" dir="rtl">
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  inputMode="search"
+                  enterKeyHint="search"
+                  aria-label="جستجوی محصولات"
+                  placeholder="دنبال چی می‌گردی؟"
                   dir="rtl"
-                >
-                  <OrderTrackingIcon className="h-4 w-4 shrink-0" />
-                  <span>پیگیری سفارش</span>
-                </a>
-
-                <div className="ml-auto flex items-center gap-2">
-                  <AccountAccessMenu
-                    triggerAriaLabel="Account"
-                    triggerClassName="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                    triggerIconClassName="h-4 w-4"
-                    menuAlign="center"
-                    onNavigate={onClose}
-                  />
-
+                  className="h-9 w-full border-b border-stone-100 bg-transparent pl-8 pr-0 text-[16px] leading-6 text-neutral-800 placeholder:text-neutral-400 focus:border-infinity-primary focus:outline-none"
+                />
+                {hasQuery ? (
                   <button
                     type="button"
-                    onClick={requestClose}
-                    className="pressable flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                    aria-label="Close menu"
+                    onClick={handleClearSearch}
+                    aria-label="پاک کردن جستجو"
+                    className="pressable absolute left-0 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-neutral-400 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary"
                   >
-                    <X className="h-5 w-5" aria-hidden="true" />
+                    <X className="h-4 w-4" aria-hidden="true" />
                   </button>
-                </div>
-              </div>
-
-              <div className="px-5 pb-3" data-mobile-menu-search>
-                <form onSubmit={handleSearchSubmit} className="relative" dir="rtl">
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    inputMode="search"
-                    enterKeyHint="search"
-                    aria-label="جستجوی محصولات"
-                    placeholder="دنبال چی می‌گردی؟"
-                    dir="rtl"
-                    className="h-9 w-full border-b border-stone-100 bg-transparent pl-8 pr-0 text-[16px] leading-6 text-neutral-800 placeholder:text-neutral-400 focus:border-infinity-primary focus:outline-none"
-                  />
-                  {hasQuery ? (
-                    <button
-                      type="button"
-                      onClick={handleClearSearch}
-                      aria-label="پاک کردن جستجو"
-                      className="pressable absolute left-0 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-neutral-400 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary"
-                    >
-                      <X className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2">
-                      <Search className="h-5 w-5 text-infinity-primary" aria-hidden="true" />
-                    </span>
-                  )}
-                </form>
-              </div>
+                ) : (
+                  <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2">
+                    <Search className="h-5 w-5 text-infinity-primary" aria-hidden="true" />
+                  </span>
+                )}
+              </form>
             </div>
+          </div>
 
-            <div className="px-5 pb-5 pt-3">
-              {hasQuery ? (
-                renderSearchResults()
-              ) : (
-                <nav className="space-y-2" aria-label="منوی موبایل فروشگاه">
-                  {loading ? (
-                    <MobileMenuSkeleton />
-                  ) : (
-                    menuItems.map((item) =>
-                      item.type === "category"
-                        ? renderCategory(item)
-                        : item.type === "category-group"
-                          ? renderCategoryGroup(item)
-                          : renderLink(item),
-                    )
-                  )}
-                </nav>
-              )}
-            </div>
+          <div className="px-5 pb-5 pt-3">
+            {hasQuery ? (
+              renderSearchResults()
+            ) : (
+              <nav className="space-y-2" aria-label="منوی موبایل فروشگاه">
+                {loading ? (
+                  <MobileMenuSkeleton />
+                ) : (
+                  menuItems.map((item) =>
+                    item.type === "category"
+                      ? renderCategory(item)
+                      : item.type === "category-group"
+                        ? renderCategoryGroup(item)
+                        : renderLink(item),
+                  )
+                )}
+              </nav>
+            )}
+          </div>
         </Dialog.Panel>
       </div>
     </Dialog>

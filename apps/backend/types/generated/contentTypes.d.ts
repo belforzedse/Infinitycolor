@@ -2777,6 +2777,7 @@ export interface ApiProductCategoryProductCategory extends Schema.CollectionType
     external_id: Attribute.String;
     external_source: Attribute.String;
     featured: Attribute.Boolean & Attribute.DefaultTo<false>;
+    homepageOrder: Attribute.Integer & Attribute.DefaultTo<1000>;
     Image: Attribute.Media<"images">;
     isMainCategory: Attribute.Boolean & Attribute.DefaultTo<false>;
     MegaMenuImage: Attribute.Media<"images">;

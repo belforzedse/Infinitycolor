@@ -2,7 +2,7 @@ import { API_BASE_URL, ENDPOINTS } from "@/constants/api";
 import fetchWithTimeout from "@/utils/fetchWithTimeout";
 import {
   CategoryFetchError,
-  getCachedNavbarProductCategories,
+  getCachedNavigationProductCategories,
   getNavbarProductCategories,
   getProductCategories,
   getProductCategoriesForRender,
@@ -42,6 +42,22 @@ describe("getProductCategories", () => {
       .filter(([key]) => key.startsWith("fields["))
       .map(([, value]) => value);
     expect(fieldValues).toContain("isMainCategory");
+    expect(fieldValues).toContain("homepageOrder");
+  });
+
+  it("supports stable multi-field category ordering", async () => {
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [] }),
+    } as Response);
+
+    await getProductCategories({ sort: ["homepageOrder:asc", "Title:asc"] });
+
+    const [calledUrl] = mockedFetchWithTimeout.mock.calls[0];
+    const url = new URL(calledUrl as string);
+    expect(url.searchParams.get("sort[0]")).toBe("homepageOrder:asc");
+    expect(url.searchParams.get("sort[1]")).toBe("Title:asc");
+    expect(url.searchParams.has("sort")).toBe(false);
   });
 
   it("populates children when includeChildren is true", async () => {
@@ -70,6 +86,7 @@ describe("getProductCategories", () => {
               Title: "Main",
               Slug: "main",
               isMainCategory: true,
+              homepageOrder: 7,
               parent: { data: null },
             },
           },
@@ -89,7 +106,9 @@ describe("getProductCategories", () => {
 
     expect(categories).toHaveLength(2);
     expect(categories[0].isMainCategory).toBe(true);
+    expect(categories[0].homepageOrder).toBe(7);
     expect(categories[1].isMainCategory).toBe(false);
+    expect(categories[1].homepageOrder).toBe(1000);
   });
 
   it("maps mega menu image data and child categories", async () => {
@@ -240,7 +259,7 @@ describe("getProductCategories", () => {
     });
   });
 
-  it("reads navbar categories through the same-origin shared cache", async () => {
+  it("reads navigation categories through the same-origin shared cache", async () => {
     mockedFetchWithTimeout.mockResolvedValueOnce({
       ok: true,
       json: async () => [
@@ -258,13 +277,17 @@ describe("getProductCategories", () => {
       ],
     } as Response);
 
-    const categories = await getCachedNavbarProductCategories({ includeChildren: true });
+    const categories = await getCachedNavigationProductCategories({
+      source: "catalog",
+      includeChildren: true,
+    });
 
     expect(mockedFetchWithTimeout).toHaveBeenCalledTimes(1);
     const [calledUrl, requestInit] = mockedFetchWithTimeout.mock.calls[0];
     const url = new URL(String(calledUrl), "https://storefront.test");
     expect(url.pathname).toBe("/api/storefront/navigation");
     expect(url.searchParams.get("includeChildren")).toBe("1");
+    expect(url.searchParams.get("source")).toBe("catalog");
     expect(url.searchParams.get("_skip_global_loader")).toBe("1");
     expect(requestInit).toMatchObject({ cache: "default" });
     expect(categories.map((category) => category.slug)).toEqual(["assigned"]);
@@ -377,7 +400,9 @@ describe("category fetch failure is distinct from an empty catalog", () => {
       statusText: "Service Unavailable",
     } as Response);
 
-    await expect(getCachedNavbarProductCategories()).rejects.toBeInstanceOf(CategoryFetchError);
+    await expect(
+      getCachedNavigationProductCategories({ source: "assigned" }),
+    ).rejects.toBeInstanceOf(CategoryFetchError);
   });
 
   it("still resolves to [] for a navigation single type with no assigned categories", async () => {

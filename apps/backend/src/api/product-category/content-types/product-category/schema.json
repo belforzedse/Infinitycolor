@@ -44,6 +44,11 @@
       "type": "boolean",
       "default": false
     },
+    "homepageOrder": {
+      "type": "integer",
+      "min": 0,
+      "default": 1000
+    },
     "parent": {
       "type": "relation",
       "relation": "manyToOne",
