@@ -229,11 +229,11 @@ jest.mock("./DiscountCoupon", () => ({
 
 jest.mock("./PaymentGateway", () => ({
   __esModule: true,
-  default: ({ availableGateways, onChange, snappEligible, walletBalanceIrr }: any) => (
+  default: ({ availableGateways, onChange, snappEligible, walletAvailableIrr }: any) => (
     <div
       data-testid="checkout-payment-gateway"
       data-snapp-eligible={String(snappEligible)}
-      data-wallet-balance-irr={String(walletBalanceIrr ?? 0)}
+      data-wallet-available-irr={String(walletAvailableIrr ?? 0)}
     >
       <span data-testid="checkout-payment-gateway-count">{availableGateways?.length ?? 0}</span>
       {availableGateways?.includes("snappay") && (
@@ -798,7 +798,7 @@ describe("ShoppingCartBillForm auth gate", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
-        "data-wallet-balance-irr",
+        "data-wallet-available-irr",
         "0",
       );
     });

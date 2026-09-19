@@ -776,14 +776,21 @@ function ShoppingCartBillForm({}: Props) {
 
     const run = async () => {
       try {
-        const res = await WalletService.getMyWallet();
+        // Name the attempt this checkout would replace, so credit held by the
+        // shopper's own abandoned attempt is counted as spendable here instead
+        // of locking them out of their balance until the reservation expires.
+        const res = await WalletService.getMyWallet(readCheckoutIdentity()?.attemptId);
         if (res?.success && res.data) {
           const balanceIrr = Number(res.data.balance || 0);
           const heldIrr = Number(res.data.heldBalance || 0);
-          setWalletHeldIrr(heldIrr);
-          setWalletAvailableIrr(
-            Number(res.data.availableBalance ?? Math.max(0, balanceIrr - heldIrr)),
+          const availableIrr = Number(
+            res.data.availableBalance ?? Math.max(0, balanceIrr - heldIrr),
           );
+          const reusableIrr = Number(res.data.reusableBalance || 0);
+          // Held by payments the shopper cannot reclaim — the only figure
+          // worth showing them, since the reusable part is already offered.
+          setWalletHeldIrr(Math.max(0, heldIrr - reusableIrr));
+          setWalletAvailableIrr(Math.max(0, availableIrr + reusableIrr));
         }
       } catch {}
     };
@@ -1245,6 +1252,13 @@ function ShoppingCartBillForm({}: Props) {
       // renegotiated after the server answers.
       const submittedGateway = walletContribution.coversTotal ? "wallet" : gateway;
 
+      // The attempt this checkout replaces, so the server can hand its wallet
+      // credit and stock back. Only named when this checkout actually spends
+      // wallet credit: an ordinary bank checkout must never disturb another
+      // checkout the shopper still has open.
+      const supersedeCandidateId =
+        walletContribution.walletToman > 0 ? readCheckoutIdentity()?.attemptId : undefined;
+
       const addressPayload =
         isMergeMode || selectedAddressId
           ? undefined
@@ -1266,6 +1280,7 @@ function ShoppingCartBillForm({}: Props) {
             callbackURL: "/orders/payment-callback",
             gateway: submittedGateway,
             walletAmountToman: walletContribution.walletToman || undefined,
+            supersedeAttemptId: supersedeCandidateId,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             note: data.notes || undefined,
@@ -1278,6 +1293,7 @@ function ShoppingCartBillForm({}: Props) {
             addressPayload,
             gateway: submittedGateway,
             walletAmountToman: walletContribution.walletToman || undefined,
+            supersedeAttemptId: supersedeCandidateId,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             reserveShipping: reserveShipping || undefined,
@@ -1327,6 +1343,14 @@ function ShoppingCartBillForm({}: Props) {
         gateway: resolvedAttempt.gateway || submittedGateway,
         attemptId: checkoutAttemptId,
         quoteHash: resolvedAttempt.quoteHash,
+        // Resuming the same attempt supersedes nothing; only a freshly minted
+        // one replaces a predecessor, and it names the one it actually rotated
+        // over rather than whatever was in storage when the quote was asked.
+        supersedeAttemptId: resolvedAttempt.continueExisting
+          ? undefined
+          : walletContribution.walletToman > 0
+            ? resolvedAttempt.supersedesAttemptId
+            : undefined,
         // Keep anonymous attribution ephemeral in the browser, but carry the
         // active opaque analytics identity into authoritative order creation.
         analyticsCorrelationId: getAnalyticsCorrelationId(),
@@ -1919,10 +1943,7 @@ function ShoppingCartBillForm({}: Props) {
             snappEligible={snappEligible}
             snappTitle={snappTitle}
             snappDescription={snappDescription}
-            // The wallet-only card must be driven by spendable credit alone.
-            // A `|| walletBalanceIrr` fallback would re-enable it precisely
-            // when everything is held, which is when it must be off.
-            walletBalanceIrr={walletAvailableIrr}
+            walletAvailableIrr={walletAvailableIrr}
             requiredAmountIrr={requiredAmountIrr}
             walletCoversTotal={walletContribution.coversTotal}
           />

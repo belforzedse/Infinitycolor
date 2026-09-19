@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
 
 /**
  * Wallet holds: the single mutation path for reserved (not yet spent) credit.
@@ -190,6 +191,31 @@ export async function getOrCreateWalletForUpdate(
  * into `availableIrr`: a customer with a live payment in another tab must not
  * see that money as spendable.
  */
+/**
+ * Whether a payment attempt's wallet hold can be handed back to its owner.
+ *
+ * Two places need this answer and must never disagree: the quote, which counts
+ * a named predecessor's hold as money the customer can spend again, and the
+ * supersession, which actually releases it. If the quote were the more generous
+ * of the two, it would offer credit the finalize then refuses, and the customer
+ * would sit in a 409 loop with no way out.
+ *
+ * `Created` alone is not proof that nothing is in flight: SnappPay mints a
+ * transaction id and a Pending contract transaction the moment the attempt is
+ * created, and any attempt with a persisted provider reference has already been
+ * shown to a bank. Those funds stay where they are until that payment resolves.
+ */
+export const isSupersedableHoldRow = (row: {
+  status?: unknown;
+  gateway?: unknown;
+  provider_reference?: unknown;
+  wallet_hold_status?: unknown;
+}): boolean =>
+  row.wallet_hold_status === "Active" &&
+  row.status === "Created" &&
+  !row.provider_reference &&
+  !isSnappayGatewayValue(row.gateway);
+
 export async function readWalletAvailability(
   strapi: Strapi,
   userId: number,
@@ -241,17 +267,21 @@ async function readWalletAvailabilityOrThrow(
   const reusableAttemptId = String(options.reusableAttemptId || "").trim();
   if (reusableAttemptId) {
     const candidate = await strapi.db.connection.raw(
-      `SELECT pa.wallet_amount
+      `SELECT pa.wallet_amount, pa.status, pa.gateway, pa.provider_reference,
+              pa.wallet_hold_status
          FROM payment_attempts pa
          JOIN payment_attempts_user_links pul ON pul.payment_attempt_id = pa.id
         WHERE pa.attempt_id = ?
           AND pul.user_id = ?
-          AND pa.wallet_hold_status = 'Active'
-          AND pa.status = 'Created'
         LIMIT 1`,
       [reusableAttemptId, userId],
     );
-    reusableIrr = Math.max(0, toInt(candidate?.rows?.[0]?.wallet_amount));
+    const candidateRow = candidate?.rows?.[0];
+    // Read through the same predicate the release uses, so the quote can never
+    // credit money the finalize is going to refuse.
+    if (candidateRow && isSupersedableHoldRow(candidateRow)) {
+      reusableIrr = Math.max(0, toInt(candidateRow.wallet_amount));
+    }
   }
 
   return {

@@ -24,6 +24,12 @@ export interface WalletMeResponse {
     heldBalance?: number;
     /** balance - heldBalance, in IRR. */
     availableBalance?: number;
+    /**
+     * Of `heldBalance`, the part held by the named earlier attempt of this
+     * customer's — reclaimable by superseding it, so spendable on this
+     * checkout even though it is currently held.
+     */
+    reusableBalance?: number;
     lastTransactionDate?: string;
     description?: string;
   };
@@ -50,8 +56,14 @@ export interface WalletTopupStatus {
   reference?: string | null;
 }
 
-export const getMyWallet = async (): Promise<WalletMeResponse> => {
-  const res = await apiClient.get<WalletMeResponse>("/local-user-wallet/me", {
+export const getMyWallet = async (
+  /** An earlier attempt of this customer's whose hold this checkout replaces. */
+  reusableAttemptId?: string,
+): Promise<WalletMeResponse> => {
+  const query = reusableAttemptId
+    ? `?reusableAttemptId=${encodeURIComponent(reusableAttemptId)}`
+    : "";
+  const res = await apiClient.get<WalletMeResponse>(`/local-user-wallet/me${query}`, {
     timeout: CHECKOUT_REQUEST_TIMEOUT_MS,
     retries: CHECKOUT_MAX_RETRIES,
   });

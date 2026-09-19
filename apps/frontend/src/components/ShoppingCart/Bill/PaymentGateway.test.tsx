@@ -158,7 +158,7 @@ describe("ShoppingCartBillPaymentGateway", () => {
         selected="samankish"
         onChange={onChange}
         availableGateways={["samankish", "wallet"]}
-        walletBalanceIrr={5_000}
+        walletAvailableIrr={5_000}
         requiredAmountIrr={10_000}
       />,
     );
@@ -177,7 +177,7 @@ describe("ShoppingCartBillPaymentGateway", () => {
         selected="wallet"
         onChange={onChange}
         availableGateways={["wallet"]}
-        walletBalanceIrr={50_000}
+        walletAvailableIrr={50_000}
         requiredAmountIrr={10_000}
       />,
     );

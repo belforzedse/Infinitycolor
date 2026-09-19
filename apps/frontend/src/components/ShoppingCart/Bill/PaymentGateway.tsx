@@ -10,7 +10,11 @@ interface Props {
   snappEligible?: boolean;
   snappTitle?: string;
   snappDescription?: string;
-  walletBalanceIrr?: number;
+  /**
+   * Spendable credit, in IRR — not the posted balance. Money another of this
+   * customer's checkouts is holding cannot pay for this one.
+   */
+  walletAvailableIrr?: number;
   requiredAmountIrr?: number;
   /**
    * The shopper has chosen to cover the whole order from their wallet, so the
@@ -26,7 +30,7 @@ function ShoppingCartBillPaymentGateway({
   snappEligible,
   snappTitle,
   snappDescription,
-  walletBalanceIrr = 0,
+  walletAvailableIrr = 0,
   requiredAmountIrr = 0,
   walletCoversTotal = false,
 }: Props) {
@@ -34,7 +38,7 @@ function ShoppingCartBillPaymentGateway({
   // The wallet card is the wallet-*only* option: it needs the whole total.
   // Paying part of an order from credit is chosen in the contribution card
   // above, alongside whichever bank carries the rest.
-  const walletDisabled = walletBalanceIrr < requiredAmountIrr || requiredAmountIrr <= 0;
+  const walletDisabled = walletAvailableIrr < requiredAmountIrr || requiredAmountIrr <= 0;
   const showWalletDetails = walletHovered || selected === "wallet";
 
   const snappDisplayTitle = snappTitle?.trim() || "اسنپ پی";
@@ -241,9 +245,9 @@ function ShoppingCartBillPaymentGateway({
               {showWalletDetails && (
                 <div className="flex w-full flex-col items-center gap-3 pt-3 text-center">
                   <div className="flex flex-col items-center gap-2">
-                    <span className="text-xs text-neutral-600">موجودی:</span>
+                    <span className="text-xs text-neutral-600">موجودی قابل استفاده:</span>
                     <span className="text-xl font-bold text-infinity-primary">
-                      {Math.round(walletBalanceIrr / 10).toLocaleString()} تومان
+                      {Math.floor(walletAvailableIrr / 10).toLocaleString()} تومان
                     </span>
                   </div>
                   {wallet.helper && <div className="flex w-full justify-center">{wallet.helper}</div>}

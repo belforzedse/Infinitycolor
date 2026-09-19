@@ -9,6 +9,7 @@
 import { createCheckoutQuote } from "../../../api/cart/services/lib/checkout-quote";
 import { PaymentAllocationError } from "../../../api/cart/services/lib/payment-allocation";
 import { buildWalletCheckoutContext } from "../../../api/cart/services/lib/wallet-checkout";
+import { supersedeCheckoutAttempt } from "../../../api/cart/services/lib/checkout-supersede";
 import { finalizeGatewaySettlement } from "../../../api/order/controllers/helpers/gatewaySettlement";
 import { settleOrderWithWallet } from "../../../api/cart/controllers/handlers/wallet-settlement";
 import { claimPaymentAttemptForInitiation } from "../../../api/payment-attempt/services/claim-payment-attempt";
@@ -469,5 +470,87 @@ describe("mixed wallet + gateway checkout", () => {
       wallet_hold_status: "Active",
     });
     expect((await wallet(shopper.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
+  });
+
+  it("never offers credit the release would refuse to hand back", async () => {
+    const shopper = await seedShopper({ balanceIrr: 5_000_000 });
+    const first = await quoteAndFinalize(shopper.user.id, {
+      attemptId: `bound-${shopper.user.id}`,
+      walletAmountToman: WALLET_TOMAN,
+    });
+
+    // The attempt reached a provider. It is still `Created`, so a quote that
+    // looked only at the status would count its hold as reclaimable — and the
+    // finalize would then refuse it, leaving the shopper in a 409 loop.
+    await strapi.db.connection.raw(
+      `UPDATE payment_attempts SET provider_reference = 'ZP-BOUND' WHERE id = ?`,
+      [Number(first.result.paymentAttempt.id)],
+    );
+
+    const context = await buildWalletCheckoutContext(strapi, shopper.user.id, {
+      selectedGateway: "zarinpal",
+      requestedWalletAmount: 0,
+      supersedeAttemptId: `bound-${shopper.user.id}`,
+    });
+    expect(context.availability.reusableIrr).toBe(0);
+
+    // And the release agrees: nothing is handed back.
+    const outcome = await supersedeCheckoutAttempt(strapi, {
+      userId: shopper.user.id,
+      attemptId: `bound-${shopper.user.id}`,
+      replacementAttemptId: `next-${shopper.user.id}`,
+    });
+    expect(outcome).toMatchObject({ outcome: "refused", reason: "provider_bound" });
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
+  });
+
+  it("offers a plain abandoned attempt's credit, and hands it back on demand", async () => {
+    const shopper = await seedShopper({ balanceIrr: 5_000_000 });
+    await quoteAndFinalize(shopper.user.id, {
+      attemptId: `plain-${shopper.user.id}`,
+      walletAmountToman: WALLET_TOMAN,
+    });
+
+    const context = await buildWalletCheckoutContext(strapi, shopper.user.id, {
+      selectedGateway: "zarinpal",
+      requestedWalletAmount: 0,
+      supersedeAttemptId: `plain-${shopper.user.id}`,
+    });
+    expect(context.availability.reusableIrr).toBe(WALLET_TOMAN * 10);
+    // Spendable is what is free plus what this checkout can reclaim, so the
+    // whole balance is offered even though every rial of it is held.
+    expect(context.availability.availableIrr + context.availability.reusableIrr).toBe(5_000_000);
+
+    const outcome = await supersedeCheckoutAttempt(strapi, {
+      userId: shopper.user.id,
+      attemptId: `plain-${shopper.user.id}`,
+      replacementAttemptId: `next-${shopper.user.id}`,
+    });
+    expect(outcome).toMatchObject({ outcome: "superseded", releasedIrr: WALLET_TOMAN * 10 });
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(0);
+  });
+
+  it("refuses to reclaim another customer's hold, however it is named", async () => {
+    const owner = await seedShopper({ balanceIrr: 5_000_000 });
+    const stranger = await seedShopper({ balanceIrr: 5_000_000 });
+    await quoteAndFinalize(owner.user.id, {
+      attemptId: `owned-${owner.user.id}`,
+      walletAmountToman: WALLET_TOMAN,
+    });
+
+    const context = await buildWalletCheckoutContext(strapi, stranger.user.id, {
+      selectedGateway: "zarinpal",
+      requestedWalletAmount: 0,
+      supersedeAttemptId: `owned-${owner.user.id}`,
+    });
+    expect(context.availability.reusableIrr).toBe(0);
+
+    const outcome = await supersedeCheckoutAttempt(strapi, {
+      userId: stranger.user.id,
+      attemptId: `owned-${owner.user.id}`,
+      replacementAttemptId: `stranger-${stranger.user.id}`,
+    });
+    expect(outcome).toMatchObject({ outcome: "refused", reason: "not_owner" });
+    expect((await wallet(owner.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
   });
 });

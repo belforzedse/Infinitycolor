@@ -15,6 +15,7 @@ import {
   WalletHoldError,
 } from "../../../api/local-user-wallet/services/wallet-holds";
 import { applyAdminWalletAdjustment } from "../../../api/local-user-wallet/services/local-user-wallet";
+import walletControllerFactory from "../../../api/local-user-wallet/controllers/local-user-wallet";
 import { refreshWalletReadiness } from "../../../api/local-user-wallet/services/wallet-readiness";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
@@ -555,5 +556,105 @@ describe("admin adjustment against held credit", () => {
     const [row] = await walletRow(user.id);
     expect(Number(row.balance)).toBe(5_000_000);
     expect(Number(row.held_balance)).toBe(4_000_000);
+  });
+});
+
+describe("what the customer and the operator are told", () => {
+  /**
+   * The controllers are the only place the numbers reach a person, and the
+   * bug they guard against — held money offered as spendable — is invisible
+   * to the service-level tests above. So drive the real handlers.
+   */
+  const controller = () => (walletControllerFactory as any)({ strapi });
+
+  const customerContext = (userId: number) => {
+    const sent: any[] = [];
+    return {
+      ctx: {
+        state: { user: { id: userId } },
+        request: { header: {} },
+        send: (payload: any) => sent.push(payload),
+        unauthorized: (message: string) => sent.push({ unauthorized: message }),
+        notFound: (message: string) => sent.push({ notFound: message }),
+        internalServerError: (message: string) => sent.push({ error: message }),
+      } as any,
+      sent,
+    };
+  };
+
+  it("tells the customer what is held and what is left to spend", async () => {
+    const { user, attempt } = await makeHoldableAttempt({ balanceIrr: 5_000_000 });
+    await strapi.db.transaction(async ({ trx }: any) =>
+      holdWalletForAttempt(
+        strapi,
+        { userId: user.id, paymentAttemptId: attempt.id, amountIrr: 3_500_000 },
+        trx,
+      ),
+    );
+
+    const { ctx, sent } = customerContext(user.id);
+    await controller().getCurrentUserWallet(ctx);
+
+    expect(sent[0]).toMatchObject({
+      success: true,
+      data: {
+        balance: 5_000_000,
+        heldBalance: 3_500_000,
+        availableBalance: 1_500_000,
+      },
+    });
+  });
+
+  it("reports nothing spendable when a checkout holds the whole balance", async () => {
+    const { user, attempt } = await makeHoldableAttempt({ balanceIrr: 5_000_000 });
+    await strapi.db.transaction(async ({ trx }: any) =>
+      holdWalletForAttempt(
+        strapi,
+        { userId: user.id, paymentAttemptId: attempt.id, amountIrr: 5_000_000 },
+        trx,
+      ),
+    );
+
+    const { ctx, sent } = customerContext(user.id);
+    await controller().getCurrentUserWallet(ctx);
+
+    expect(sent[0].data).toMatchObject({
+      balance: 5_000_000,
+      heldBalance: 5_000_000,
+      availableBalance: 0,
+    });
+  });
+
+  it("gives the operator the same breakdown the adjustment guard enforces", async () => {
+    const { user, attempt } = await makeHoldableAttempt({ balanceIrr: 5_000_000 });
+    await strapi.db.transaction(async ({ trx }: any) =>
+      holdWalletForAttempt(
+        strapi,
+        { userId: user.id, paymentAttemptId: attempt.id, amountIrr: 4_000_000 },
+        trx,
+      ),
+    );
+
+    const sent: any[] = [];
+    const ctx: any = {
+      params: { userId: String(user.id) },
+      send: (payload: any) => sent.push(payload),
+      badRequest: (message: string) => sent.push({ badRequest: message }),
+      notFound: (message: string) => sent.push({ notFound: message }),
+      internalServerError: (message: string) => sent.push({ error: message }),
+    };
+    await controller().adminGetUserWallet(ctx);
+
+    expect(sent[0]).toMatchObject({
+      success: true,
+      data: {
+        balanceIrr: 5_000_000,
+        balanceToman: 500_000,
+        heldIrr: 4_000_000,
+        heldToman: 400_000,
+        availableIrr: 1_000_000,
+        availableToman: 100_000,
+      },
+    });
   });
 });

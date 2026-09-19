@@ -52,14 +52,26 @@ export default factories.createCoreController(
               balance: 0,
               heldBalance: 0,
               availableBalance: 0,
+              reusableBalance: 0,
             },
           });
         }
 
+        // The checkout may name an earlier attempt of this customer's whose
+        // hold it is about to replace. That money is theirs to spend again, so
+        // report it — otherwise a shopper whose own abandoned attempt holds the
+        // whole balance is locked out of their credit until the reservation
+        // expires. Ownership is re-checked against the attempt itself.
+        const reusableAttemptId = String(
+          (ctx.query as any)?.reusableAttemptId || "",
+        ).trim();
+
         // Posted balance is not the same as spendable balance once a live
         // checkout has committed part of it. Reporting only the total would
         // have the storefront offer money the server is going to refuse.
-        const availability = await readWalletAvailability(strapi, Number(pluginUserId));
+        const availability = await readWalletAvailability(strapi, Number(pluginUserId), {
+          reusableAttemptId: reusableAttemptId || null,
+        });
         // A degraded read returns zeros, and so does one that cannot see the
         // row the ORM just resolved. Either way, keep showing the balance we
         // did read but report nothing as spendable: the checkout allocation
@@ -73,6 +85,7 @@ export default factories.createCoreController(
             balance: trustworthy ? availability.balanceIrr : Number(wallet.Balance ?? 0),
             heldBalance: trustworthy ? availability.heldIrr : 0,
             availableBalance: trustworthy ? availability.availableIrr : 0,
+            reusableBalance: trustworthy ? availability.reusableIrr : 0,
             lastTransactionDate: wallet.LastTransactionDate,
             description: wallet.Description,
           },
@@ -112,17 +125,21 @@ export default factories.createCoreController(
         const balanceIrr = trustworthy
           ? availability.balanceIrr
           : await readBalanceIrr(strapi, userId);
-        const heldIrr = trustworthy ? availability.heldIrr : 0;
-        const availableIrr = Math.max(0, balanceIrr - heldIrr);
+        // Nulls, not zeros, when the hold read failed: zero held would tell the
+        // operator the whole balance is theirs to move, which is the one wrong
+        // answer. The card hides the breakdown and the server still refuses any
+        // adjustment that would cut into a hold.
+        const heldIrr = trustworthy ? availability.heldIrr : null;
+        const availableIrr = heldIrr === null ? null : Math.max(0, balanceIrr - heldIrr);
         return ctx.send({
           success: true,
           data: {
             balanceIrr,
             balanceToman: rialToToman(balanceIrr),
             heldIrr,
-            heldToman: rialToToman(heldIrr),
+            heldToman: heldIrr === null ? null : rialToToman(heldIrr),
             availableIrr,
-            availableToman: rialToToman(availableIrr),
+            availableToman: availableIrr === null ? null : rialToToman(availableIrr),
           },
         });
       } catch (error) {

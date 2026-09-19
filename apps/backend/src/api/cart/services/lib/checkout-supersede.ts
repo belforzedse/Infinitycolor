@@ -1,6 +1,9 @@
 import type { Strapi } from "@strapi/strapi";
 import { releaseOrderReservation } from "../../../../utils/stockReservations";
-import { releaseWalletHoldForAttempt } from "../../../local-user-wallet/services/wallet-holds";
+import {
+  isSupersedableHoldRow,
+  releaseWalletHoldForAttempt,
+} from "../../../local-user-wallet/services/wallet-holds";
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
 
 export type SupersedeOutcome =
@@ -59,7 +62,7 @@ export async function supersedeCheckoutAttempt(
   return strapi.db.transaction(async ({ trx }) => {
     const candidate = await trx.raw(
       `SELECT pa.id, pa.status, pa.gateway, pa.provider_reference, pa.wallet_hold_status,
-              pul.user_id, pol.order_id
+              pa.wallet_amount, pul.user_id, pol.order_id
          FROM payment_attempts pa
          LEFT JOIN payment_attempts_user_links pul ON pul.payment_attempt_id = pa.id
          LEFT JOIN payment_attempts_order_links pol ON pol.payment_attempt_id = pa.id
@@ -77,6 +80,12 @@ export async function supersedeCheckoutAttempt(
     }
     if (isSnappayGatewayValue(row.gateway) || row.provider_reference) {
       return { outcome: "refused" as const, reason: "provider_bound" as const };
+    }
+    // Belt and braces on the shared predicate: whatever the reasons above do
+    // not cover, this refuses rather than releasing on a stale read. The quote
+    // credits exactly what this admits.
+    if (!isSupersedableHoldRow(row)) {
+      return { outcome: "refused" as const, reason: "in_flight" as const };
     }
 
     const orderId = Number(row.order_id) || null;
@@ -126,6 +135,9 @@ export async function supersedeCheckoutAttempt(
       } as any);
     }
 
+    // Releasing the reservation above already gives the hold back, because the
+    // hold's lifetime is the reservation's. This call is what covers an attempt
+    // that never reached an order, and is a no-op otherwise.
     const released = await releaseWalletHoldForAttempt(
       strapi,
       {
@@ -136,10 +148,14 @@ export async function supersedeCheckoutAttempt(
       trx,
     );
 
+    // Either path returned the same money, and this transaction either commits
+    // both or neither — so report what stopped being held, not which statement
+    // happened to do it.
+    const heldIrr = Math.max(0, Number(row.wallet_amount) || 0);
     return {
       outcome: "superseded" as const,
       orderId,
-      releasedIrr: released.outcome === "released" ? released.amountIrr : 0,
+      releasedIrr: released.outcome === "released" ? released.amountIrr : heldIrr,
     };
   });
 }

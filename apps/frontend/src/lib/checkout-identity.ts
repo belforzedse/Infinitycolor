@@ -213,6 +213,16 @@ export type ResolvedCheckoutAttempt = {
   quoteHash: string;
   gateway?: string;
   continueExisting: boolean;
+  /**
+   * The stored attempt this one was minted over, when a new id was minted.
+   *
+   * Changing a coupon, a shipping method or a wallet amount produces a new
+   * quote and therefore a new attempt, which would otherwise leave the
+   * shopper's own wallet credit and stock committed to the attempt they just
+   * walked away from. Naming it lets the server hand both back. The server
+   * validates ownership and refuses anything a provider has already seen.
+   */
+  supersedesAttemptId?: string;
 };
 
 /**
@@ -278,5 +288,6 @@ export function resolveCheckoutAttemptId(input: {
     quoteHash,
     gateway: input.gateway,
     continueExisting: false,
+    supersedesAttemptId: existing?.attemptId || undefined,
   };
 }
