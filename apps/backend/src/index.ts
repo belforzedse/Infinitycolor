@@ -600,6 +600,11 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::local-user-wallet-transaction": {
         "local-user-wallet-transaction": READ_ACTIONS,
       },
+      // Top-up status and history are owner-scoped inside the handlers; the
+      // provider callback stays public because a bank carries no session.
+      "api::wallet-topup": {
+        "wallet-topup": ["topupOptions", "chargeIntent", "myTopups", "myTopup"],
+      },
       "api::payment-gateway": {
         "payment-gateway": ["snappEligible", "availableGateways"],
       },

@@ -496,8 +496,11 @@ function createActionTree() {
     "api::wallet-topup": {
       controllers: {
         "wallet-topup": {
+          topupOptions: action(),
           chargeIntent: action(),
           paymentCallback: action(),
+          myTopups: action(),
+          myTopup: action(),
           find: action(),
           findOne: action(),
           create: action(),
@@ -1395,7 +1398,17 @@ describe("role permission templates", () => {
       "availableGateways",
       "snappEligible",
     ]);
-    expect(enabled("api::wallet-topup", "wallet-topup")).toEqual(["paymentCallback"]);
+    // Staff roles inherit the customer grants, so a staff member can top up
+    // their own wallet like any other shopper. Every one of these is
+    // owner-scoped inside the handler; `paymentCallback` stays public because a
+    // bank carries no session.
+    expect(enabled("api::wallet-topup", "wallet-topup")).toEqual([
+      "chargeIntent",
+      "myTopup",
+      "myTopups",
+      "paymentCallback",
+      "topupOptions",
+    ]);
     expect(enabled("api::local-user-wallet", "local-user-wallet")).toEqual([
       "getCurrentUserWallet",
     ]);

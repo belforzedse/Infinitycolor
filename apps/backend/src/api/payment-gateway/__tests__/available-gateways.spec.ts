@@ -132,7 +132,10 @@ describe("payment-gateway.availableGateways", () => {
   });
 
   it("includes ZarinPal only when active and configured", async () => {
+    // A localhost callback URL is a deployment detail, not a credential. The
+    // gateway is offered on an explicit merchant id or an explicit test opt-in.
     process.env.URL = "http://localhost:1337";
+    process.env.ZARINPAL_MERCHANT_ID = "merchant-id";
     const { strapi } = createStrapiMock();
     (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
       { Title: "ZarinPal", IsActive: true },
@@ -147,6 +150,22 @@ describe("payment-gateway.availableGateways", () => {
         gateways: [expect.objectContaining({ code: "zarinpal" })],
       },
     });
+  });
+
+  it("omits ZarinPal when it is active but has no credential and no test opt-in", async () => {
+    process.env.URL = "http://localhost:1337";
+    delete process.env.ZARINPAL_MERCHANT_ID;
+    delete process.env.ZARINPAL_E2E_DETERMINISTIC;
+    const { strapi } = createStrapiMock();
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
+      { Title: "ZarinPal", IsActive: true },
+    ]);
+    const controller = controllerFactory({ strapi });
+    const ctx = mockContext({});
+
+    await controller.availableGateways(ctx);
+
+    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
   });
 
   it("returns no gateways when gateway rows cannot be loaded", async () => {

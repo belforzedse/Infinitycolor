@@ -23,26 +23,18 @@ export const SUPPORTED_CHECKOUT_GATEWAYS: readonly CheckoutGatewayItem[] = [
 const isTruthyEnv = (value?: string): boolean =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 
-const isLocalUrl = (value?: string): boolean =>
-  /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(String(value || "").trim());
-
-const resolveZarinPalCallbackUrl = (): string => {
-  const baseUrl = String(process.env.URL || "").trim().replace(/\/$/, "");
-  return String(
-    process.env.ZARINPAL_CALLBACK_URL ||
-      (baseUrl ? `${baseUrl}/api/orders/payment-callback` : ""),
-  ).trim();
-};
-
 /**
  * ZarinPal is additive and OFF by default: it only becomes available once the
- * merchant credential is configured via env. Local deterministic E2E/dev
- * callbacks are also treated as configured because they never touch ZarinPal.
+ * merchant credential is configured via env, or deterministic mode is switched
+ * on explicitly for a test environment. A callback URL that happens to point at
+ * localhost no longer counts — offering a gateway on that basis meant a local
+ * deployment without credentials advertised ZarinPal and then failed at request
+ * time, and it is the same implicit signal that must never enable simulated
+ * receipts.
  */
 const isZarinPalConfigured = (): boolean =>
   Boolean(String(process.env.ZARINPAL_MERCHANT_ID || "").trim()) ||
-  isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) ||
-  isLocalUrl(resolveZarinPalCallbackUrl());
+  isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC);
 
 const hasNonEmptyEnv = (...keys: string[]): boolean =>
   keys.every((key) => Boolean(String(process.env[key] || "").trim()));

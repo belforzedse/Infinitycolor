@@ -24,11 +24,14 @@ type ZarinPalRequestParams = {
   mobile?: string;
   email?: string;
   description?: string;
+  /** Purpose-specific return URL, e.g. the wallet top-up callback. */
+  callbackUrl?: string;
 };
 
 type ZarinPalVerifyParams = {
   authority: string;
   amountToman: number;
+  callbackUrl?: string;
 };
 
 const REQUEST_ENDPOINT = "/pg/v4/payment/request.json";
@@ -55,6 +58,27 @@ const normalizeMobile = (raw?: string): string | undefined => {
 const isLocalCallbackUrl = (value?: string): boolean =>
   /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(String(value || "").trim());
 
+/**
+ * Deterministic mode short-circuits the provider and mints a synthetic
+ * authority. It is an explicit opt-in and nothing else: a callback URL that
+ * happens to point at localhost is a deployment detail, not consent to accept
+ * fabricated receipts, and in a production build it is refused outright so a
+ * stray environment variable cannot turn real payments into simulated ones.
+ */
+export const isZarinPalSimulated = (): boolean => {
+  if (!isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC)) return false;
+  if (String(process.env.NODE_ENV || "").trim().toLowerCase() === "production") {
+    throw new Error(
+      "ZARINPAL_SIMULATION_REFUSED: deterministic ZarinPal cannot be enabled in a production build",
+    );
+  }
+  return true;
+};
+
+/** Authorities minted by deterministic mode, and only by it. */
+export const isSimulatedAuthority = (authority?: string | null): boolean =>
+  /^E2E-/.test(String(authority || "").trim());
+
 const sanitizeGatewayResponse = (value: unknown) => {
   if (!value || typeof value !== "object") return value;
   const clone = JSON.parse(JSON.stringify(value));
@@ -75,10 +99,13 @@ const isAmbiguousVerificationFailure = (error: any): boolean => {
 };
 
 export default ({ strapi }: { strapi: Strapi }) => ({
-  getConfig(): ZarinPalConfig {
+  getConfig(callbackUrlOverride?: string): ZarinPalConfig {
     const baseUrl = (process.env.URL || "").trim().replace(/\/$/, "");
+    // Wallet top-ups return to their own endpoint, not the order callback, so
+    // a credit can never be mistaken for an order settlement.
     const callbackUrl = String(
-      process.env.ZARINPAL_CALLBACK_URL ||
+      callbackUrlOverride ||
+        process.env.ZARINPAL_CALLBACK_URL ||
         (baseUrl ? `${baseUrl}/api/orders/payment-callback` : ""),
     ).trim();
 
@@ -86,8 +113,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       throw new Error("ZarinPal callback URL is not configured");
     }
 
-    const deterministic =
-      isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) || isLocalCallbackUrl(callbackUrl);
+    const deterministic = isZarinPalSimulated();
     const merchantId =
       String(process.env.ZARINPAL_MERCHANT_ID || "").trim() ||
       (deterministic ? E2E_SANDBOX_MERCHANT_ID : "");
@@ -126,7 +152,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
   async requestPayment(params: ZarinPalRequestParams) {
     const requestId = `ZP-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const config = this.getConfig();
+    const config = this.getConfig(params.callbackUrl);
     const client = this.createClient(config);
     const amount = this.amountForGateway(params.amountToman, config.currency);
     this.assertValidAmount(amount, config.currency);
@@ -134,10 +160,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       `[${requestId}] ZarinPal config resolved merchantIdLength=${config.merchantId.length} sandbox=${config.sandbox} callbackIsLocal=${isLocalCallbackUrl(config.callbackUrl)} e2eDeterministic=${isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC)}`,
     );
 
-    if (
-      isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) ||
-      isLocalCallbackUrl(config.callbackUrl)
-    ) {
+    if (config.sandbox && isZarinPalSimulated()) {
       const authority = `E2E-${params.orderId}-${requestId}`;
       return {
         success: true,
@@ -225,7 +248,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
   async verifyPayment(params: ZarinPalVerifyParams) {
     const requestId = `ZPVERIFY-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const config = this.getConfig();
+    const config = this.getConfig(params.callbackUrl);
     const client = this.createClient(config);
     const amount = this.amountForGateway(params.amountToman, config.currency);
     this.assertValidAmount(amount, config.currency);

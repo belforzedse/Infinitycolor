@@ -48,8 +48,19 @@ describe("ZarinPal payment gateway service", () => {
     process.env = originalEnv;
   });
 
-  it("uses deterministic sandbox config for local callback URLs", () => {
+  it("does not simulate merely because the callback URL is local", () => {
     process.env.URL = "http://localhost:1337";
+    delete process.env.ZARINPAL_MERCHANT_ID;
+    const { service } = createService();
+
+    // Without an explicit opt-in there is no merchant id to fall back on, so the
+    // service refuses rather than quietly accepting fabricated receipts.
+    expect(() => service.getConfig()).toThrow(/merchant ID is not configured/i);
+  });
+
+  it("uses deterministic sandbox config only when explicitly enabled", () => {
+    process.env.URL = "http://localhost:1337";
+    process.env.ZARINPAL_E2E_DETERMINISTIC = "1";
     const { service } = createService();
 
     expect(service.getConfig()).toEqual({
@@ -58,6 +69,29 @@ describe("ZarinPal payment gateway service", () => {
       callbackUrl: "http://localhost:1337/api/orders/payment-callback",
       currency: "IRR",
     });
+  });
+
+  it("accepts a purpose-specific callback URL for wallet top-ups", () => {
+    process.env.URL = "http://localhost:1337";
+    process.env.ZARINPAL_E2E_DETERMINISTIC = "1";
+    const { service } = createService();
+
+    expect(service.getConfig("https://api.example.test/api/wallet/payment-callback")).toMatchObject(
+      { callbackUrl: "https://api.example.test/api/wallet/payment-callback" },
+    );
+  });
+
+  it("refuses deterministic mode outright in a production build", () => {
+    process.env.URL = "http://localhost:1337";
+    process.env.ZARINPAL_E2E_DETERMINISTIC = "1";
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const { service } = createService();
+      expect(() => service.getConfig()).toThrow(/ZARINPAL_SIMULATION_REFUSED/);
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 
   it("converts gateway amounts for IRR and IRT currencies", () => {
@@ -79,8 +113,9 @@ describe("ZarinPal payment gateway service", () => {
     );
   });
 
-  it("returns a deterministic redirect without making a gateway request in local mode", async () => {
+  it("returns a deterministic redirect without making a gateway request when simulation is on", async () => {
     process.env.URL = "http://localhost:1337";
+    process.env.ZARINPAL_E2E_DETERMINISTIC = "1";
     const { service } = createService();
 
     const result = await service.requestPayment({

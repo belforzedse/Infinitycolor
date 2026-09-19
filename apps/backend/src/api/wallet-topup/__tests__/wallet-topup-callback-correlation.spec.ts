@@ -24,6 +24,9 @@ import controllerFactory from "../controllers/wallet-topup";
 type TopupRow = {
   id: number;
   SaleOrderId: string;
+  Gateway?: string;
+  /** The handle a callback is correlated against; Mellat's RefId. */
+  ProviderReference?: string | null;
   RefId: string | null;
   Amount: number;
   Status: "Pending" | "Processing" | "Unknown" | "Success" | "Failed" | "Cancelled";
@@ -152,9 +155,25 @@ function createWorld(topups: TopupRow[]) {
         }
         if (uid === "api::wallet-topup.wallet-topup") {
           return {
-            findOne: jest.fn(async ({ where }: any) =>
-              topups.find((topup) => topup.id === Number(where.id)) || null,
-            ),
+            findOne: jest.fn(async ({ where }: any) => {
+              if (where?.id !== undefined) {
+                return topups.find((topup) => topup.id === Number(where.id)) || null;
+              }
+              if (where?.SaleOrderId !== undefined) {
+                return (
+                  topups.find((topup) => topup.SaleOrderId === String(where.SaleOrderId)) || null
+                );
+              }
+              if (where?.ProviderReference !== undefined) {
+                return (
+                  topups.find(
+                    (topup) =>
+                      String(topup.ProviderReference ?? "") === String(where.ProviderReference),
+                  ) || null
+                );
+              }
+              return null;
+            }),
             update: jest.fn(async ({ where, data }: any) => {
               const row = topups.find((topup) => topup.id === Number(where.id));
               if (row) Object.assign(row, data);
@@ -178,15 +197,22 @@ const callbackCtx = (body: Record<string, unknown>) => ({
 
 const lastRedirect = (ctx: any) => ctx.redirect.mock.calls.at(-1)?.[0] ?? "";
 
-const pendingTopup = (overrides: Partial<TopupRow> = {}): TopupRow => ({
-  id: 100,
-  SaleOrderId: "1700000000100",
-  RefId: "MELLAT-REF-100",
-  Amount: 1_000_000,
-  Status: "Pending",
-  user: { id: 7 },
-  ...overrides,
-});
+const pendingTopup = (overrides: Partial<TopupRow> = {}): TopupRow => {
+  const row: TopupRow = {
+    id: 100,
+    SaleOrderId: "1700000000100",
+    Gateway: "Mellat",
+    RefId: "MELLAT-REF-100",
+    Amount: 1_000_000,
+    Status: "Pending",
+    user: { id: 7 },
+    ...overrides,
+  };
+  // Mellat's RefId is both the token that opens the gateway and the handle a
+  // callback is correlated against, so chargeIntent persists it as both.
+  if (row.ProviderReference === undefined) row.ProviderReference = row.RefId;
+  return row;
+};
 
 describe("wallet top-up failure callback correlation", () => {
   beforeEach(() => writeAuditEvent.mockClear());
@@ -230,7 +256,11 @@ describe("wallet top-up failure callback correlation", () => {
       /UPDATE wallet_topups/.test(sql),
     );
     expect(casCalls).toHaveLength(1);
-    expect(lastRedirect(ctx)).toContain("status=failure&code=17");
+    // The wallet page re-reads the real state from the server, so the query
+    // string only has to name the intent and why it is being shown.
+    expect(lastRedirect(ctx)).toContain("status=failure");
+    expect(lastRedirect(ctx)).toContain("topup=1700000000100");
+    expect(lastRedirect(ctx)).toContain("reason=declined");
   });
 
   it("is idempotent under a duplicate failure callback", async () => {
@@ -300,8 +330,10 @@ describe("wallet top-up success callback", () => {
     expect(wallet.Balance).toBe(1_000_000);
     expect(walletTransactions).toHaveLength(1);
     expect(walletTransactions[0]).toMatchObject({
+      // Ledger keys are scoped by gateway now that more than one provider can
+      // fund a wallet, so two providers cannot collide on a shared format.
+      ReferenceId: "wallet-topup-Mellat-BANK-REF-1",
       Amount: 1_000_000,
-      ReferenceId: "BANK-REF-1",
       Cause: "Wallet Topup",
     });
     expect(lastRedirect(ctx)).toContain("status=success");
