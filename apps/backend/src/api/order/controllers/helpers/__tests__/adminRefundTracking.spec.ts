@@ -163,7 +163,15 @@ describe("Admin refund analytics outbox", () => {
     const result = await adminCancelOrderHandler(strapi, ctx);
 
     expect(result).toEqual({
-      data: { success: true, refundToman: 220_000, status: "cancelled" },
+      data: {
+        success: true,
+        refundToman: 220_000,
+        // The store returns money as credit, so the response names the method
+        // instead of leaving the operator UI to infer where it went.
+        refundMethod: "WalletCredit",
+        walletCreditToman: 220_000,
+        status: "cancelled",
+      },
     });
     expect(enqueueRefundMock).toHaveBeenCalledTimes(1);
     expect(enqueueRefundMock).toHaveBeenCalledWith(strapi, {
@@ -201,7 +209,15 @@ describe("Admin refund analytics outbox", () => {
     expect(ctx.conflict).not.toHaveBeenCalled();
     expect(ctx.badRequest).not.toHaveBeenCalled();
     expect(result).toEqual({
-      data: { success: true, refundToman: 220_000, status: "cancelled" },
+      data: {
+        success: true,
+        refundToman: 220_000,
+        // The store returns money as credit, so the response names the method
+        // instead of leaving the operator UI to infer where it went.
+        refundMethod: "WalletCredit",
+        walletCreditToman: 220_000,
+        status: "cancelled",
+      },
     });
   });
 
@@ -229,7 +245,15 @@ describe("Admin refund analytics outbox", () => {
 
     expect(ctx.badRequest).not.toHaveBeenCalled();
     expect(result).toEqual({
-      data: { success: true, refundToman: 220_000, status: "cancelled" },
+      data: {
+        success: true,
+        refundToman: 220_000,
+        // The store returns money as credit, so the response names the method
+        // instead of leaving the operator UI to infer where it went.
+        refundMethod: "WalletCredit",
+        walletCreditToman: 220_000,
+        status: "cancelled",
+      },
     });
     expect(restoreStockWithMandatoryAudit).toHaveBeenCalledWith(
       strapi,
@@ -278,7 +302,15 @@ describe("Admin refund analytics outbox", () => {
     const result = await adminCancelOrderHandler(strapi, ctx);
 
     expect(result).toEqual({
-      data: { success: true, refundToman: 220_000, status: "cancelled" },
+      data: {
+        success: true,
+        refundToman: 220_000,
+        // The store returns money as credit, so the response names the method
+        // instead of leaving the operator UI to infer where it went.
+        refundMethod: "WalletCredit",
+        walletCreditToman: 220_000,
+        status: "cancelled",
+      },
     });
     expect(notifyAnipoParcelCancelled).toHaveBeenCalled();
   });
@@ -355,7 +387,15 @@ describe("Admin refund analytics outbox", () => {
     const result = await adminCancelOrderHandler(strapi, ctx);
 
     expect(result).toEqual({
-      data: { success: true, refundToman: 220_000, status: "cancelled" },
+      data: {
+        success: true,
+        refundToman: 220_000,
+        // The store returns money as credit, so the response names the method
+        // instead of leaving the operator UI to infer where it went.
+        refundMethod: "WalletCredit",
+        walletCreditToman: 220_000,
+        status: "cancelled",
+      },
     });
   });
 });

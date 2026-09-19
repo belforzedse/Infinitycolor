@@ -122,10 +122,19 @@ function calculateAdjustmentPlan(
 
 export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
   const { id } = ctx.params;
-  const { items, reason } = ctx.request.body as {
+  const { items, reason, adjustmentId } = ctx.request.body as {
     items: ItemAdjustment[];
     reason?: string;
+    /**
+     * Names this adjustment so a retry of the same operation is recognised as a
+     * retransmission rather than paid out a second time. Optional for backward
+     * compatibility; without it every attempt is a distinct refund.
+     */
+    adjustmentId?: string;
   };
+  const adjustmentOperationId = /^[A-Za-z0-9_-]{1,64}$/.test(String(adjustmentId || ""))
+    ? `adjust-${String(adjustmentId)}`
+    : undefined;
   const isDryRun = ctx.query.dryRun === "true";
 
   try {
@@ -446,6 +455,10 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
         throw new Error("ORDER_REFUND_USER_NOT_FOUND");
       }
       refundTransactionId = await creditOrderRefund(strapi, {
+        // A retried adjustment is the same business operation, so it must not
+        // pay out twice. The operator's client supplies the identity; without
+        // one, each attempt is treated as a distinct refund.
+        operationId: adjustmentOperationId,
         userId,
         orderId: orderIdNum,
         contractId: Number.isFinite(currentContractId) ? currentContractId : null,

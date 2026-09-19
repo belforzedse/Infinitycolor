@@ -317,6 +317,10 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
         data: {
           success: true,
           refundToman: paidAmount,
+          // The store refunds as credit, so name the method rather than leaving
+          // the caller to infer where the money went.
+          refundMethod: paidAmount > 0 ? "WalletCredit" : "None",
+          walletCreditToman: paidAmount,
           status: "cancelled",
         },
       };
