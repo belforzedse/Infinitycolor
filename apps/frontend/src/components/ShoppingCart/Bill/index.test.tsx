@@ -804,6 +804,76 @@ describe("ShoppingCartBillForm auth gate", () => {
     });
   });
 
+  it("names the predecessor on a wallet-only checkout, not just a partial one", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    // Everything is held by the shopper's own earlier attempt, and all of it is
+    // reclaimable — which is what makes the wallet-only card offerable at all.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        balance: 1_200_000,
+        heldBalance: 1_200_000,
+        availableBalance: 0,
+        reusableBalance: 1_200_000,
+      },
+    });
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:wallet-only-quote",
+      financialSummary: { subtotal: 100_000, discount: 0, tax: 0, shipping: 20_000, total: 120_000 },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: true,
+      orderId: 91,
+      redirectUrl: "",
+      paymentStatus: "Succeeded",
+    });
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-being-replaced");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:older-quote");
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("select-wallet")).toBeVisible());
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    // The wallet card covers the total without touching the contribution
+    // toggle, so `walletAmountToman` stays undefined — but the checkout is
+    // entirely wallet-funded and the server still needs the predecessor named.
+    fireEvent.click(screen.getByTestId("select-wallet"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => expect(CartService.getCheckoutQuote).toHaveBeenCalled());
+    const quotePayload = (CartService.getCheckoutQuote as jest.Mock).mock.calls.at(-1)?.[0];
+    expect(quotePayload).toMatchObject({
+      gateway: "wallet",
+      supersedeAttemptId: "attempt-being-replaced",
+    });
+    expect(quotePayload.walletAmountToman).toBeUndefined();
+
+    await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalled());
+    expect((CartService.finalizeCart as jest.Mock).mock.calls.at(-1)?.[0]).toMatchObject({
+      supersedeAttemptId: "attempt-being-replaced",
+    });
+  });
+
   it("blocks payment until the shopper accepts the site terms", async () => {
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:terms-quote",

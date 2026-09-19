@@ -105,7 +105,7 @@ export async function supersedeCheckoutAttempt(
         WHERE id = ?
           AND status = 'Created'
           AND wallet_hold_status = 'Active'
-          AND provider_reference IS NULL
+          AND COALESCE(provider_reference, '') = ''
         RETURNING id`,
       [row.id],
     );

@@ -530,6 +530,50 @@ describe("mixed wallet + gateway checkout", () => {
     expect((await wallet(shopper.user.id)).heldIrr).toBe(0);
   });
 
+  it("lets a shopper retry a checkout whose hold took their whole balance", async () => {
+    // The wallet leg is every rial the shopper has, so once it is held the
+    // free balance is zero. A retry must still work: the money the quote is
+    // being asked to spend is the money this very attempt is holding.
+    const shopper = await seedShopper({ balanceIrr: WALLET_TOMAN * 10 });
+    const attemptId = `retry-${shopper.user.id}`;
+
+    const first = await quoteAndFinalize(shopper.user.id, {
+      attemptId,
+      walletAmountToman: WALLET_TOMAN,
+    });
+    expect(first.result.success).toBe(true);
+    const afterHold = await wallet(shopper.user.id);
+    expect(afterHold.heldIrr).toBe(WALLET_TOMAN * 10);
+    expect(afterHold.balanceIrr - afterHold.heldIrr).toBe(0);
+
+    // Nothing free: quoting without naming the attempt is correctly refused.
+    const blind = await buildWalletCheckoutContext(strapi, shopper.user.id, {
+      selectedGateway: "zarinpal",
+      requestedWalletAmount: WALLET_TOMAN,
+      supersedeAttemptId: null,
+    });
+    expect(() => blind.resolve(TOTAL_TOMAN)).toThrow(
+      expect.objectContaining({ code: "WALLET_FUNDS_HELD_BY_PENDING_PAYMENT" }),
+    );
+
+    // Naming it — which is what the storefront sends on a retry, because the
+    // stored identity is still this attempt — makes the same amount spendable.
+    const retry = await quoteAndFinalize(shopper.user.id, {
+      attemptId,
+      walletAmountToman: WALLET_TOMAN,
+      supersedeAttemptId: attemptId,
+    });
+    expect(retry.result).toMatchObject({ success: true, replayed: true });
+    expect(Number(retry.result.paymentAttempt.id)).toBe(
+      Number(first.result.paymentAttempt.id),
+    );
+
+    // One hold, one attempt, nothing debited twice.
+    const after = await wallet(shopper.user.id);
+    expect(after.heldIrr).toBe(WALLET_TOMAN * 10);
+    expect(after.balanceIrr).toBe(WALLET_TOMAN * 10);
+  });
+
   it("refuses to reclaim another customer's hold, however it is named", async () => {
     const owner = await seedShopper({ balanceIrr: 5_000_000 });
     const stranger = await seedShopper({ balanceIrr: 5_000_000 });

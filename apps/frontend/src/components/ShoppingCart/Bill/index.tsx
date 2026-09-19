@@ -1252,12 +1252,21 @@ function ShoppingCartBillForm({}: Props) {
       // renegotiated after the server answers.
       const submittedGateway = walletContribution.coversTotal ? "wallet" : gateway;
 
+      // The wallet-only card covers the total from credit without the
+      // contribution toggle, so `walletToman` is 0 there while the checkout is
+      // entirely wallet-funded. Gating on the toggle alone would withhold the
+      // predecessor's id exactly when the server needs it — the quote would
+      // then see no reclaimable credit and refuse the card the UI just offered.
+      const spendsWalletCredit =
+        walletContribution.walletToman > 0 || submittedGateway === "wallet";
+
       // The attempt this checkout replaces, so the server can hand its wallet
-      // credit and stock back. Only named when this checkout actually spends
+      // credit and stock back. Named only when this checkout actually spends
       // wallet credit: an ordinary bank checkout must never disturb another
       // checkout the shopper still has open.
-      const supersedeCandidateId =
-        walletContribution.walletToman > 0 ? readCheckoutIdentity()?.attemptId : undefined;
+      const supersedeCandidateId = spendsWalletCredit
+        ? readCheckoutIdentity()?.attemptId
+        : undefined;
 
       const addressPayload =
         isMergeMode || selectedAddressId
@@ -1346,11 +1355,10 @@ function ShoppingCartBillForm({}: Props) {
         // Resuming the same attempt supersedes nothing; only a freshly minted
         // one replaces a predecessor, and it names the one it actually rotated
         // over rather than whatever was in storage when the quote was asked.
-        supersedeAttemptId: resolvedAttempt.continueExisting
-          ? undefined
-          : walletContribution.walletToman > 0
-            ? resolvedAttempt.supersedesAttemptId
-            : undefined,
+        supersedeAttemptId:
+          resolvedAttempt.continueExisting || !spendsWalletCredit
+            ? undefined
+            : resolvedAttempt.supersedesAttemptId,
         // Keep anonymous attribution ephemeral in the browser, but carry the
         // active opaque analytics identity into authoritative order creation.
         analyticsCorrelationId: getAnalyticsCorrelationId(),
