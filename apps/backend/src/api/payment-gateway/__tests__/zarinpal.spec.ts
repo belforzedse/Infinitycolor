@@ -14,7 +14,10 @@ jest.mock("zarinpal-node-sdk", () =>
   })),
 );
 
-import zarinpalServiceFactory from "../services/zarinpal";
+import zarinpalServiceFactory, {
+  isSimulatedAuthority,
+  simulatedAuthorityAmount,
+} from "../services/zarinpal";
 
 const originalEnv = process.env;
 
@@ -22,6 +25,7 @@ const createService = () => {
   const strapi = {
     log: {
       info: jest.fn(),
+      warn: jest.fn(),
       error: jest.fn(),
     },
   };
@@ -135,6 +139,93 @@ describe("ZarinPal payment gateway service", () => {
     );
     expect(mockGetRedirectUrl).toHaveBeenCalledWith(result.authority);
     expect(mockRequest).not.toHaveBeenCalled();
+    // The authority carries the amount it was minted for, so verification can
+    // refuse a mismatch without holding any state.
+    expect(simulatedAuthorityAmount(result.authority)).toBe(250_000);
+  });
+
+  describe("simulated verification", () => {
+    const simulate = () => {
+      process.env.URL = "http://localhost:1337";
+      process.env.ZARINPAL_E2E_DETERMINISTIC = "1";
+      return createService();
+    };
+
+    const mintAuthority = async (service: any, amountToman: number, orderId = 42) => {
+      const started = await service.requestPayment({ orderId, amountToman });
+      return started.authority as string;
+    };
+
+    it("confirms a payment this process started, for the amount it started it at", async () => {
+      const { service } = simulate();
+      const authority = await mintAuthority(service, 25_000);
+
+      const result = await service.verifyPayment({ authority, amountToman: 25_000 });
+
+      expect(result).toEqual(
+        expect.objectContaining({ success: true, code: 100, amount: 250_000 }),
+      );
+      expect(String(result.refId)).toContain("E2EREF-");
+      // Nothing reached ZarinPal.
+      expect(mockVerify).not.toHaveBeenCalled();
+    });
+
+    it("refuses a different amount than the authority was minted for", async () => {
+      const { service } = simulate();
+      const authority = await mintAuthority(service, 25_000);
+
+      // A test that could confirm any amount would prove nothing about the
+      // amount checks the real settlement path depends on.
+      const result = await service.verifyPayment({ authority, amountToman: 2_500_000 });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("mismatch");
+      expect(mockVerify).not.toHaveBeenCalled();
+    });
+
+    it("refuses an authority it did not mint", async () => {
+      const { service } = simulate();
+
+      const result = await service.verifyPayment({
+        authority: "E2E-42-forged",
+        amountToman: 25_000,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("no amount");
+      expect(mockVerify).not.toHaveBeenCalled();
+    });
+
+    it("sends a real authority to the real gateway even while simulating", async () => {
+      const { service } = simulate();
+      mockVerify.mockResolvedValue({ data: { code: 100, ref_id: 987 } });
+
+      // A genuine ZarinPal authority must never be answered from local state:
+      // that would turn an unpaid order into a paid one on a developer machine.
+      const result = await service.verifyPayment({
+        authority: "A00000000000000000000000000000000000",
+        amountToman: 25_000,
+      });
+
+      expect(mockVerify).toHaveBeenCalledWith({
+        amount: 250_000,
+        authority: "A00000000000000000000000000000000000",
+      });
+      expect(result.success).toBe(true);
+      expect(isSimulatedAuthority("A00000000000000000000000000000000000")).toBe(false);
+    });
+
+    it("does not simulate verification when the opt-in is absent", async () => {
+      const { service } = createService();
+      process.env.URL = "http://localhost:1337";
+      process.env.ZARINPAL_MERCHANT_ID = "merchant-123";
+      mockVerify.mockResolvedValue({ data: { code: 100, ref_id: 5 } });
+
+      await service.verifyPayment({ authority: "E2E-42-250000-x", amountToman: 25_000 });
+
+      // Without the flag, even an E2E-shaped authority goes to the gateway.
+      expect(mockVerify).toHaveBeenCalled();
+    });
   });
 
   it("maps a successful gateway request and strips merchant id from stored response", async () => {

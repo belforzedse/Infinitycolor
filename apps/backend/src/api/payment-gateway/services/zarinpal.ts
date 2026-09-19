@@ -79,6 +79,21 @@ export const isZarinPalSimulated = (): boolean => {
 export const isSimulatedAuthority = (authority?: string | null): boolean =>
   /^E2E-/.test(String(authority || "").trim());
 
+/**
+ * The gateway amount a simulated authority was minted for, or null when the
+ * authority is not one of ours or carries no amount.
+ *
+ * `E2E-{orderId}-{amount}-{requestId}`. Authorities minted before the amount
+ * was included return null, and the caller treats that as unverifiable rather
+ * than as agreement.
+ */
+export const simulatedAuthorityAmount = (authority?: string | null): number | null => {
+  const match = /^E2E-\d+-(\d+)-/.exec(String(authority || "").trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+};
+
 const sanitizeGatewayResponse = (value: unknown) => {
   if (!value || typeof value !== "object") return value;
   const clone = JSON.parse(JSON.stringify(value));
@@ -161,7 +176,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     );
 
     if (config.sandbox && isZarinPalSimulated()) {
-      const authority = `E2E-${params.orderId}-${requestId}`;
+      // The amount is minted into the authority. Verification is stateless, so
+      // this is what lets the simulated verify refuse a mismatched amount the
+      // way the real gateway does, instead of approving whatever it is handed.
+      const authority = `E2E-${params.orderId}-${amount}-${requestId}`;
       return {
         success: true,
         authority,
@@ -252,6 +270,49 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     const client = this.createClient(config);
     const amount = this.amountForGateway(params.amountToman, config.currency);
     this.assertValidAmount(amount, config.currency);
+
+    // A simulated authority is verified without contacting ZarinPal, but not
+    // without checking anything: the amount must be exactly the one the
+    // authority was minted for. Anything else — a real authority reaching this
+    // branch, an authority with no minted amount, a mismatched amount — is
+    // refused, so the branch can only ever confirm a payment this process
+    // itself started for this amount.
+    if (config.sandbox && isZarinPalSimulated() && isSimulatedAuthority(params.authority)) {
+      const minted = simulatedAuthorityAmount(params.authority);
+      if (minted === null || minted !== amount) {
+        strapi.log.warn(
+          `[${requestId}] Simulated ZarinPal verification refused: authority ${String(
+            params.authority,
+          ).slice(0, 64)} was minted for ${minted ?? "no"} ${config.currency}, asked to verify ${amount}`,
+        );
+        return {
+          success: false,
+          code: -51,
+          requestId,
+          amount,
+          currency: config.currency,
+          error:
+            minted === null
+              ? "Simulated authority carries no amount"
+              : "Simulated authority amount mismatch",
+          gatewayResponse: { deterministic: true, minted },
+        };
+      }
+      strapi.log.info(
+        `[${requestId}] Simulated ZarinPal verification for ${String(params.authority).slice(0, 64)} at ${amount} ${config.currency}`,
+      );
+      return {
+        success: true,
+        alreadyVerified: false,
+        code: 100,
+        message: "Simulated verification",
+        refId: `E2EREF-${String(params.authority).replace(/^E2E-/, "")}`,
+        requestId,
+        amount,
+        currency: config.currency,
+        gatewayResponse: { deterministic: true, sandbox: config.sandbox },
+      };
+    }
 
     try {
       strapi.log.info(`[${requestId}] Verifying ZarinPal payment`, {
