@@ -63,6 +63,13 @@ type Props = {
   discountCode?: string;
   /** True while the discount/total is being recomputed on the server. */
   previewLoading?: boolean;
+  /**
+   * The wallet tender card, rendered between the delivery section and the
+   * totals. It belongs here rather than beside the bank gateways because
+   * ticking it changes the figures directly below it, and a shopper should see
+   * that happen without scrolling.
+   */
+  walletTender?: React.ReactNode;
 };
 
 function ShoppingCartBillDeliveryForm({
@@ -73,6 +80,7 @@ function ShoppingCartBillDeliveryForm({
   discountPreview,
   discountCode,
   previewLoading,
+  walletTender,
 }: Props) {
   const {
     totalPrice,
@@ -191,6 +199,8 @@ function ShoppingCartBillDeliveryForm({
       >
         <ShoppingCartBillDeliveryTime />
       </DisclosureItem> */}
+
+      {walletTender}
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">

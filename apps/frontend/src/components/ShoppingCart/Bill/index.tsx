@@ -8,7 +8,7 @@ import ShoppingCartBillInformationForm from "./InformationForm";
 import ShoppingCartBillDeliveryForm from "./DeliveryForm";
 import ShoppingCartBillDiscountCoupon from "./DiscountCoupon";
 import ShoppingCartBillPaymentGateway from "./PaymentGateway";
-import WalletContribution, { irrToToman, parseWalletAmount } from "./WalletContribution";
+import WalletContribution, { walletContributionToman } from "./WalletContribution";
 import CheckoutTermsAcceptance from "./CheckoutTermsAcceptance";
 import ReserveShipping from "./ReserveShipping";
 import ReserveFulfillmentChoice, {
@@ -439,8 +439,9 @@ function ShoppingCartBillForm({}: Props) {
   const [walletAvailableIrr, setWalletAvailableIrr] = useState<number>(0);
   const [walletHeldIrr, setWalletHeldIrr] = useState<number>(0);
   const [paymentCapabilities, setPaymentCapabilities] = useState<PaymentCapabilities | null>(null);
+  // All or nothing: ticking the wallet spends as much of this order as the
+  // shopper has, so there is no amount to carry in state.
   const [useWalletCredit, setUseWalletCredit] = useState(false);
-  const [walletAmountText, setWalletAmountText] = useState("");
 
   const [reserveShipping, setReserveShipping] = useState(false);
   const [reviewedServerQuote, setReviewedServerQuote] = useState<{
@@ -472,8 +473,14 @@ function ShoppingCartBillForm({}: Props) {
   // to undefined — hit the "gateway not available" guard and failed with a banner
   // the shopper never saw. Unknown means unknown: the quote re-checks eligibility
   // server-side and now reports SNAPPAY_INELIGIBLE with a specific message.
+  // Bank gateways only. The wallet is a tender the shopper ticks above, not a
+  // gateway they select — leaving it here would let it be auto-selected as the
+  // bank leg, for which there is no longer a card to show.
   const selectableGateways = useMemo(
-    () => availableGateways.filter((gw) => gw !== "snappay" || snappEligible !== false),
+    () =>
+      availableGateways.filter(
+        (gw) => gw !== "wallet" && (gw !== "snappay" || snappEligible !== false),
+      ),
     [availableGateways, snappEligible],
   );
 
@@ -492,19 +499,14 @@ function ShoppingCartBillForm({}: Props) {
    * matching hash, and no round trip that could loop on "quote changed".
    */
   const walletContribution = useMemo(() => {
-    const availableToman = irrToToman(walletAvailableIrr);
-    const parsed = parseWalletAmount(walletAmountText);
-    const requested =
-      useWalletCredit && parsed !== null
-        ? Math.min(parsed, availableToman, totalToman)
-        : 0;
-    
-    const valid = useWalletCredit && parsed !== null && parsed === requested && requested > 0;
+    const walletToman = useWalletCredit
+      ? walletContributionToman(walletAvailableIrr, totalToman)
+      : 0;
     return {
-      walletToman: valid ? requested : 0,
-      coversTotal: valid && requested === totalToman && totalToman > 0,
+      walletToman,
+      coversTotal: walletToman > 0 && walletToman === totalToman && totalToman > 0,
     };
-  }, [totalToman, useWalletCredit, walletAmountText, walletAvailableIrr]);
+  }, [totalToman, useWalletCredit, walletAvailableIrr]);
   const addressContextKey = useMemo(
     () => buildAddressContextKey(shippingAddressContext),
     [shippingAddressContext],
@@ -610,8 +612,11 @@ function ShoppingCartBillForm({}: Props) {
 
   useEffect(() => {
     const hasStoredCheckout = Boolean(readCheckoutIdentity()?.attemptId);
+    // Credit covering the whole order needs no bank, so "no gateway is active"
+    // is not the shopper's problem in that case.
+    const needsBank = !walletContribution.coversTotal;
     setError((prev) =>
-      selectableGateways.length === 0 && !hasStoredCheckout
+      selectableGateways.length === 0 && !hasStoredCheckout && needsBank
         ? EMPTY_GATEWAYS_ERROR
         : prev === EMPTY_GATEWAYS_ERROR
           ? null
@@ -622,7 +627,7 @@ function ShoppingCartBillForm({}: Props) {
         ? selectableGateways[0]
         : prev,
     );
-  }, [selectableGateways]);
+  }, [selectableGateways, walletContribution.coversTotal]);
 
   // Refresh discount preview when code or shipping changes (stable deps).
   // Also re-validates a code restored from localStorage: if it is no longer
@@ -1165,6 +1170,7 @@ function ShoppingCartBillForm({}: Props) {
 
     if (
       !continuationCandidate &&
+      !walletContribution.coversTotal &&
       (selectableGateways.length === 0 || !selectableGateways.includes(gateway))
     ) {
       failPayment("درگاه پرداخت انتخاب شده در دسترس نیست");
@@ -1737,7 +1743,6 @@ function ShoppingCartBillForm({}: Props) {
 
   const onSubmit = (data: FormData) => submitOrder(data);
 
-  const requiredAmountIrr = totalToman * 10;
   const submitOrderStep = useAtomValue(submitOrderStepAtom);
 
   useEffect(() => {
@@ -1882,6 +1887,17 @@ function ShoppingCartBillForm({}: Props) {
                 discountCode={discountCode}
                 previewLoading={discountPreviewLoading}
                 addressContext={shippingAddressContext}
+                walletTender={
+                  <WalletContribution
+                    totalToman={totalToman}
+                    availableIrr={walletAvailableIrr}
+                    heldIrr={walletHeldIrr}
+                    capabilities={paymentCapabilities}
+                    enabled={useWalletCredit}
+                    onEnabledChange={setUseWalletCredit}
+                    disabled={isSubmitting}
+                  />
+                }
               />
               {/*
                 Opening a window is offered only when none is open. One active
@@ -1928,22 +1944,6 @@ function ShoppingCartBillForm({}: Props) {
               } catch {}
             }}
           />
-          <WalletContribution
-            totalToman={totalToman}
-            availableIrr={walletAvailableIrr}
-            heldIrr={walletHeldIrr}
-            capabilities={paymentCapabilities}
-            enabled={useWalletCredit}
-            onEnabledChange={(next) => {
-              setUseWalletCredit(next);
-              if (next && !walletAmountText) {
-                setWalletAmountText(String(Math.min(irrToToman(walletAvailableIrr), totalToman)));
-              }
-            }}
-            amountText={walletAmountText}
-            onAmountTextChange={setWalletAmountText}
-            disabled={isSubmitting}
-          />
           <ShoppingCartBillPaymentGateway
             selected={gateway}
             onChange={setGateway}
@@ -1951,8 +1951,6 @@ function ShoppingCartBillForm({}: Props) {
             snappEligible={snappEligible}
             snappTitle={snappTitle}
             snappDescription={snappDescription}
-            walletAvailableIrr={walletAvailableIrr}
-            requiredAmountIrr={requiredAmountIrr}
             walletCoversTotal={walletContribution.coversTotal}
           />
           <Controller

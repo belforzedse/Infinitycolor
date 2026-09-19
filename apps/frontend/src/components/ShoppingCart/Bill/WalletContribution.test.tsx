@@ -1,111 +1,113 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { priceFormatter } from "@/utils/price";
-import WalletContribution, { irrToToman, parseWalletAmount } from "./WalletContribution";
+import "@testing-library/jest-dom";
+import WalletContribution, {
+  irrToToman,
+  walletContributionToman,
+} from "./WalletContribution";
 
-/** The card renders Persian digits, so expectations are formatted the same way. */
-const fa = (value: number) => priceFormatter(value);
-
-const capabilities = (over: Partial<Parameters<typeof WalletContribution>[0]["capabilities"] & object> = {}) => ({
+const capabilities = {
   walletEnabled: true,
   splitEnabled: true,
   splitDisabledReason: null,
-  splitGateways: ["mellat", "samankish", "zarinpal"],
+  splitGateways: ["mellat"],
   gatewayMinimumsToman: { mellat: 1000 },
-  ...over,
-}) as NonNullable<Parameters<typeof WalletContribution>[0]["capabilities"]>;
+} as any;
 
-function setup(over: Partial<Parameters<typeof WalletContribution>[0]> = {}) {
+const setup = (overrides: Partial<React.ComponentProps<typeof WalletContribution>> = {}) => {
   const onEnabledChange = jest.fn();
-  const onAmountTextChange = jest.fn();
-  const props = {
-    totalToman: 1_200_000,
-    availableIrr: 5_000_000,
-    heldIrr: 0,
-    capabilities: capabilities(),
-    enabled: true,
-    onEnabledChange,
-    amountText: "350000",
-    onAmountTextChange,
-    ...over,
-  };
-  render(<WalletContribution {...props} />);
-  return { onEnabledChange, onAmountTextChange };
-}
-
-describe("wallet amount parsing", () => {
-  it("accepts Persian and Arabic-Indic digits with separators", () => {
-    expect(parseWalletAmount("۳۵۰٬۰۰۰")).toBe(350_000);
-    expect(parseWalletAmount("٣٥٠,٠٠٠")).toBe(350_000);
-  });
-
-  it("refuses anything that is not purely a number", () => {
-    for (const bad of ["12a3", "1.5", "-5", ""]) {
-      expect(parseWalletAmount(bad)).toBeNull();
-    }
-  });
-
-  it("never rounds a fractional legacy balance up into spendable credit", () => {
-    expect(irrToToman(10_005)).toBe(1_000);
-    expect(irrToToman(9)).toBe(0);
-  });
-});
+  render(
+    <WalletContribution
+      totalToman={1_200_000}
+      availableIrr={5_000_000}
+      heldIrr={0}
+      capabilities={capabilities}
+      enabled
+      onEnabledChange={onEnabledChange}
+      {...overrides}
+    />,
+  );
+  return { onEnabledChange };
+};
 
 describe("WalletContribution", () => {
-  it("shows the split without changing the order total", () => {
-    setup();
+  it("never rounds a fractional legacy balance up into spendable credit", () => {
+    // 1,239 rial is 123.9 toman. Offering 124 would promise a rial the store
+    // does not hold, and the server floors too.
+    expect(irrToToman(1_239)).toBe(123);
+    expect(irrToToman(0)).toBe(0);
+    expect(irrToToman(-500)).toBe(0);
+  });
 
-    expect(screen.getByTestId("wallet-contribution-wallet-leg")).toHaveTextContent(fa(350_000));
-    expect(screen.getByTestId("wallet-contribution-gateway-leg")).toHaveTextContent(fa(850_000));
+  it("spends as much of the order as the shopper has, and no more", () => {
+    // Credit is the smaller of the two, so it covers part of the order.
+    expect(walletContributionToman(3_500_000, 1_200_000)).toBe(350_000);
+    // The order is the smaller of the two, so the rest of the credit is left.
+    expect(walletContributionToman(50_000_000, 1_200_000)).toBe(1_200_000);
+    expect(walletContributionToman(0, 1_200_000)).toBe(0);
+  });
+
+  it("shows the split without changing the order total", () => {
+    setup({ availableIrr: 3_500_000 });
+
+    expect(screen.getByTestId("wallet-contribution-wallet-leg")).toHaveTextContent("۳۵۰٬۰۰۰");
+    expect(screen.getByTestId("wallet-contribution-gateway-leg")).toHaveTextContent("۸۵۰٬۰۰۰");
+    // Wallet credit is a tender, not a discount.
+    expect(screen.getByTestId("wallet-contribution-summary")).toHaveTextContent("۱٬۲۰۰٬۰۰۰");
   });
 
   it("reports held credit separately from what is spendable", () => {
-    setup({ availableIrr: 1_500_000, heldIrr: 3_500_000, amountText: "150000" });
+    setup({ availableIrr: 1_500_000, heldIrr: 3_500_000 });
 
-    expect(
-      screen.getByText(new RegExp(`موجودی قابل استفاده: ${fa(150_000)} تومان`)),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(new RegExp(`${fa(350_000)} تومان برای یک پرداخت در حال انجام رزرو شده است`)),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("wallet-contribution-available")).toHaveTextContent("۱۵۰٬۰۰۰");
+    expect(screen.getByTestId("wallet-contribution-held")).toHaveTextContent("۳۵۰٬۰۰۰");
+    // Only what is spendable is offered to this order.
+    expect(screen.getByTestId("wallet-contribution-wallet-leg")).toHaveTextContent("۱۵۰٬۰۰۰");
   });
 
-  it("refuses an amount beyond what is spendable", () => {
-    setup({ availableIrr: 1_000_000, amountText: "350000" });
+  it("shows no split at all until the shopper ticks the box", () => {
+    setup({ enabled: false });
 
-    expect(screen.getByTestId("wallet-contribution-error")).toHaveTextContent(
-      "موجودی قابل استفاده کیف پول کافی نیست. مبلغ را تغییر دهید.",
-    );
-    // Nothing is attributed to the wallet while the amount is invalid.
-    expect(screen.getByTestId("wallet-contribution-wallet-leg")).toHaveTextContent(fa(0));
-    expect(screen.getByTestId("wallet-contribution-gateway-leg")).toHaveTextContent(fa(1_200_000));
+    expect(screen.getByTestId("wallet-contribution-toggle")).not.toBeChecked();
+    expect(screen.queryByTestId("wallet-contribution-summary")).not.toBeInTheDocument();
+    // The balance is still worth seeing before deciding.
+    expect(screen.getByTestId("wallet-contribution-available")).toHaveTextContent("۵۰۰٬۰۰۰");
   });
 
-  it("fills in the largest usable amount on request", () => {
-    const { onAmountTextChange } = setup({ availableIrr: 5_000_000 });
+  it("reports the shopper's choice rather than acting on it itself", () => {
+    const { onEnabledChange } = setup({ enabled: false });
 
-    fireEvent.click(screen.getByTestId("wallet-contribution-max"));
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
 
-    // Capped by the order total as well as by the balance.
-    expect(onAmountTextChange).toHaveBeenCalledWith("500000");
+    expect(onEnabledChange).toHaveBeenCalledWith(true);
   });
 
   it("says so when credit covers the whole order", () => {
-    setup({ totalToman: 500_000, availableIrr: 5_000_000, amountText: "500000" });
+    setup({ totalToman: 500_000, availableIrr: 5_000_000 });
 
-    expect(
-      screen.getByText(/کل مبلغ سفارش را پوشش می‌دهد/),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("wallet-contribution-wallet-leg")).toHaveTextContent("۵۰۰٬۰۰۰");
+    expect(screen.getByTestId("wallet-contribution-gateway-leg")).toHaveTextContent("۰");
+    expect(screen.getByText(/نیازی به درگاه بانکی نیست/)).toBeInTheDocument();
   });
 
   it("explains a disabled split instead of silently dropping the option", () => {
     setup({
-      capabilities: capabilities({ splitEnabled: false, splitGateways: [] }),
+      availableIrr: 3_500_000,
+      capabilities: { ...capabilities, splitEnabled: false, splitDisabledReason: "disabled" },
     });
 
-    expect(
-      screen.getByText(/پرداخت ترکیبی کیف پول و درگاه در حال حاضر فعال نیست/),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("wallet-contribution-split-refused")).toBeInTheDocument();
+  });
+
+  it("does not claim a split is refused when credit covers the whole order", () => {
+    // Nothing is left for a gateway, so the split rule does not apply.
+    setup({
+      totalToman: 500_000,
+      availableIrr: 5_000_000,
+      capabilities: { ...capabilities, splitEnabled: false, splitDisabledReason: "disabled" },
+    });
+
+    expect(screen.queryByTestId("wallet-contribution-split-refused")).not.toBeInTheDocument();
   });
 
   it("renders nothing when the wallet is unavailable or empty", () => {
@@ -114,11 +116,9 @@ describe("WalletContribution", () => {
         totalToman={1_200_000}
         availableIrr={0}
         heldIrr={0}
-        capabilities={capabilities()}
+        capabilities={capabilities}
         enabled={false}
         onEnabledChange={jest.fn()}
-        amountText=""
-        onAmountTextChange={jest.fn()}
       />,
     );
     expect(container).toBeEmptyDOMElement();

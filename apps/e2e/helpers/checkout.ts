@@ -44,13 +44,28 @@ export async function selectZarinpalGateway(page: Page) {
   await expect(zarinpal).toHaveAttribute("data-selected", "true");
 }
 
-/** Select the seeded wallet gateway and verify the balance makes it payable. */
+/**
+ * Tick the wallet tender.
+ *
+ * The wallet is not a gateway to select: it is a checkbox above the bank
+ * gateways that spends as much of the order as the shopper's credit covers.
+ * When it covers all of it, the gateway list is replaced by a note saying no
+ * bank is needed, which is what the wallet-only assertion below checks.
+ */
+export async function useWalletCredit(page: Page) {
+  const toggle = page.getByTestId("wallet-contribution-toggle");
+  await expect(toggle, "the wallet tender should be offered").toBeVisible({ timeout: 15_000 });
+  await toggle.check();
+  await expect(page.getByTestId("wallet-contribution-summary")).toBeVisible();
+}
+
+/** Tick the wallet and require that it covers the entire order. */
 export async function selectWalletGateway(page: Page) {
-  const wallet = page.getByTestId("payment-gateway-wallet");
-  await expect(wallet).toBeVisible({ timeout: 15_000 });
-  await expect(wallet).toHaveAttribute("data-disabled", "false");
-  await wallet.click();
-  await expect(wallet).toHaveAttribute("data-selected", "true");
+  await useWalletCredit(page);
+  await expect(
+    page.getByTestId("payment-gateway-wallet-only"),
+    "credit should cover the whole order, leaving no bank leg",
+  ).toBeVisible({ timeout: 15_000 });
 }
 
 /**

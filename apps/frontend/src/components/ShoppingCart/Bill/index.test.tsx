@@ -140,8 +140,9 @@ jest.mock("./InformationForm", () => ({
 
 jest.mock("./DeliveryForm", () => ({
   __esModule: true,
-  default: ({ setValue }: any) => (
+  default: ({ setValue, walletTender }: any) => (
     <div data-testid="checkout-delivery-form">
+      {walletTender}
       <button
         type="button"
         data-testid="select-shipping"
@@ -246,11 +247,7 @@ jest.mock("./PaymentGateway", () => ({
           select Mellat
         </button>
       )}
-      {availableGateways?.includes("wallet") && (
-        <button type="button" data-testid="select-wallet" onClick={() => onChange("wallet")}>
-          select wallet
-        </button>
-      )}
+
     </div>
   ),
 }));
@@ -738,6 +735,11 @@ describe("ShoppingCartBillForm auth gate", () => {
         total: 120_000,
       },
     });
+    // 120,000 toman of order against 500,000 toman of spendable credit.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 5_000_000, heldBalance: 0, availableBalance: 5_000_000 },
+    });
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: true,
       orderId: 88,
@@ -755,15 +757,25 @@ describe("ShoppingCartBillForm auth gate", () => {
       </Provider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId("select-wallet")).toBeVisible());
+    await waitFor(() =>
+      expect(screen.getByTestId("select-checkout-customer")).toBeVisible(),
+    );
     fireEvent.click(screen.getByTestId("select-checkout-customer"));
     fireEvent.click(screen.getByTestId("select-shipping"));
-    fireEvent.click(screen.getByTestId("select-wallet"));
+    // Ticking the wallet is the whole choice: it spends as much of the order
+    // as the shopper has, which here is all of it, so no bank is involved.
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
     fireEvent.click(screen.getByTestId("checkout-accept-terms"));
     fireEvent.click(screen.getByTestId("checkout-submit"));
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=88");
+    });
+    expect((CartService.finalizeCart as jest.Mock).mock.calls.at(-1)?.[0]).toMatchObject({
+      gateway: "wallet",
     });
   });
 
@@ -850,13 +862,17 @@ describe("ShoppingCartBillForm auth gate", () => {
       </Provider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId("select-wallet")).toBeVisible());
+    await waitFor(() =>
+      expect(screen.getByTestId("select-checkout-customer")).toBeVisible(),
+    );
     fireEvent.click(screen.getByTestId("select-checkout-customer"));
     fireEvent.click(screen.getByTestId("select-shipping"));
-    // The wallet card covers the total without touching the contribution
-    // toggle, so `walletAmountToman` stays undefined — but the checkout is
-    // entirely wallet-funded and the server still needs the predecessor named.
-    fireEvent.click(screen.getByTestId("select-wallet"));
+    // Credit covers the whole order, so this is a wallet-only checkout and the
+    // server still needs the predecessor named to hand its hold back.
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
     fireEvent.click(screen.getByTestId("checkout-accept-terms"));
     fireEvent.click(screen.getByTestId("checkout-submit"));
 
@@ -865,8 +881,10 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(quotePayload).toMatchObject({
       gateway: "wallet",
       supersedeAttemptId: "attempt-being-replaced",
+      // The whole order, stated explicitly, so the server resolves the same
+      // wallet-only allocation the card just showed the shopper.
+      walletAmountToman: 120_000,
     });
-    expect(quotePayload.walletAmountToman).toBeUndefined();
 
     await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalled());
     expect((CartService.finalizeCart as jest.Mock).mock.calls.at(-1)?.[0]).toMatchObject({

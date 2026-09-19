@@ -87,24 +87,37 @@ export async function startTopupFromWalletPage(
 }
 
 /**
- * Put a wallet amount into the checkout's contribution card.
+ * Tick the wallet tender at checkout and report the split it produces.
  *
- * The card only appears when the server reports the split as available, so a
- * missing card is a real failure rather than something to skip past.
+ * The card is all-or-nothing: ticking it spends as much of this order as the
+ * shopper's spendable credit covers. It only appears when the server reports
+ * the wallet as available, so a missing card is a real failure rather than
+ * something to skip past.
  */
-export async function contributeWalletAmount(page: Page, amountToman: number) {
+export async function useWalletAtCheckout(page: Page): Promise<{
+  walletToman: number;
+  gatewayToman: number;
+}> {
   const toggle = page.getByTestId("wallet-contribution-toggle");
   await expect(
     toggle,
-    "the contribution card should be offered when the split is enabled and credit is spendable",
+    "the contribution card should be offered when the wallet is enabled and credit is spendable",
   ).toBeVisible({ timeout: 30_000 });
-  await toggle.click();
+  await toggle.check();
 
-  const input = page.getByTestId("wallet-contribution-input");
-  await expect(input).toBeVisible();
-  await input.fill(String(amountToman));
-
-  // The summary is the shopper's own statement of the split, so assert the
-  // gateway leg is what is left rather than trusting the input alone.
   await expect(page.getByTestId("wallet-contribution-summary")).toBeVisible();
+  const toman = async (testId: string) => {
+    const text = (await page.getByTestId(testId).innerText()).trim();
+    // Persian digits and separators back to a number.
+    const normalized = text
+      .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+      .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+      .replace(/[^\d]/g, "");
+    return Number(normalized || 0);
+  };
+
+  return {
+    walletToman: await toman("wallet-contribution-wallet-leg"),
+    gatewayToman: await toman("wallet-contribution-gateway-leg"),
+  };
 }
