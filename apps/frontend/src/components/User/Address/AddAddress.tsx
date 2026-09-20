@@ -12,6 +12,7 @@ import type { Province, City } from "@/services/location";
 import { getProvinces, getCities } from "@/services/location";
 import { toast } from "react-hot-toast";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import { normalizeDigits } from "@/utils/faNum";
 import { addressesAtom } from "@/atoms/addressesAtom";
 import { apiCache } from "@/lib/api-cache";
 
@@ -63,7 +64,14 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
       id: editingAddress.shipping_city.id,
       name: editingAddress.shipping_city.Title,
     });
-    setPostalCode(editingAddress.PostalCode || "");
+    // Migrated Woo rows carry dashed and Persian-digit postal codes. Put them
+    // through the same normalization as typed input, so editing the street
+    // text of a legacy address is not blocked by its stored formatting.
+    setPostalCode(
+      normalizeDigits(editingAddress.PostalCode || "")
+        .replace(/\D/g, "")
+        .slice(0, 10),
+    );
     setDetails(editingAddress.Description || "");
     setFullAddress(editingAddress.FullAddress || "");
   }, [isOpen, editingAddress]);
@@ -152,6 +160,14 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
       return;
     }
 
+    // The backend rejects anything but 10 digits with English copy that
+    // `translateErrorMessage` cannot map, so a short code came back as the
+    // generic «خطا در اضافه کردن آدرس» and told the shopper nothing.
+    if (postalCode.length !== 10) {
+      toast.error("کد پستی باید ۱۰ رقم باشد");
+      return;
+    }
+
     if (!fullAddress) {
       toast.error("لطفاً آدرس دقیق را وارد کنید");
       return;
@@ -225,7 +241,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
       )}
 
       <Modal isOpen={isOpen} onClose={() => setIsOpen(false)}>
-        <form onSubmit={handleSubmit} className="flex max-h-[calc(100dvh-12rem)] min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain px-2 [scrollbar-gutter:stable]">
+        <form noValidate onSubmit={handleSubmit} className="flex max-h-[calc(100dvh-12rem)] min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain px-2 [scrollbar-gutter:stable]">
           <div className="grid flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
           <span className="text-foreground-primary text-lg mb-1 lg:text-2xl lg:col-span-2">
             {editingAddress ? "ویرایش آدرس" : "افزودن آدرس"}
@@ -304,7 +320,11 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
               dir="ltr"
               inputMode="numeric"
               value={postalCode}
-              onChange={(e) => setPostalCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              onChange={(e) =>
+                setPostalCode(
+                  normalizeDigits(e.target.value).replace(/\D/g, "").slice(0, 10),
+                )
+              }
               placeholder="کد پستی ۱۰ رقمی"
               pattern="[0-9]{10}"
               maxLength={10}
