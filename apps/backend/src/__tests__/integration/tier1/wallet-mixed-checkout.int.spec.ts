@@ -15,6 +15,11 @@ import { settleOrderWithWallet } from "../../../api/cart/controllers/handlers/wa
 import { claimPaymentAttemptForInitiation } from "../../../api/payment-attempt/services/claim-payment-attempt";
 import { releaseOrderReservation } from "../../../utils/stockReservations";
 import { refreshWalletReadiness } from "../../../api/local-user-wallet/services/wallet-readiness";
+import {
+  applySnappayAdminUpdate,
+  applySnappayCancellation,
+  finalizeSnappaySettlement,
+} from "../../../api/payment-gateway/services/snappay-finalization";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
 
@@ -29,6 +34,7 @@ const START_BALANCE_IRR = 5_000_000; // 500,000 toman
 beforeAll(async () => {
   process.env.WALLET_HOLDS_ENABLED = "true";
   process.env.WALLET_CHECKOUT_SPLIT_ENABLED = "true";
+  process.env.WALLET_SPLIT_SNAPPAY_ENABLED = "true";
   strapi = await setupStrapi();
   await refreshWalletReadiness(strapi);
 });
@@ -37,6 +43,7 @@ afterAll(async () => {
   await teardownStrapi();
   delete process.env.WALLET_HOLDS_ENABLED;
   delete process.env.WALLET_CHECKOUT_SPLIT_ENABLED;
+  delete process.env.WALLET_SPLIT_SNAPPAY_ENABLED;
 });
 
 beforeEach(async () => {
@@ -46,6 +53,7 @@ beforeEach(async () => {
   // be switched on for the quote to offer a split at all.
   await f.createPaymentGateway({ title: "Wallet", isActive: true });
   await f.createPaymentGateway({ title: "ZarinPal", isActive: true });
+  await f.createPaymentGateway({ title: "SnappPay", isActive: true });
 });
 
 afterEach(async () => {
@@ -166,7 +174,183 @@ async function quoteAndFinalize(
   return { quote, result, context };
 }
 
+async function settleMixedSnappayOrder(shopper: { user: { id: number } }, attemptName: string) {
+  const snappayOrchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
+  const originalEligibility = snappayOrchestrator.checkEligibility;
+  snappayOrchestrator.checkEligibility = jest.fn().mockResolvedValue(undefined);
+  const { result } = await quoteAndFinalize(shopper.user.id, {
+    attemptId: `${attemptName}-${shopper.user.id}`,
+    gateway: "snappay",
+    walletAmountToman: WALLET_TOMAN,
+  }).finally(() => {
+    snappayOrchestrator.checkEligibility = originalEligibility;
+  });
+  expect(result.success).toBe(true);
+
+  const attempt: any = await strapi.db
+    .query("api::payment-attempt.payment-attempt")
+    .findOne({ where: { id: result.paymentAttempt.id } });
+  const providerTx: any = await strapi.db
+    .query("api::contract-transaction.contract-transaction")
+    .findOne({
+      where: {
+        contract: { id: result.contract.id },
+        external_source: "SnappPay",
+      },
+    });
+  expect(providerTx).toMatchObject({
+    Amount: String(GATEWAY_TOMAN * 10),
+    SettlementGateway: "SnappPay",
+  });
+
+  await strapi.db.query("api::contract-transaction.contract-transaction").update({
+    where: { id: providerTx.id },
+    data: { GatewayStatus: "SETTLE" },
+  });
+  await finalizeSnappaySettlement(strapi, {
+    attemptId: Number(attempt.id),
+    orderId: Number(result.order.id),
+    contractId: Number(result.contract.id),
+    transactionRowId: Number(providerTx.id),
+    transactionId: String(attempt.providerReference),
+  });
+
+  return { result, attempt, providerTx };
+}
+
 describe("mixed wallet + gateway checkout", () => {
+  it("settles wallet + SnappPay and refunds only the wallet-funded leg locally", async () => {
+    const shopper = await seedShopper();
+    const { result, attempt, providerTx } = await settleMixedSnappayOrder(shopper, "snappay-mixed");
+
+    expect(await wallet(shopper.user.id)).toMatchObject({
+      balanceIrr: START_BALANCE_IRR - WALLET_TOMAN * 10,
+      heldIrr: 0,
+    });
+
+    await applySnappayCancellation(
+      strapi,
+      {
+        attemptId: Number(attempt.id),
+        orderId: Number(result.order.id),
+        contractId: Number(result.contract.id),
+        transactionRowId: Number(providerTx.id),
+        transactionId: String(attempt.providerReference),
+      },
+      "CANCEL",
+      "integration refund",
+    );
+
+    // SnappPay returns its own financed leg. Infinity credits exactly what the
+    // wallet funded — never the whole order — and does it once.
+    expect(await wallet(shopper.user.id)).toMatchObject({
+      balanceIrr: START_BALANCE_IRR,
+      heldIrr: 0,
+    });
+    const ledger = await strapi.db
+      .query("api::local-user-wallet-transaction.local-user-wallet-transaction")
+      .findMany({ where: { user_wallet: { id: (await wallet(shopper.user.id)).id } } });
+    expect(ledger.map((row: any) => [row.Type, Number(row.Amount)])).toEqual(
+      expect.arrayContaining([
+        ["Minus", WALLET_TOMAN * 10],
+        ["Add", WALLET_TOMAN * 10],
+      ]),
+    );
+    expect(ledger.filter((row: any) => row.Type === "Add")).toHaveLength(1);
+
+    const returns = await strapi.db
+      .query("api::contract-transaction.contract-transaction")
+      .findMany({
+        where: { contract: { id: result.contract.id }, Type: "Return" },
+      });
+    expect(returns).toHaveLength(2);
+    expect(
+      Object.fromEntries(
+        returns.map((transaction: any) => [
+          transaction.SettlementGateway,
+          Number(transaction.Amount),
+        ]),
+      ),
+    ).toEqual({
+      Wallet: WALLET_TOMAN * 10,
+      SnappPay: GATEWAY_TOMAN * 10,
+    });
+  });
+
+  it("allocates a partial SnappPay refund proportionally and credits only that wallet share", async () => {
+    const shopper = await seedShopper({ quantity: 2 });
+    const { result, attempt, providerTx } = await settleMixedSnappayOrder(
+      shopper,
+      "snappay-partial",
+    );
+    const [orderItem]: any[] = await strapi.db
+      .query("api::order-item.order-item")
+      .findMany({ where: { order: { id: result.order.id } } });
+
+    await applySnappayAdminUpdate(
+      strapi,
+      {
+        attemptId: Number(attempt.id),
+        orderId: Number(result.order.id),
+        contractId: Number(result.contract.id),
+        transactionRowId: Number(providerTx.id),
+        transactionId: String(attempt.providerReference),
+      },
+      {
+        changes: [
+          {
+            orderItemId: Number(orderItem.id),
+            oldCount: 2,
+            newCount: 1,
+            restockDelta: 1,
+          },
+        ],
+        newTotalToman: TOTAL_TOMAN / 2,
+        newDiscountToman: 0,
+        newShippingToman: 0,
+        expectedOldTotalToman: TOTAL_TOMAN,
+        reason: "integration partial refund",
+        actorId: 1,
+        operationId: 77,
+      },
+    );
+
+    const expectedWalletRefundIrr = (WALLET_TOMAN * 10) / 2;
+    const expectedGatewayRefundIrr = (GATEWAY_TOMAN * 10) / 2;
+    expect(await wallet(shopper.user.id)).toMatchObject({
+      balanceIrr: START_BALANCE_IRR - WALLET_TOMAN * 10 + expectedWalletRefundIrr,
+      heldIrr: 0,
+    });
+
+    const returns = await strapi.db
+      .query("api::contract-transaction.contract-transaction")
+      .findMany({
+        where: { contract: { id: result.contract.id }, Type: "Return" },
+      });
+    expect(returns).toHaveLength(2);
+    expect(
+      Object.fromEntries(
+        returns.map((transaction: any) => [
+          transaction.SettlementGateway,
+          Number(transaction.Amount),
+        ]),
+      ),
+    ).toEqual({
+      Wallet: expectedWalletRefundIrr,
+      SnappPay: expectedGatewayRefundIrr,
+    });
+    expect(
+      returns.every((transaction: any) => transaction.GatewayResponse?.operationId === 77),
+    ).toBe(true);
+
+    const ledger = await strapi.db
+      .query("api::local-user-wallet-transaction.local-user-wallet-transaction")
+      .findMany({ where: { user_wallet: { id: (await wallet(shopper.user.id)).id } } });
+    expect(ledger.filter((row: any) => row.Type === "Add")).toEqual([
+      expect.objectContaining({ Amount: String(expectedWalletRefundIrr) }),
+    ]);
+  });
+
   it("holds the wallet leg, charges the gateway the remainder, and settles both once", async () => {
     const shopper = await seedShopper();
 
@@ -241,9 +425,9 @@ describe("mixed wallet + gateway checkout", () => {
       Wallet: WALLET_TOMAN * 10,
       SamanKish: GATEWAY_TOMAN * 10,
     });
-    expect(
-      legs.reduce((sum: number, leg: any) => sum + Number(leg.Amount), 0),
-    ).toBe(TOTAL_TOMAN * 10);
+    expect(legs.reduce((sum: number, leg: any) => sum + Number(leg.Amount), 0)).toBe(
+      TOTAL_TOMAN * 10,
+    );
   });
 
   it("settles a wallet-only order through the hold path and replays without a second debit", async () => {
@@ -308,9 +492,7 @@ describe("mixed wallet + gateway checkout", () => {
     const logs = await strapi.db
       .query("api::order-log.order-log")
       .findMany({ where: { order: { id: result.order.id } } });
-    expect(
-      logs.some((log: any) => log?.Changes?.walletPath === "hold"),
-    ).toBe(true);
+    expect(logs.some((log: any) => log?.Changes?.walletPath === "hold")).toBe(true);
   });
 
   it("returns the held credit exactly once when the checkout is released", async () => {
@@ -441,9 +623,9 @@ describe("mixed wallet + gateway checkout", () => {
     });
 
     // Initiation wins the race for the same row.
-    expect(await claimPaymentAttemptForInitiation(strapi, Number(first.result.paymentAttempt.id))).toBe(
-      true,
-    );
+    expect(
+      await claimPaymentAttemptForInitiation(strapi, Number(first.result.paymentAttempt.id)),
+    ).toBe(true);
 
     await f.createCartItem({
       cartId: shopper.cart.id,
@@ -643,9 +825,7 @@ describe("mixed wallet + gateway checkout", () => {
       supersedeAttemptId: attemptId,
     });
     expect(retry.result).toMatchObject({ success: true, replayed: true });
-    expect(Number(retry.result.paymentAttempt.id)).toBe(
-      Number(first.result.paymentAttempt.id),
-    );
+    expect(Number(retry.result.paymentAttempt.id)).toBe(Number(first.result.paymentAttempt.id));
 
     // One hold, one attempt, nothing debited twice.
     const after = await wallet(shopper.user.id);

@@ -13,6 +13,8 @@ import {
   notifyAnipoParcelCancelled,
   type AnipoCancelSnapshot,
 } from "../../order/controllers/helpers/notifyAnipoParcelCancelled";
+import { creditWalletBalanceAtomic } from "../../local-user-wallet/services/local-user-wallet";
+import { planSnappayTenderAdjustment } from "./snappay-split-tender";
 
 type FinalizationIds = {
   attemptId: number;
@@ -21,6 +23,111 @@ type FinalizationIds = {
   transactionRowId: number;
   transactionId: string;
 };
+
+type SnappayRefundTransaction = {
+  id: number;
+  amountIrr: number;
+};
+
+async function createSnappayRefundTransactions(
+  strapi: Strapi,
+  input: {
+    contractId: number;
+    maxStep: number;
+    walletRefundIrr: number;
+    gatewayRefundIrr: number;
+    metadata: Record<string, unknown>;
+    trx: any;
+  },
+): Promise<SnappayRefundTransaction[]> {
+  const legs = [
+    {
+      key: "wallet",
+      amountIrr: input.walletRefundIrr,
+      externalSource: "Wallet",
+      settlementGateway: "Wallet",
+    },
+    {
+      key: "snappay",
+      amountIrr: input.gatewayRefundIrr,
+      externalSource: "SnappPay",
+      settlementGateway: "SnappPay",
+    },
+  ].filter((leg) => leg.amountIrr > 0);
+  const created: SnappayRefundTransaction[] = [];
+
+  for (const [index, leg] of legs.entries()) {
+    const transaction: any = await strapi.db
+      .query("api::contract-transaction.contract-transaction")
+      .create({
+        data: {
+          Type: "Return",
+          Amount: leg.amountIrr,
+          Step: input.maxStep + index + 1,
+          Status: "Success",
+          external_source: leg.externalSource,
+          SettlementGateway: leg.settlementGateway,
+          GatewayResponse: {
+            ...input.metadata,
+            refundLeg: leg.key,
+            walletLegIrr: leg.key === "wallet" ? leg.amountIrr : 0,
+            gatewayLegIrr: leg.key === "snappay" ? leg.amountIrr : 0,
+          },
+          contract: input.contractId,
+          Date: new Date(),
+        },
+        ...(input.trx ? { transacting: input.trx } : {}),
+      } as any);
+    created.push({
+      id: Number(transaction?.id) || 0,
+      amountIrr: leg.amountIrr,
+    });
+  }
+
+  return created;
+}
+
+async function creditSnappayWalletRefund(
+  strapi: Strapi,
+  input: {
+    userId: number;
+    amountIrr: number;
+    reference: string;
+    note: string;
+    trx: any;
+  },
+): Promise<void> {
+  if (input.amountIrr <= 0) return;
+  if (!Number.isInteger(input.userId) || input.userId <= 0) {
+    throw new Error("SNAPPAY_WALLET_REFUND_USER_NOT_FOUND");
+  }
+  const ledger = strapi.db.query(
+    "api::local-user-wallet-transaction.local-user-wallet-transaction",
+  );
+  const existing: any = await ledger.findOne({
+    where: { ReferenceId: input.reference },
+    select: ["id"],
+    transacting: input.trx,
+  } as any);
+  if (existing) return;
+
+  const credit = await creditWalletBalanceAtomic(strapi, input.userId, input.amountIrr, input.trx);
+  if (!credit.success || !credit.walletId) {
+    throw new Error(credit.error || "SNAPPAY_WALLET_REFUND_FAILED");
+  }
+  await ledger.create({
+    data: {
+      Amount: input.amountIrr,
+      Type: "Add",
+      Date: new Date(),
+      Cause: "SnappPay Order Refund",
+      Note: input.note,
+      ReferenceId: input.reference,
+      user_wallet: credit.walletId,
+    },
+    transacting: input.trx,
+  } as any);
+}
 
 async function incrementDiscountUsage(strapi: Strapi, order: any, trx: any): Promise<void> {
   const code = String(order?.DiscountCode || "").trim();
@@ -60,8 +167,8 @@ export async function finalizeSnappaySettlement(
   ids: FinalizationIds,
 ): Promise<{ replayed: boolean }> {
   return strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [ids.orderId]);
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM contract_transactions WHERE id = ? FOR UPDATE", [
       ids.transactionRowId,
     ]);
@@ -110,17 +217,9 @@ export async function finalizeSnappaySettlement(
           }`,
         );
       }
-      // NOTE before enabling WALLET_SPLIT_SNAPPAY_ENABLED: this function locks
-      // payment_attempts *before* orders, the reverse of every other settlement
-      // writer. That is only safe while SnappPay attempts carry no wallet hold —
-      // releaseWalletHoldsForOrder takes no attempt lock when it finds none, so
-      // today there is no cycle. Reorder these two locks to orders-first before
-      // SnappPay is allowed to hold wallet credit.
-      //
       // Wallet leg, after stock and last in the lock order. SnappPay mixed
-      // tender is gated off, so today this is a no-op for every SnappPay order;
-      // it is wired here so that enabling the flag cannot leave a captured
-      // gateway leg beside an uncaptured wallet leg.
+      // tender captures in the same transaction as provider settlement, so a
+      // captured gateway leg can never sit beside an uncaptured wallet leg.
       const walletLeg = await captureWalletLegForSettlement(
         strapi,
         {
@@ -271,9 +370,10 @@ export async function applySnappayCancellation(
   reason: string,
 ): Promise<{ replayed: boolean }> {
   let anipoCancelSnapshot: AnipoCancelSnapshot | null = null;
+  let cancellationRefundTransactions: SnappayRefundTransaction[] = [];
   const result = await strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [ids.orderId]);
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
 
     const attempt: any = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
       where: { id: ids.attemptId },
@@ -287,6 +387,7 @@ export async function applySnappayCancellation(
     const order: any = await strapi.db.query("api::order.order").findOne({
       where: { id: ids.orderId },
       populate: {
+        user: true,
         order_items: {
           populate: {
             product_variation: { populate: { product_stock: true } },
@@ -303,6 +404,14 @@ export async function applySnappayCancellation(
     }
 
     const reservationStatus = String(order.ReservationStatus || "");
+    const settledLocally =
+      String(attempt.Status) === "Succeeded" && String(attempt.providerStatus) === "SETTLE";
+    const contract: any = await strapi.db.query("api::contract.contract").findOne({
+      where: { id: ids.contractId },
+      populate: { contract_transactions: true },
+      ...(trx ? { transacting: trx } : {}),
+    } as any);
+    if (!contract) throw new Error("SNAPPAY_CONTRACT_NOT_FOUND");
     if (reservationStatus === "Reserved") {
       await releaseOrderReservation(strapi, ids.orderId, "Released", trx);
     } else if (reservationStatus === "Consumed") {
@@ -314,6 +423,38 @@ export async function applySnappayCancellation(
       } as any);
     }
 
+    if (settledLocally) {
+      const currentTotalToman = Number(contract.Amount || 0);
+      const tender = planSnappayTenderAdjustment({
+        attempt,
+        transactions: contract.contract_transactions || [],
+        expectedOldTotalToman: currentTotalToman,
+        newTotalToman: 0,
+      });
+      await creditSnappayWalletRefund(strapi, {
+        userId: Number(order?.user?.id ?? order?.user),
+        amountIrr: tender.walletRefundIrr,
+        reference: `wallet-refund-order-${ids.orderId}-snappay-cancel`,
+        note: String(reason || "SnappPay cancellation").slice(0, 500),
+        trx,
+      });
+      if (tender.refundIrr > 0) {
+        const siblings = contract.contract_transactions || [];
+        const maxStep = siblings.reduce(
+          (max: number, tx: any) => Math.max(max, Number(tx?.Step || 0)),
+          0,
+        );
+        cancellationRefundTransactions = await createSnappayRefundTransactions(strapi, {
+          contractId: ids.contractId,
+          maxStep,
+          walletRefundIrr: tender.walletRefundIrr,
+          gatewayRefundIrr: tender.gatewayRefundIrr,
+          metadata: { operation: "cancel" },
+          trx,
+        });
+      }
+    }
+
     const now = new Date();
     anipoCancelSnapshot = captureAnipoCancelSnapshot(order);
     const orderUpdate: Record<string, unknown> = { Status: "Cancelled" };
@@ -322,8 +463,7 @@ export async function applySnappayCancellation(
       orderUpdate.ShippingBarcode = null;
       orderUpdate.AnipoBarcodeState = "Voided";
       orderUpdate.AnipoLastCheckedAt = now;
-      orderUpdate.AnipoLastMessage =
-        "SnappPay cancellation confirmed; local barcode cleared";
+      orderUpdate.AnipoLastMessage = "SnappPay cancellation confirmed; local barcode cleared";
     }
     await strapi.db.query("api::order.order").update({
       where: { id: ids.orderId },
@@ -354,7 +494,10 @@ export async function applySnappayCancellation(
     await strapi.db.query("api::contract-transaction.contract-transaction").update({
       where: { id: ids.transactionRowId },
       data: {
-        Status: "Failed",
+        // A settled charge remains a historical funding fact; its Return rows
+        // record the cancellation. An unpaid/reverted attempt never funded the
+        // order and is correctly marked Failed.
+        Status: settledLocally ? "Success" : "Failed",
         GatewayStatus: providerStatus,
         ...(providerStatus === "CANCEL" ? { CancelledAt: now } : { RevertedAt: now }),
         LastReconciledAt: now,
@@ -384,6 +527,13 @@ export async function applySnappayCancellation(
           transactionId: ids.transactionId,
           providerStatus,
           reason: String(reason || "").slice(0, 500),
+          ...(cancellationRefundTransactions.some((transaction) => transaction.id)
+            ? {
+                returnTransactionIds: cancellationRefundTransactions
+                  .map((transaction) => transaction.id)
+                  .filter(Boolean),
+              }
+            : {}),
         },
       },
       ...(trx ? { transacting: trx } : {}),
@@ -393,6 +543,16 @@ export async function applySnappayCancellation(
 
   if (!result.replayed && anipoCancelSnapshot) {
     await notifyAnipoParcelCancelled(strapi, ids.orderId, anipoCancelSnapshot);
+  }
+  if (!result.replayed) {
+    for (const transaction of cancellationRefundTransactions) {
+      if (!transaction.id || transaction.amountIrr <= 0) continue;
+      void enqueueRefundForReturn(strapi as any, {
+        orderId: ids.orderId,
+        contractTransactionId: transaction.id,
+        amountIrr: transaction.amountIrr,
+      }).catch(() => {});
+    }
   }
   return result;
 }
@@ -469,12 +629,13 @@ export async function applySnappayAdminUpdate(
     expectedOldTotalToman: number;
     reason: string;
     actorId: number;
+    operationId?: number;
   },
 ): Promise<void> {
-  let refundTransactionId: number | null = null;
+  let refundTransactions: SnappayRefundTransaction[] = [];
   await strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [ids.orderId]);
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
 
     const attempt: any = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
       where: { id: ids.attemptId },
@@ -483,6 +644,7 @@ export async function applySnappayAdminUpdate(
     const order: any = await strapi.db.query("api::order.order").findOne({
       where: { id: ids.orderId },
       populate: {
+        user: true,
         order_items: {
           populate: {
             product_variation: { populate: { product_stock: true } },
@@ -493,6 +655,7 @@ export async function applySnappayAdminUpdate(
     } as any);
     const contract: any = await strapi.db.query("api::contract.contract").findOne({
       where: { id: ids.contractId },
+      populate: { contract_transactions: true },
       ...(trx ? { transacting: trx } : {}),
     } as any);
     if (
@@ -514,6 +677,12 @@ export async function applySnappayAdminUpdate(
     ) {
       throw new Error("SNAPPAY_ADMIN_UPDATE_AMOUNT_INVALID");
     }
+    const tender = planSnappayTenderAdjustment({
+      attempt,
+      transactions: contract.contract_transactions || [],
+      expectedOldTotalToman: input.expectedOldTotalToman,
+      newTotalToman: input.newTotalToman,
+    });
 
     const itemById = new Map((order.order_items || []).map((item: any) => [Number(item.id), item]));
     for (const change of input.changes) {
@@ -589,9 +758,15 @@ export async function applySnappayAdminUpdate(
     // netted out correctly by accident but left the Refunds KPI reading zero,
     // and — because order_items are rewritten in this same transaction — made a
     // *past* date range report different numbers before and after an adjustment.
-    const refundIrr = Math.round(
-      (Number(input.expectedOldTotalToman) - Number(input.newTotalToman)) * 10,
-    );
+    await creditSnappayWalletRefund(strapi, {
+      userId: Number(order?.user?.id ?? order?.user),
+      amountIrr: tender.walletRefundIrr,
+      reference: `wallet-refund-order-${ids.orderId}-snappay-update-${
+        input.operationId || `${input.expectedOldTotalToman}-${input.newTotalToman}`
+      }`,
+      note: input.reason.slice(0, 500),
+      trx,
+    });
     await strapi.db.query("api::contract-transaction.contract-transaction").update({
       where: { id: ids.transactionRowId },
       data: {
@@ -600,7 +775,7 @@ export async function applySnappayAdminUpdate(
       },
       ...(trx ? { transacting: trx } : {}),
     } as any);
-    if (refundIrr > 0) {
+    if (tender.refundIrr > 0) {
       const siblings: any[] = await strapi.db
         .query("api::contract-transaction.contract-transaction")
         .findMany({
@@ -608,21 +783,14 @@ export async function applySnappayAdminUpdate(
           ...(trx ? { transacting: trx } : {}),
         } as any);
       const maxStep = siblings.reduce((max, tx) => Math.max(max, Number(tx?.Step || 0)), 0);
-      const returnTx: any = await strapi.db
-        .query("api::contract-transaction.contract-transaction")
-        .create({
-          data: {
-            Type: "Return",
-            Amount: refundIrr,
-            Step: maxStep + 1,
-            Status: "Success",
-            external_source: "SnappPay",
-            contract: ids.contractId,
-            Date: new Date(),
-          },
-          ...(trx ? { transacting: trx } : {}),
-        } as any);
-      refundTransactionId = Number(returnTx.id);
+      refundTransactions = await createSnappayRefundTransactions(strapi, {
+        contractId: ids.contractId,
+        maxStep,
+        walletRefundIrr: tender.walletRefundIrr,
+        gatewayRefundIrr: tender.gatewayRefundIrr,
+        metadata: { operationId: input.operationId || null },
+        trx,
+      });
     }
     await strapi.db.query("api::payment-attempt.payment-attempt").update({
       where: { id: ids.attemptId },
@@ -651,15 +819,12 @@ export async function applySnappayAdminUpdate(
 
   // Enqueue after the refund transaction commits; provider delivery is retried
   // independently and never extends the operator request.
-  const refundToman = Math.max(
-    0,
-    Math.round(Number(input.expectedOldTotalToman) - Number(input.newTotalToman)),
-  );
-  if (refundToman > 0 && refundTransactionId) {
+  for (const transaction of refundTransactions) {
+    if (!transaction.id || transaction.amountIrr <= 0) continue;
     void enqueueRefundForReturn(strapi as any, {
       orderId: ids.orderId,
-      contractTransactionId: refundTransactionId,
-      amountToman: refundToman,
+      contractTransactionId: transaction.id,
+      amountIrr: transaction.amountIrr,
     }).catch(() => {});
   }
 }

@@ -6,9 +6,7 @@ import {
 import { notifyAnipoParcelCancelled } from "../../order/controllers/helpers/notifyAnipoParcelCancelled";
 
 jest.mock("../../order/controllers/helpers/notifyAnipoParcelCancelled", () => {
-  const actual = jest.requireActual(
-    "../../order/controllers/helpers/notifyAnipoParcelCancelled",
-  );
+  const actual = jest.requireActual("../../order/controllers/helpers/notifyAnipoParcelCancelled");
   return {
     ...actual,
     notifyAnipoParcelCancelled: jest.fn().mockResolvedValue(undefined),
@@ -72,11 +70,13 @@ function createHarness() {
         creates[uid] ||= jest.fn().mockResolvedValue({});
         return {
           findOne: jest.fn().mockResolvedValue(rows[uid]),
-          findMany: jest.fn().mockResolvedValue(
-            uid === "api::contract-transaction.contract-transaction"
-              ? [{ id: 44, Step: 1, Type: "Gateway" }]
-              : [],
-          ),
+          findMany: jest
+            .fn()
+            .mockResolvedValue(
+              uid === "api::contract-transaction.contract-transaction"
+                ? [{ id: 44, Step: 1, Type: "Gateway" }]
+                : [],
+            ),
           update: updates[uid],
           delete: deletes[uid],
           create: creates[uid],
@@ -108,8 +108,7 @@ describe("SnappPay admin update finalization", () => {
     await finalizeSnappaySettlement(strapi, ids);
 
     const transactionUpdate =
-      updates["api::contract-transaction.contract-transaction"].mock.calls[0][0]
-        .data;
+      updates["api::contract-transaction.contract-transaction"].mock.calls[0][0].data;
     expect(transactionUpdate).toEqual(
       expect.objectContaining({
         Status: "Success",
@@ -125,19 +124,15 @@ describe("SnappPay admin update finalization", () => {
       const { strapi, rows, updates } = createHarness();
       rows["api::order.order"].ReservationStatus = "Released";
 
-      await applySnappayCancellation(
-        strapi,
-        ids,
-        providerStatus,
-        "Operator cancellation",
-      );
+      await applySnappayCancellation(strapi, ids, providerStatus, "Operator cancellation");
 
       const transactionUpdate =
-        updates["api::contract-transaction.contract-transaction"].mock.calls[0][0]
-          .data;
+        updates["api::contract-transaction.contract-transaction"].mock.calls[0][0].data;
       expect(transactionUpdate).toEqual(
         expect.objectContaining({
-          Status: "Failed",
+          // The settled funding row remains historical truth; cancellation is
+          // represented by Return rows so split legs reconcile exactly.
+          Status: "Success",
           GatewayStatus: providerStatus,
         }),
       );
@@ -165,9 +160,7 @@ describe("SnappPay admin update finalization", () => {
         expect.stringContaining("UPDATE product_stocks"),
         [2, 91],
       );
-      const orderUpdates = updates["api::order.order"].mock.calls.map(
-        (call) => call[0].data,
-      );
+      const orderUpdates = updates["api::order.order"].mock.calls.map((call) => call[0].data);
       expect(orderUpdates).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -214,9 +207,9 @@ describe("SnappPay admin update finalization", () => {
     rows["api::payment-attempt.payment-attempt"].Status = "Cancelled";
     rows["api::payment-attempt.payment-attempt"].providerStatus = "CANCEL";
 
-    await expect(
-      applySnappayCancellation(strapi, ids, "CANCEL", "replay"),
-    ).resolves.toEqual({ replayed: true });
+    await expect(applySnappayCancellation(strapi, ids, "CANCEL", "replay")).resolves.toEqual({
+      replayed: true,
+    });
 
     expect(notifyAnipoMock).not.toHaveBeenCalled();
   });
@@ -225,14 +218,9 @@ describe("SnappPay admin update finalization", () => {
     const { strapi, rows, updates } = createHarness();
     rows["api::order.order"].Status = "Returned";
 
-    await expect(
-      applySnappayCancellation(
-        strapi,
-        ids,
-        "CANCEL",
-        "Too late",
-      ),
-    ).rejects.toThrow("SNAPPAY_FULFILLMENT_ALREADY_STARTED");
+    await expect(applySnappayCancellation(strapi, ids, "CANCEL", "Too late")).rejects.toThrow(
+      "SNAPPAY_FULFILLMENT_ALREADY_STARTED",
+    );
 
     expect(updates["api::order.order"]).not.toHaveBeenCalled();
   });
@@ -259,12 +247,8 @@ describe("SnappPay admin update finalization", () => {
       }),
     ).rejects.toThrow("SNAPPAY_ADMIN_UPDATE_ITEMS_CHANGED");
 
-    expect(Object.values(updates).some((update) => update.mock.calls.length)).toBe(
-      false,
-    );
-    expect(Object.values(deletes).some((remove) => remove.mock.calls.length)).toBe(
-      false,
-    );
+    expect(Object.values(updates).some((update) => update.mock.calls.length)).toBe(false);
+    expect(Object.values(deletes).some((remove) => remove.mock.calls.length)).toBe(false);
   });
 
   it("keeps the order, attempt, and transaction amounts aligned after provider success", async () => {
@@ -302,9 +286,7 @@ describe("SnappPay admin update finalization", () => {
     // Return, matching every other gateway. Editing Amount down instead netted
     // out by accident but left refund_irr at zero and retroactively changed what
     // a past date range reported.
-    expect(
-      updates["api::contract-transaction.contract-transaction"],
-    ).toHaveBeenCalledWith(
+    expect(updates["api::contract-transaction.contract-transaction"]).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ GatewayStatus: "SETTLE" }),
       }),
@@ -314,9 +296,7 @@ describe("SnappPay admin update finalization", () => {
     expect(txUpdateData).not.toHaveProperty("Amount");
     expect(txUpdateData).not.toHaveProperty("DiscountAmount");
 
-    expect(
-      creates["api::contract-transaction.contract-transaction"],
-    ).toHaveBeenCalledWith(
+    expect(creates["api::contract-transaction.contract-transaction"]).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           Type: "Return",
@@ -339,9 +319,7 @@ describe("SnappPay admin update finalization", () => {
     const { strapi, creates } = createHarness();
 
     await applySnappayAdminUpdate(strapi, ids, {
-      changes: [
-        { orderItemId: 71, oldCount: 2, newCount: 1, restockDelta: 1 },
-      ],
+      changes: [{ orderItemId: 71, oldCount: 2, newCount: 1, restockDelta: 1 }],
       newTotalToman: 110_000,
       newDiscountToman: 10_000,
       newShippingToman: 20_000,
@@ -367,9 +345,7 @@ describe("SnappPay admin update finalization", () => {
     const { strapi, creates } = createHarness();
 
     await applySnappayAdminUpdate(strapi, ids, {
-      changes: [
-        { orderItemId: 71, oldCount: 2, newCount: 2, restockDelta: 0 },
-      ],
+      changes: [{ orderItemId: 71, oldCount: 2, newCount: 2, restockDelta: 0 }],
       newTotalToman: 220_000,
       newDiscountToman: 0,
       newShippingToman: 20_000,

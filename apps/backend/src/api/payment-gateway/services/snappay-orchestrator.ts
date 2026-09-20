@@ -62,6 +62,11 @@ import {
   runSnappaySideEffects,
 } from "./snappay-finalization";
 import { isSnappayGatewayValue } from "./checkout-gateway-availability";
+import {
+  gatewayExpectedAmountIrr,
+  readPaymentAttemptLegs,
+} from "../../payment-attempt/services/payment-legs";
+import { planSnappayTenderAdjustment } from "./snappay-split-tender";
 
 const ATTEMPT_UID = "api::payment-attempt.payment-attempt" as const;
 const TX_UID = "api::contract-transaction.contract-transaction" as const;
@@ -73,8 +78,10 @@ const OPERATION_LEASE_MS = 5 * 60 * 1000;
 export const SNAPPAY_RESUME_REDIRECT_MAX_AGE_MS = 2 * 60 * 1000;
 
 const SNAPPAY_INITIATION_MESSAGES: Record<string, string> = {
-  CHECKOUT_ATTEMPT_CONFLICT: "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.",
-  PAYMENT_IN_PROGRESS: "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+  CHECKOUT_ATTEMPT_CONFLICT:
+    "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.",
+  PAYMENT_IN_PROGRESS:
+    "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
   PAYMENT_UNKNOWN:
     "نتیجه شروع پرداخت هنوز مشخص نیست. برای جلوگیری از پرداخت تکراری، وضعیت سفارش را بررسی کنید.",
   SNAPPAY_INVALID_MOBILE:
@@ -285,7 +292,9 @@ function mergeAttemptProviderResponse(
 }
 
 function initiationMessage(code: string, fallback?: string): string {
-  return SNAPPAY_INITIATION_MESSAGES[code] || fallback || SNAPPAY_INITIATION_MESSAGES.PAYMENT_UNKNOWN;
+  return (
+    SNAPPAY_INITIATION_MESSAGES[code] || fallback || SNAPPAY_INITIATION_MESSAGES.PAYMENT_UNKNOWN
+  );
 }
 
 function redirectedInitiation(
@@ -504,15 +513,21 @@ async function buildTokenPayload(
   const discountAmount = Math.round(Number(summary.discount || 0) * 10);
   const totalAmount =
     items.reduce((sum, item) => sum + item.amount * item.count, 0) + shippingAmount;
-  const amount = Math.round(Number(bundle.attempt.Amount || 0));
-  if (amount <= 0 || amount !== totalAmount - discountAmount) {
+  const legs = readPaymentAttemptLegs(bundle.attempt);
+  const amount = legs.gatewayIrr;
+  const externalSourceAmount = legs.walletIrr;
+  if (
+    amount <= 0 ||
+    legs.totalIrr !== totalAmount - discountAmount ||
+    amount + externalSourceAmount !== legs.totalIrr
+  ) {
     throw new Error("SNAPPAY_AMOUNT_MISMATCH");
   }
 
   return {
     amount,
     discountAmount,
-    externalSourceAmount: 0,
+    externalSourceAmount,
     mobile,
     returnURL: getSnappayReturnUrl(callbackNonce),
     transactionId: String(bundle.attempt.providerReference),
@@ -598,7 +613,7 @@ async function buildAdminUpdatePayload(
       };
     }),
   );
-  const amount = Math.round(Number(metadata.newTotalToman || 0) * 10);
+  const requestedTotalIrr = Math.round(Number(metadata.newTotalToman || 0) * 10);
   const discountAmount = Math.round(Number(metadata.newDiscountToman || 0) * 10);
   const shippingAmount = Math.round(Number(metadata.newShippingToman || 0) * 10);
   const totalAmount =
@@ -610,10 +625,10 @@ async function buildAdminUpdatePayload(
     !Number.isInteger(Number(metadata.newDiscountToman)) ||
     !Number.isInteger(Number(metadata.newShippingToman)) ||
     !Number.isInteger(expectedOldTotalToman) ||
-    amount < 0 ||
+    requestedTotalIrr < 0 ||
     discountAmount < 0 ||
     shippingAmount < 0 ||
-    amount > Number(bundle.attempt.Amount) ||
+    requestedTotalIrr > Number(bundle.attempt.Amount) ||
     Number(bundle.contract.Amount) !== expectedOldTotalToman ||
     cartItems.some(
       (item) =>
@@ -622,15 +637,21 @@ async function buildAdminUpdatePayload(
         !Number.isInteger(item.count) ||
         item.count <= 0,
     ) ||
-    amount !== totalAmount - discountAmount
+    requestedTotalIrr !== totalAmount - discountAmount
   ) {
     throw new Error("SNAPPAY_ADMIN_UPDATE_AMOUNT_MISMATCH");
   }
+  const tender = planSnappayTenderAdjustment({
+    attempt: bundle.attempt,
+    transactions: bundle.contract.contract_transactions || [],
+    expectedOldTotalToman,
+    newTotalToman: Number(metadata.newTotalToman),
+  });
   return {
     paymentToken,
-    amount,
+    amount: tender.gatewayRemainingIrr,
     discountAmount,
-    externalSourceAmount: 0,
+    externalSourceAmount: tender.walletRemainingIrr,
     cartList: [
       {
         cartId: Number(bundle.order.id),
@@ -716,12 +737,7 @@ async function failInitiation(
   message: string,
 ): Promise<void> {
   await strapi.db.transaction(async ({ trx }) => {
-    await releaseOrderReservation(
-      strapi,
-      Number(bundle.order.id),
-      "Released",
-      trx,
-    );
+    await releaseOrderReservation(strapi, Number(bundle.order.id), "Released", trx);
     const now = new Date();
     await strapi.db.query(ORDER_UID).update({
       where: { id: bundle.order.id },
@@ -936,9 +952,7 @@ async function persistIssuedToken(
     })}`,
   );
   const installed = await strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [
-      bundle.attempt.id,
-    ]);
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [bundle.attempt.id]);
     return promoteIssuedSnappayGeneration(strapi, {
       attemptId: Number(bundle.attempt.id),
       transactionId: Number(bundle.transaction.id),
@@ -1230,14 +1244,23 @@ async function requestSnappayToken(
       undefined,
       "reconcile",
     );
-    await recordTokenOperation(strapi, bundle, isAmbiguousResult(result) ? "Unknown" : "Failed", result);
+    await recordTokenOperation(
+      strapi,
+      bundle,
+      isAmbiguousResult(result) ? "Unknown" : "Failed",
+      result,
+    );
     strapi.log.error("SnappPay token initiation did not return a usable token", {
       attemptId: bundle.attempt.attemptId,
       orderId: bundle.order.id,
       transactionId,
       ...providerSummary(result),
     });
-    return failedInitiation(bundle, isAmbiguousResult(result) ? "PAYMENT_UNKNOWN" : code, "Unknown");
+    return failedInitiation(
+      bundle,
+      isAmbiguousResult(result) ? "PAYMENT_UNKNOWN" : code,
+      "Unknown",
+    );
   }
 
   const installed = await persistIssuedToken(
@@ -1321,7 +1344,9 @@ async function observeExistingSnappayToken(
       await markAttemptUnknown(
         strapi,
         bundle,
-        identity.reason === "amount" ? "SNAPPAY_STATUS_AMOUNT_MISMATCH" : "SNAPPAY_STATUS_TX_MISMATCH",
+        identity.reason === "amount"
+          ? "SNAPPAY_STATUS_AMOUNT_MISMATCH"
+          : "SNAPPAY_STATUS_TX_MISMATCH",
         "SnappPay status does not match the active payment generation",
         undefined,
         "manual_review",
@@ -1496,10 +1521,7 @@ export async function initiateSnappayPayment(
   if (!bundle) throw new Error("SNAPPAY_ATTEMPT_NOT_FOUND");
   const status = String(bundle.attempt.Status || "");
   if (status === "Succeeded") {
-    return redirectedInitiation(
-      bundle,
-      paymentResultUrl(Number(bundle.order.id), "success"),
-    );
+    return redirectedInitiation(bundle, paymentResultUrl(Number(bundle.order.id), "success"));
   }
   if (
     ["Failed", "Cancelled", "Expired"].includes(status) &&
@@ -1731,11 +1753,7 @@ async function resumeExistingReconcile(
     });
     return;
   }
-  await enqueueSnappayOperation(
-    Number(existing.id),
-    Number(existing.retryCount || 0),
-    0,
-  );
+  await enqueueSnappayOperation(Number(existing.id), Number(existing.retryCount || 0), 0);
 }
 
 async function enqueueCallbackReconcile(
@@ -1790,11 +1808,12 @@ export async function acceptSnappayCallback(
         matchesSnappayCallbackNonce(nonce, hash),
       ),
   );
-  if (!bundle || !nonceMatches || Number(bundle.attempt.Amount) !== Number(input.amount)) {
+  const expectedAmount = bundle ? gatewayExpectedAmountIrr(bundle.attempt) : 0;
+  if (!bundle || !nonceMatches || expectedAmount !== Number(input.amount)) {
     strapi.log.warn("Rejected uncorrelated SnappPay callback", {
       transactionId,
       state,
-      amountMatches: !!bundle && Number(bundle.attempt.Amount) === Number(input.amount),
+      amountMatches: !!bundle && expectedAmount === Number(input.amount),
     });
     return {
       accepted: false,
@@ -1816,7 +1835,10 @@ export async function acceptSnappayCallback(
   const locallyTerminal = ["Succeeded", "Cancelled", "Failed", "Expired"].includes(
     String(bundle.attempt.Status),
   );
-  if (locallyTerminal && !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId)) {
+  if (
+    locallyTerminal &&
+    !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId)
+  ) {
     return {
       accepted: true,
       orderId,
@@ -2632,7 +2654,9 @@ async function performRevert(strapi: Strapi, operation: any, bundle: AttemptBund
   if (status === "VERIFY") {
     return performSettle(strapi, operation, bundle, token, true);
   }
-  const revertCode = Number(revertResult.diagnostic.providerCode || statusResult.diagnostic.providerCode || 0);
+  const revertCode = Number(
+    revertResult.diagnostic.providerCode || statusResult.diagnostic.providerCode || 0,
+  );
   if (status === "REGISTERED" || revertCode === 1011) {
     return scheduleOperationRetry(
       strapi,
@@ -2673,6 +2697,7 @@ async function performOperatorUpdate(
         expectedOldTotalToman: Number(operation.metadata.expectedOldTotalToman),
         reason: String(operation.metadata.reason),
         actorId: Number(operation.metadata.actorId),
+        operationId: Number(operation.id),
       });
     } catch (error: any) {
       await markOperatorOperation(
@@ -2825,7 +2850,9 @@ async function executeRecoveryAction(
     case "CANCEL_LOCAL": {
       const fresh = await loadAttemptBundle(strapi, { id: bundle.attempt.id });
       if (fresh) {
-        if (["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(fresh.attempt.Status))) {
+        if (
+          ["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(fresh.attempt.Status))
+        ) {
           await markOperationSucceeded(strapi, operation.id, fresh.attempt.providerStatus);
           return;
         }

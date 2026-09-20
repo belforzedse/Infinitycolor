@@ -433,12 +433,14 @@ describe("SnappPay checkout initiate retry", () => {
     });
     transaction.TrackId = "";
     strapi.db.query("api::payment-attempt.payment-attempt");
-    queries["api::payment-attempt.payment-attempt"].update.mockImplementation(async (args: { data?: { providerResponse?: { pendingDispatch?: unknown } } }) => {
-      if (args?.data?.providerResponse?.pendingDispatch) {
-        throw new Error("persist failed");
-      }
-      return { id: 1 };
-    });
+    queries["api::payment-attempt.payment-attempt"].update.mockImplementation(
+      async (args: { data?: { providerResponse?: { pendingDispatch?: unknown } } }) => {
+        if (args?.data?.providerResponse?.pendingDispatch) {
+          throw new Error("persist failed");
+        }
+        return { id: 1 };
+      },
+    );
 
     const result = await initiate(strapi);
 
@@ -478,6 +480,42 @@ describe("SnappPay checkout initiate retry", () => {
     expect(requestPaymentToken).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(true);
     expect(result.redirectUrl).toBe("https://pay.snapp.test/new");
+  });
+
+  it("sends the wallet leg as externalSourceAmount and finances only the remainder", async () => {
+    const requestPaymentToken = jest.fn().mockResolvedValue({
+      successful: true,
+      response: {
+        paymentToken: "split-token",
+        paymentPageUrl: "https://pay.snapp.test/split",
+      },
+      diagnostic: { endpoint: "token", httpStatus: 200 },
+    });
+    mockedAdapter.mockReturnValue({
+      status: jest.fn(),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi, transaction } = createHarness({
+      Status: "Pending",
+      Amount: 2_200_000,
+      WalletAmount: 700_000,
+      GatewayAmount: 1_500_000,
+      redirectUrl: "",
+      redirectedAt: null,
+      providerResponse: { tokenAttemptSeq: 0 },
+    });
+    transaction.TrackId = "";
+
+    const result = await initiate(strapi);
+
+    expect(result.success).toBe(true);
+    expect(requestPaymentToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 1_500_000,
+        externalSourceAmount: 700_000,
+      }),
+    );
   });
 
   it("does not mint a second token when a dispatch is already in flight", async () => {
@@ -531,7 +569,9 @@ describe("SnappPay checkout initiate retry", () => {
           transactionId: EXISTING_TRANSACTION_ID,
           dispatchedAt: new Date().toISOString(),
           paymentToken: EXISTING_TOKEN,
-          paymentTokenFingerprint: displaySnappayFingerprint(snappayTokenFingerprint(EXISTING_TOKEN)),
+          paymentTokenFingerprint: displaySnappayFingerprint(
+            snappayTokenFingerprint(EXISTING_TOKEN),
+          ),
           terminalEvidence: "REVERT",
         },
       },

@@ -18,6 +18,8 @@ const mockedEnqueue = enqueueSnappayOperation as jest.MockedFunction<
 
 function createHarness(input?: {
   amount?: number;
+  walletAmount?: number;
+  gatewayAmount?: number;
   callbackNonceHash?: string | null;
   legacy?: boolean;
   providerReference?: string;
@@ -38,6 +40,8 @@ function createHarness(input?: {
     Status: "Redirected",
     Gateway: "snappay",
     Amount: input?.amount ?? 1_200_000,
+    WalletAmount: input?.walletAmount,
+    GatewayAmount: input?.gatewayAmount,
     providerReference: input?.providerReference ?? "ABC1234567",
     callbackNonceHash: input?.callbackNonceHash,
     providerStatus: input?.providerStatus,
@@ -65,15 +69,17 @@ function createHarness(input?: {
   }));
   const queries: Record<string, any> = {
     "api::payment-attempt.payment-attempt": {
-      findOne: jest.fn().mockImplementation(async ({ where }: { where?: Record<string, unknown> }) => {
-        if (where?.providerReference && where.providerReference !== attempt.providerReference) {
-          return null;
-        }
-        if (where?.id && Number(where.id) !== attempt.id) {
-          return null;
-        }
-        return attempt;
-      }),
+      findOne: jest
+        .fn()
+        .mockImplementation(async ({ where }: { where?: Record<string, unknown> }) => {
+          if (where?.providerReference && where.providerReference !== attempt.providerReference) {
+            return null;
+          }
+          if (where?.id && Number(where.id) !== attempt.id) {
+            return null;
+          }
+          return attempt;
+        }),
       update: attemptUpdate,
     },
     "api::payment-operation.payment-operation": {
@@ -137,9 +143,7 @@ describe("acceptSnappayCallback correlation", () => {
       nonce,
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({ accepted: true, orderId: 22 }),
-    );
+    expect(result).toEqual(expect.objectContaining({ accepted: true, orderId: 22 }));
     expect(attemptUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 11, Status: { $ne: "Succeeded" } },
@@ -162,6 +166,36 @@ describe("acceptSnappayCallback correlation", () => {
       }),
     );
     expect(mockedEnqueue).toHaveBeenCalledWith(55, 0, 0);
+  });
+
+  it("correlates a mixed callback against the SnappPay leg, not the full order", async () => {
+    const nonce = generateSnappayCallbackNonce();
+    const { strapi, attemptUpdate } = createHarness({
+      amount: 1_200_000,
+      walletAmount: 350_000,
+      gatewayAmount: 850_000,
+      callbackNonceHash: hashSnappayCallbackNonce(nonce),
+    });
+
+    const accepted = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 850_000,
+      nonce,
+    });
+    expect(accepted.accepted).toBe(true);
+    expect(attemptUpdate).toHaveBeenCalled();
+
+    const rejected = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 1_200_000,
+      nonce,
+    });
+    expect(rejected).toMatchObject({
+      accepted: false,
+      errorCode: "SNAPPAY_CALLBACK_MISMATCH",
+    });
   });
 
   it.each([
@@ -238,9 +272,7 @@ describe("acceptSnappayCallback correlation", () => {
 
     expect(result.accepted).toBe(true);
     expect(attemptUpdate).not.toHaveBeenCalled();
-    expect(raw.mock.calls.some(([sql]: [string]) => sql.includes("previousGeneration"))).toBe(
-      true,
-    );
+    expect(raw.mock.calls.some(([sql]: [string]) => sql.includes("previousGeneration"))).toBe(true);
     expect(operationCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

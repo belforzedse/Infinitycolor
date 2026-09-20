@@ -1,3 +1,5 @@
+import { gatewayExpectedAmountIrr } from "../../payment-attempt/services/payment-legs";
+
 /**
  * Durable SnappPay payment-generation identity.
  *
@@ -137,7 +139,9 @@ export function snappayProviderGenerationIsTerminal(attempt: {
   providerStatus?: unknown;
   providerResponse?: unknown;
 }): boolean {
-  const status = String(attempt.providerStatus || "").trim().toUpperCase();
+  const status = String(attempt.providerStatus || "")
+    .trim()
+    .toUpperCase();
   if (status === "REVERT" || status === "CANCEL") return true;
   const state = readSnappayGenerationState(attempt.providerResponse);
   return Boolean(state.generation?.terminalEvidence);
@@ -247,7 +251,9 @@ export function seedSnappayGenerationFromLegacyAttempt(input: {
   if (fingerprint) generation.paymentTokenFingerprint = fingerprint;
   const paymentToken = asNonEmpty(input.paymentToken);
   if (paymentToken) generation.paymentToken = paymentToken;
-  const status = String(input.providerStatus || "").trim().toUpperCase();
+  const status = String(input.providerStatus || "")
+    .trim()
+    .toUpperCase();
   if (status === "REVERT" || status === "CANCEL") {
     generation.terminalEvidence = status;
   }
@@ -261,9 +267,7 @@ export function withSnappayPendingDispatch(
 ): Record<string, unknown> {
   const previous = asRecord(providerResponse) || {};
   const state = readSnappayGenerationState(previous);
-  const previousGeneration = state.generation
-    ? { ...state.generation }
-    : state.previousGeneration;
+  const previousGeneration = state.generation ? { ...state.generation } : state.previousGeneration;
   return {
     ...previous,
     ...extra,
@@ -325,6 +329,8 @@ export function withSnappayTerminalEvidence(
 export function statusMatchesActiveSnappayGeneration(
   attempt: {
     Amount?: unknown;
+    WalletAmount?: unknown;
+    GatewayAmount?: unknown;
     providerReference?: unknown;
     providerResponse?: unknown;
   },
@@ -338,7 +344,7 @@ export function statusMatchesActiveSnappayGeneration(
     }
   }
   const statusAmount = Number(status.amount);
-  const attemptAmount = Number(attempt.Amount);
+  const attemptAmount = gatewayExpectedAmountIrr(attempt);
   if (Number.isFinite(statusAmount) && statusAmount > 0 && Number.isFinite(attemptAmount)) {
     if (statusAmount !== attemptAmount) {
       return { ok: false, reason: "amount" };
@@ -419,25 +425,23 @@ function tomanToRial(value: unknown): number {
  * matching current TrackId and exact stored URL can support a legacy resume
  * when no competing dispatch exists.
  */
-export function snappayStoredPaymentPageResume(
-  input: {
-    paymentToken: string;
-    urlToken: string;
-    /** Durable TrackId. URL recovery alone is not legacy identity proof. */
-    storedTrackId?: unknown;
-    redirectUrl: unknown;
-    orderStatus: unknown;
-    reservationStatus: unknown;
-    attemptStatus: unknown;
-    attemptAmount: unknown;
-    contractAmountToman?: unknown;
-    quoteTotalToman?: unknown;
-    providerReference?: unknown;
-    providerResponse?: unknown;
-    tokenFingerprint?: string;
-    hasValidatedCallback: boolean;
-  },
-): { ok: boolean; reason?: string } {
+export function snappayStoredPaymentPageResume(input: {
+  paymentToken: string;
+  urlToken: string;
+  /** Durable TrackId. URL recovery alone is not legacy identity proof. */
+  storedTrackId?: unknown;
+  redirectUrl: unknown;
+  orderStatus: unknown;
+  reservationStatus: unknown;
+  attemptStatus: unknown;
+  attemptAmount: unknown;
+  contractAmountToman?: unknown;
+  quoteTotalToman?: unknown;
+  providerReference?: unknown;
+  providerResponse?: unknown;
+  tokenFingerprint?: string;
+  hasValidatedCallback: boolean;
+}): { ok: boolean; reason?: string } {
   if (input.hasValidatedCallback) return { ok: false, reason: "callback-recovery" };
   const attemptStatus = String(input.attemptStatus || "");
   if (["Succeeded", "Cancelled", "Expired"].includes(attemptStatus)) {

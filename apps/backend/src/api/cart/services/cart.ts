@@ -158,7 +158,8 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             success: false,
             status: 409,
             errorCode: "PAYMENT_IN_PROGRESS",
-            message: "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+            message:
+              "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
             ...(orderId ? { orderId } : {}),
           };
         }
@@ -236,7 +237,12 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       try {
         Sentry.captureMessage("checkout.stock_changed_before_payment", {
           level: "warning",
-          tags: { area: "checkout", stage: "stockCheck", errorCode: "STOCK_CHANGED", gateway: gateway || "none" },
+          tags: {
+            area: "checkout",
+            stage: "stockCheck",
+            errorCode: "STOCK_CHANGED",
+            gateway: gateway || "none",
+          },
           extra: {
             userId,
             removedCount: stockCheck.itemsRemoved?.length || 0,
@@ -325,9 +331,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         await strapi
           .service("api::payment-gateway.snappay-orchestrator")
           .checkEligibility(
-            tomanToIrr(
-              paymentAllocation?.gatewayToman ?? checkoutQuote.financialSummary.total,
-            ),
+            tomanToIrr(paymentAllocation?.gatewayToman ?? checkoutQuote.financialSummary.total),
           );
       }
     }
@@ -726,9 +730,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         // and admin update all read it. The two legs are recorded alongside it
         // and are immutable funding facts once written.
         const walletLegToman = paymentAllocation?.walletToman ?? 0;
-        const gatewayLegToman = paymentAllocation
-          ? paymentAllocation.gatewayToman
-          : totals.total;
+        const gatewayLegToman = paymentAllocation ? paymentAllocation.gatewayToman : totals.total;
         const holdsEnabled = isWalletHoldsEnabled();
         const attemptFields = {
           quoteHash: expectedQuoteHash,
@@ -743,7 +745,11 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           // were switched off when this was created", and NULL only ever means
           // a row written before this feature shipped.
           WalletHoldStatus:
-            walletLegToman === 0 ? ("None" as const) : holdsEnabled ? ("None" as const) : ("DirectDebit" as const),
+            walletLegToman === 0
+              ? ("None" as const)
+              : holdsEnabled
+                ? ("None" as const)
+                : ("DirectDebit" as const),
           ...(supersedeAttemptId ? { SupersedesAttemptId: supersedeAttemptId } : {}),
           user: userId,
           order: order.id,
@@ -816,7 +822,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           await strapi.db.query("api::contract-transaction.contract-transaction").create({
             data: {
               Type: "Gateway",
-              Amount: Math.round(totals.total * 10),
+              // SnappPay finances only its own leg. Any wallet contribution is
+              // persisted separately when the hold is captured.
+              Amount: Math.round(gatewayLegToman * 10),
               DiscountAmount: Math.round(totals.discount * 10),
               Step: 1,
               Status: "Pending",
@@ -829,6 +837,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
               },
               external_id: snappayInitiation.transactionId,
               external_source: "SnappPay",
+              SettlementGateway: "SnappPay",
               contract: contract.id,
               payment_gateway: gatewayRecord.id,
               Date: new Date(),
@@ -1029,7 +1038,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             errorMessage,
             shippingId: shippingData?.shippingId,
             hasDiscountCode: Boolean(shippingData?.discountCode),
-            isReserveOrder: Boolean(shippingData?.reserveShipping || shippingData?.reserveOrderData),
+            isReserveOrder: Boolean(
+              shippingData?.reserveShipping || shippingData?.reserveOrderData,
+            ),
           }),
         });
       } catch (reportError) {

@@ -14,12 +14,7 @@ import {
 import toast from "react-hot-toast";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 
-const ALLOWED_STATUSES = [
-  "پرداخت شده",
-  "Started",
-  "درحال پرداخت",
-  "Paying",
-];
+const ALLOWED_STATUSES = ["پرداخت شده", "Started", "درحال پرداخت", "Paying"];
 
 type Props = {
   order: SuperAdminOrderDetail;
@@ -28,7 +23,7 @@ type Props = {
 
 export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   const [quantities, setQuantities] = useState<Record<number, number>>(
-    Object.fromEntries(order.items.map((it) => [it.id, it.quantity]))
+    Object.fromEntries(order.items.map((it) => [it.id, it.quantity])),
   );
   const [preview, setPreview] = useState<AdjustPreview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -38,19 +33,14 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   const [operatorReason, setOperatorReason] = useState("");
   const applyInFlightRef = useRef(false);
 
-  const isSnappPayOrder =
-    resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
+  const isSnappPayOrder = resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
   const willCancelOrder = preview
     ? isSnappPayOrder
       ? order.items.every((item) => {
-          const changedItem = preview.changes.find(
-            (change) => change.orderItemId === item.id
-          );
+          const changedItem = preview.changes.find((change) => change.orderItemId === item.id);
           return (changedItem?.newCount ?? item.quantity) === 0;
         })
-      : order.items.every(
-          (item) => (quantities[item.id] ?? item.quantity) === 0
-        )
+      : order.items.every((item) => (quantities[item.id] ?? item.quantity) === 0)
     : false;
   const primaryActionText = willCancelOrder ? "لغو سفارش" : "ثبت تغییرات";
   const modalTitle = willCancelOrder ? "تأیید لغو سفارش" : "تأیید تغییرات";
@@ -63,12 +53,12 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   const reasons: string[] = [];
   if (!hasAllowedStatus) {
     reasons.push(
-      `وضعیت فعلی سفارش (${order.orderStatus || "نامشخص"}) خارج از وضعیت‌های مجاز برای ویرایش است.`
+      `وضعیت فعلی سفارش (${order.orderStatus || "نامشخص"}) خارج از وضعیت‌های مجاز برای ویرایش است.`,
     );
   }
   if (hasShippingBarcode) {
     reasons.push(
-      "برای سفارش‌هایی که بارکد ارسال دارند ویرایش آیتم‌ها به صورت پیش‌فرض غیرفعال است."
+      "برای سفارش‌هایی که بارکد ارسال دارند ویرایش آیتم‌ها به صورت پیش‌فرض غیرفعال است.",
     );
   }
 
@@ -83,12 +73,11 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
     }
 
     const confirmed = window.confirm(
-      "آیا از حذف بارکد ارسال مطمئن هستید؟ این عملیات قابل بازگشت نیست."
+      "آیا از حذف بارکد ارسال مطمئن هستید؟ این عملیات قابل بازگشت نیست.",
     );
     if (!confirmed) return;
 
-    const reason =
-      window.prompt("دلیل حذف بارکد را بنویسید (اختیاری):")?.trim() || undefined;
+    const reason = window.prompt("دلیل حذف بارکد را بنویسید (اختیاری):")?.trim() || undefined;
 
     setVoidLoading(true);
     try {
@@ -135,9 +124,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
     } catch (error: any) {
       if (error.response?.data?.data?.error === "barcode_exists") {
         toast.error("بارکد ارسال صادر شده؛ ابتدا آن را باطل کنید");
-      } else if (
-        error.response?.data?.data?.error === "negative_refund_not_allowed"
-      ) {
+      } else if (error.response?.data?.data?.error === "negative_refund_not_allowed") {
         toast.error("کاهش موارد باعث افزایش مبلغ می‌شود");
       } else {
         toast.error(error.response?.data?.error || "خطا در پیش‌نمایش");
@@ -168,28 +155,13 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
     try {
       const result = willCancelOrder
         ? await cancelOrder(order.id, normalizedReason || undefined)
-        : await adjustItems(
-            order.id,
-            items,
-            normalizedReason || undefined,
-          );
+        : await adjustItems(order.id, items, normalizedReason || undefined);
 
-      if (
-        result.status === "queued" &&
-        result.operationId
-      ) {
+      if (result.status === "queued" && result.operationId) {
         toast.success("درخواست برای اسنپ‌پی ثبت شد؛ نتیجه در حال بررسی است.");
-        const operation = await waitForPaymentOperation(
-          order.id,
-          result.operationId,
-        );
+        const operation = await waitForPaymentOperation(order.id, result.operationId);
         if (operation.status === "Failed") {
-          toast.error(
-            formatSnappayOperationFailure(
-              operation,
-              "اسنپ‌پی این عملیات را نپذیرفت.",
-            ),
-          );
+          toast.error(formatSnappayOperationFailure(operation, "اسنپ‌پی این عملیات را نپذیرفت."));
           onSuccess();
           return;
         }
@@ -204,31 +176,26 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
           return;
         }
         if (operation.status !== "Succeeded") {
-          toast.success(
-            "عملیات همچنان در پس‌زمینه در حال پیگیری است.",
-          );
+          toast.success("عملیات همچنان در پس‌زمینه در حال پیگیری است.");
           setShowConfirm(false);
           onSuccess();
           return;
         }
       }
 
-      // Build message based on payment method
       let baseMessage: string;
       if (isSnappPayOrder) {
-        // For SnappPay orders, no wallet refund - just confirm the changes
-        // Don't show any refund message to user for SnappPay
         baseMessage =
           result.status === "cancelled"
-            ? "سفارش لغو شد"
-            : "تغییرات اعمال شد";
+            ? "سفارش لغو شد و هر مبلغ از مسیر پرداخت خودش بازگشت داده شد"
+            : "تغییرات اعمال شد و بازپرداخت بر اساس روش‌های پرداخت انجام شد";
       } else {
         // For other payment methods, refund to wallet
         baseMessage =
           result.status === "cancelled"
             ? "سفارش لغو و کل مبلغ به کیف پول بازگشت داده شد"
             : `تغییرات اعمال شد. مبلغ ${Number(result.refundToman || 0).toLocaleString(
-                "fa-IR"
+                "fa-IR",
               )} تومان به کیف پول بازگشت داده شد`;
       }
 
@@ -250,8 +217,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
 
       if (
         errorCode === "RATE_LIMITED" ||
-        (typeof errorMessage === "string" &&
-          errorMessage.startsWith("SNAPPAY_RATE_LIMIT"))
+        (typeof errorMessage === "string" && errorMessage.startsWith("SNAPPAY_RATE_LIMIT"))
       ) {
         onSuccess();
         return;
@@ -269,10 +235,8 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border border-slate-200">
-      <h3 className="text-lg font-semibold mb-4 text-slate-900">
-        ویرایش اقلام سفارش
-      </h3>
+    <div className="mb-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+      <h3 className="mb-4 text-lg font-semibold text-slate-900">ویرایش اقلام سفارش</h3>
 
       {isBlocked && !forceEdit ? (
         <div className="mb-4 rounded-md border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900">
@@ -288,9 +252,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
                 <span className="font-semibold">بارکد فعلی:</span>{" "}
                 <span className="ltr text-slate-800">{order.shippingBarcode}</span>
               </div>
-              <p className="mb-2">
-                برای ادامه می‌توانید بارکد ارسال را به صورت دستی حذف کنید.
-              </p>
+              <p className="mb-2">برای ادامه می‌توانید بارکد ارسال را به صورت دستی حذف کنید.</p>
               <button
                 onClick={handleVoidBarcode}
                 disabled={voidLoading}
@@ -301,8 +263,8 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
             </div>
           ) : null}
           <p className="mt-3 text-xs text-yellow-800">
-            در صورت نیاز برای سناریوهای تست (مثل اسنپ پی) می‌توانید ویرایش دستی
-            را فعال کنید. لطفاً بعد از تست، سفارش را به وضعیت استاندارد بازگردانید.
+            در صورت نیاز برای سناریوهای تست (مثل اسنپ پی) می‌توانید ویرایش دستی را فعال کنید. لطفاً
+            بعد از تست، سفارش را به وضعیت استاندارد بازگردانید.
           </p>
           <button
             onClick={() => setForceEdit(true)}
@@ -321,16 +283,13 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
 
       {!canEdit ? null : (
         <>
-          <div className="space-y-3 mb-4">
+          <div className="mb-4 space-y-3">
             {order.items.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg"
-              >
+              <div key={item.id} className="flex items-center gap-4 rounded-lg bg-slate-50 p-3">
                 <img
                   src={item.image}
                   alt={item.productName}
-                  className="w-16 h-16 object-cover rounded"
+                  className="h-16 w-16 rounded object-cover"
                 />
                 <div className="flex-1">
                   <p className="font-medium text-slate-900">{item.productName}</p>
@@ -345,13 +304,8 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
                     min={0}
                     max={item.quantity}
                     value={quantities[item.id]}
-                    onChange={(e) =>
-                      handleQuantityChange(
-                        item.id,
-                        parseInt(e.target.value) || 0
-                      )
-                    }
-                    className="w-20 px-3 py-1 border border-slate-300 rounded-md text-center"
+                    onChange={(e) => handleQuantityChange(item.id, parseInt(e.target.value) || 0)}
+                    className="w-20 rounded-md border border-slate-300 px-3 py-1 text-center"
                   />
                   <span className="text-sm text-slate-500">
                     / {item.quantity.toLocaleString("fa-IR")}
@@ -359,7 +313,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
                 </div>
                 <button
                   onClick={() => handleQuantityChange(item.id, 0)}
-                  className="px-3 py-1 bg-red-100 text-red-700 rounded-md hover:bg-red-200 text-sm"
+                  className="rounded-md bg-red-100 px-3 py-1 text-sm text-red-700 hover:bg-red-200"
                 >
                   حذف
                 </button>
@@ -369,9 +323,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
 
           {preview && (
             <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
-              <h4 className="mb-2 font-semibold text-blue-900">
-                پیش‌نمایش تغییرات
-              </h4>
+              <h4 className="mb-2 font-semibold text-blue-900">پیش‌نمایش تغییرات</h4>
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
                   <span>جمع جزء جدید:</span>
@@ -397,14 +349,14 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
                     {preview.newTotals.total.toLocaleString("fa-IR")} تومان
                   </span>
                 </div>
-                {!isSnappPayOrder && (
-                  <div className="flex justify-between border-t border-blue-300 pt-2 text-green-700">
-                    <span className="font-semibold">مبلغ بازگشت به کیف پول:</span>
-                    <span className="font-semibold">
-                      {preview.refundToman.toLocaleString("fa-IR")} تومان
-                    </span>
-                  </div>
-                )}
+                <div className="flex justify-between border-t border-blue-300 pt-2 text-green-700">
+                  <span className="font-semibold">
+                    {isSnappPayOrder ? "کاهش مبلغ سفارش:" : "مبلغ بازگشت به کیف پول:"}
+                  </span>
+                  <span className="font-semibold">
+                    {preview.refundToman.toLocaleString("fa-IR")} تومان
+                  </span>
+                </div>
               </div>
             </div>
           )}
@@ -452,15 +404,15 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
                         ? "این عملیات ابتدا در اسنپ‌پی تأیید و سپس روی سفارش اعمال می‌شود."
                         : "این تغییرات ابتدا در اسنپ‌پی تأیید و سپس روی سفارش اعمال می‌شود."}
                     </p>
+                    <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-blue-800">
+                      سهم پرداخت‌شده با کیف پول به کیف پول برمی‌گردد و سهم اسنپ‌پی از همان مسیر
+                      اسنپ‌پی بازپرداخت می‌شود.
+                    </p>
                     <label className="block space-y-2">
-                      <span className="font-medium text-slate-800">
-                        دلیل عملیات
-                      </span>
+                      <span className="font-medium text-slate-800">دلیل عملیات</span>
                       <textarea
                         value={operatorReason}
-                        onChange={(event) =>
-                          setOperatorReason(event.target.value.slice(0, 500))
-                        }
+                        onChange={(event) => setOperatorReason(event.target.value.slice(0, 500))}
                         rows={3}
                         maxLength={500}
                         required
@@ -487,10 +439,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
                 <button
                   type="button"
                   onClick={handleApply}
-                  disabled={
-                    loading ||
-                    (isSnappPayOrder && operatorReason.trim().length < 3)
-                  }
+                  disabled={loading || (isSnappPayOrder && operatorReason.trim().length < 3)}
                   className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50"
                 >
                   {loading ? "در حال اعمال..." : primaryActionText}
