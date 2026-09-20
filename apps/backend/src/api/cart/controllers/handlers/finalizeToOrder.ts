@@ -11,6 +11,7 @@ import {
   normalizeCheckoutGatewayCode,
 } from "../../../payment-gateway/services/checkout-gateway-availability";
 import { redactSensitive } from "../../../../utils/redactSensitive";
+import { createAddressSnapshot } from "../../../../utils/addressSnapshot";
 import {
   claimPaymentAttemptForInitiation,
   findPaymentAttempt,
@@ -322,6 +323,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     // Verify address exists and belongs to user (skip when merging - parent address already validated)
+    let ownedAddress: any = null;
     if (!reserveOrderData && resolvedAddressId) {
       try {
         const address = await strapi.entityService.findOne(
@@ -363,6 +365,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             },
           });
         }
+
+        ownedAddress = address;
       } catch (err) {
         strapi.log.error("Failed to validate address:", err);
         return ctx.badRequest("خطا در بررسی آدرس", {
@@ -370,6 +374,36 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             success: false,
             errorCode: "ADDRESS_VALIDATION_FAILED",
             message: "خطا در بررسی آدرس",
+          },
+        });
+      }
+    }
+
+    // The order must own its destination, not borrow the shopper's address book.
+    // A book row stays editable and deletable forever, so linking it directly
+    // lets a later edit rewrite where a shipped order went, and a later delete
+    // blank it outright -- the link row cascades away with the address. Freeze a
+    // private copy instead: `IsTemporary` hides it from `/local-user-addresses/me`,
+    // so nothing can reach it to change or remove it again.
+    //
+    // Rows already flagged temporary were minted for this checkout by the
+    // `addressPayload` branch above, so they are snapshots already. Values are
+    // copied verbatim -- some live rows predate the 10-digit postal rule, and
+    // freezing history must not be what starts rejecting them.
+    //
+    // Deliberately outside the validation try above, whose catch would otherwise
+    // report a failed copy as a failed ownership check.
+    if (ownedAddress && ownedAddress.IsTemporary !== true) {
+      try {
+        const snapshot = await createAddressSnapshot(strapi, ownedAddress);
+        resolvedAddressId = snapshot.id;
+      } catch (err) {
+        strapi.log.error("Failed to snapshot delivery address during finalize", err);
+        return ctx.badRequest("خطا در ثبت آدرس", {
+          data: {
+            success: false,
+            errorCode: "ADDRESS_CREATION_FAILED",
+            message: "خطا در ثبت آدرس",
           },
         });
       }

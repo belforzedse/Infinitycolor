@@ -73,7 +73,12 @@ describe("finalizeToOrder handler - inline billing address", () => {
   });
 
   it("passes backend-calculated shipping cost to cart finalization", async () => {
-    const { strapi, registerService } = createStrapiMock();
+    const { strapi, registerService, registerQuery } = createStrapiMock();
+    // A saved address is frozen into a private copy before the order is placed,
+    // so the handler writes one row here on its way to finalization.
+    registerQuery("api::local-user-address.local-user-address", {
+      create: jest.fn(async () => ({ id: 777 })),
+    });
     enableSnappayGateway(strapi);
     const finalizeCartToOrder = jest.fn(async () => ({
       success: false,
