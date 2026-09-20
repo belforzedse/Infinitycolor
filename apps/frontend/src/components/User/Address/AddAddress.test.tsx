@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import AddAddress from "./AddAddress";
 
 jest.mock("jotai", () => ({
@@ -41,5 +41,19 @@ describe("AddAddress", () => {
 
     expect(screen.getByRole("combobox", { name: "استان" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "شهر" })).toBeVisible();
+  });
+
+  // The iOS Persian keyboard emits U+06Fx digits. They are not ASCII `\d`, so
+  // the strip that keeps this field numeric used to erase every keystroke and
+  // the shopper watched the box stay empty.
+  it("keeps Persian digits typed into the postal code", async () => {
+    await act(async () => {
+      render(<AddAddress isOpen showButton={false} />);
+    });
+
+    const postalCode = screen.getByPlaceholderText("کد پستی ۱۰ رقمی");
+    fireEvent.change(postalCode, { target: { value: "۴۹۱۷۸۳۳۴۵۶" } });
+
+    expect(postalCode).toHaveValue("4917833456");
   });
 });
