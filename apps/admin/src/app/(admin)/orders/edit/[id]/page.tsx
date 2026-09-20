@@ -31,6 +31,8 @@ import {
   variationAttributeTerms,
 } from "@/utils/orderAttributes";
 import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
+import { primaryGatewayMethod, readOrderPaymentLegs } from "@/utils/paymentLegs";
+import PaymentLegBreakdown from "@/components/SuperAdmin/Order/PaymentLegBreakdown";
 import {
   getOrderStatusMeta,
   translateOrderStatus,
@@ -114,6 +116,12 @@ type OrderResponse = {
                 Type?: string;
                 Status?: string;
                 Date?: string;
+                /** IRR, unlike the toman amounts elsewhere on this screen. */
+                Amount?: number;
+                /** Set by the importer and by the SnappPay/wallet legs; the
+                 *  bank gateway legs leave it unset and carry the channel in
+                 *  `external_source` instead. */
+                SettlementGateway?: string;
                 external_source?: string;
                 TrackId?: string;
                 payment_gateway?: {
@@ -350,6 +358,10 @@ export default function EditOrderPage() {
           undefined;
 
         const txList = contractTransactions || [];
+        // An order can be funded from more than one source — typically part
+        // wallet, part gateway — and `orders.PaymentGateway` holds only one
+        // value, so the split has to come from the transaction legs.
+        const paymentLegs = readOrderPaymentLegs(txList);
         const lastTx = txList[txList.length - 1];
         // SnappPay stores the provider payment token on the transaction's TrackId.
         // Operators need it verbatim to raise tickets with SnappPay support.
@@ -359,7 +371,12 @@ export default function EditOrderPage() {
             (tx: any) =>
               (tx?.external_source || contract?.external_source) === "SnappPay" && tx?.TrackId,
           );
+        // The largest non-wallet leg, not the last transaction. On a split order
+        // the wallet leg is written later, at capture, so `lastTx` is usually the
+        // wallet row — which made a wallet+SnappPay order read as a wallet order
+        // and hid the SnappPay operator panels, since those key off this value.
         const rawPaymentGateway =
+          primaryGatewayMethod(paymentLegs) ||
           unwrapEntity(lastTx?.payment_gateway)?.Title ||
           contract?.payment_gateway ||
           (normalizedOrder as any)?.PaymentGateway ||
@@ -407,6 +424,7 @@ export default function EditOrderPage() {
           recipientPhone,
           postalCode: addr?.PostalCode,
           paymentGateway,
+          paymentLegs,
           transactionId,
           paymentToken: lastSnappayTx?.TrackId ?? null,
           shipping: shippingCost,
@@ -658,9 +676,17 @@ export default function EditOrderPage() {
                 { label: "شماره تماس", value: data.phoneNumber || "—" },
                 {
                   label: "روش پرداخت",
-                  value: data.paymentGateway
-                    ? getPaymentGatewayLabel(data.paymentGateway)
-                    : "—",
+                  // More than one leg means the order was funded from several
+                  // sources — almost always part wallet, part gateway — and
+                  // support needs to see which covered how much.
+                  value:
+                    (data.paymentLegs?.length ?? 0) > 1 ? (
+                      <PaymentLegBreakdown legs={data.paymentLegs ?? []} />
+                    ) : (
+                      // Already labelled upstream; labelling again is a no-op
+                      // for known gateways but mangles unrecognised channels.
+                      data.paymentGateway || "—"
+                    ),
                 },
               ]
             : undefined
