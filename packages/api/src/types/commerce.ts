@@ -198,6 +198,19 @@ export interface OrderPaymentStatusResponse {
   walletAmountIrr?: number;
   /** What the gateway was asked to charge, in IRR. Equals `amountIrr` when no wallet was used. */
   gatewayAmountIrr?: number;
+  /**
+   * Lifecycle of this checkout's wallet credit. `Active` means the money is
+   * still committed to this payment and cannot be spent anywhere else, which is
+   * the only state where offering to abandon the checkout makes sense.
+   */
+  walletHoldStatus?: "None" | "DirectDebit" | "Active" | "Captured" | "Released";
+  /**
+   * Only present on a reconcile sent with `abandon: true`. `false` means the
+   * claim was refused — the attempt is already resolved, or the shopper's own
+   * successful return reached us first and outranks it — so no release is
+   * coming and the page must not promise one.
+   */
+  walletReleaseRequested?: boolean;
   canRetry?: boolean;
   nextAction?: "view_order" | "return_to_cart" | "recheck";
   failureCode?: string;

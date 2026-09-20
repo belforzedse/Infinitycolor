@@ -1941,11 +1941,12 @@ export async function acceptSnappayCallback(
   };
 }
 
-export async function requestSnappayReconciliation(
+async function queueSnappayReconcileOperation(
   strapi: Strapi,
   orderId: number,
-  reason = "manual",
-): Promise<any | null> {
+  reason: string,
+  options: { customerAbandoned?: boolean },
+): Promise<{ attempt: any | null; claimAccepted: boolean }> {
   // An order the customer retried has several SnappPay attempts. Without an
   // explicit order this picked an arbitrary one, so a retry could reconcile a
   // dead attempt and its dead token while the live one sat untouched.
@@ -1954,25 +1955,101 @@ export async function requestSnappayReconciliation(
     { Gateway: "snappay", order: { id: orderId } },
     { orderBy: { createdAt: "desc" } },
   );
-  if (!bundle) return null;
+  if (!bundle) return { attempt: null, claimAccepted: false };
   if (["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(bundle.attempt.Status))) {
-    return bundle.attempt;
+    // Already resolved: whatever the shopper is claiming, this attempt's money
+    // and hold have stopped moving and the status response tells them so.
+    return { attempt: bundle.attempt, claimAccepted: false };
   }
   const key = `reconcile:${bundle.attempt.id}`;
   const existing: any = await strapi.db.query(OPERATION_UID).findOne({
     where: { idempotencyKey: key },
   } as any);
-  const metadata = { requestedReason: String(reason).slice(0, 100) };
+  // The shopper's own successful return outranks them later saying they did not
+  // pay, so the claim is dropped at the door rather than carried to a state
+  // machine that would ignore it anyway — and the caller can then tell the
+  // shopper the truth about what was recorded.
+  //
+  // The operation's metadata is the authority here, because it is what
+  // `decideSnappayRecovery` actually reads and it is never unset. The attempt's
+  // own columns are only corroborating: `updateProviderObservation` overwrites
+  // `CALLBACK_OK` with the first non-UNKNOWN status read, so after one worker
+  // pass an attempt behind an OK callback reads plain `PENDING` again. Keying
+  // only on those would accept a claim the state machine then discards, and the
+  // shopper would be promised a release that was never coming.
+  const claimAccepted =
+    options.customerAbandoned === true &&
+    String(existing?.metadata?.callbackState || "").toUpperCase() !== "OK" &&
+    String(bundle.attempt.providerStatus || "") !== "CALLBACK_OK" &&
+    String(bundle.attempt.nextAction || "") !== "verify";
+  const metadata: Record<string, unknown> = {
+    requestedReason: String(reason).slice(0, 100),
+    // Sticky by design: `requeueParkedSnappayReconcile` merges metadata into the
+    // existing row, so a shopper's abandonment survives the quiet status polls
+    // the result page keeps firing afterwards and still decides the retry that
+    // finally reads a terminal provider state.
+    ...(claimAccepted ? { customerAbandoned: true } : {}),
+  };
   if (!existing) {
     await createOrReuseOperation(strapi, bundle, {
       type: "RECONCILE",
       idempotencyKey: key,
       metadata,
     });
-    return bundle.attempt;
+    return { attempt: bundle.attempt, claimAccepted };
   }
   await resumeExistingReconcile(strapi, bundle, existing, metadata);
-  return bundle.attempt;
+  return { attempt: bundle.attempt, claimAccepted };
+}
+
+export async function requestSnappayReconciliation(
+  strapi: Strapi,
+  orderId: number,
+  reason = "manual",
+  options: { customerAbandoned?: boolean } = {},
+): Promise<any | null> {
+  const { attempt } = await queueSnappayReconcileOperation(strapi, orderId, reason, options);
+  return attempt;
+}
+
+/**
+ * The shopper says they did not pay, and wants their wallet credit and stock
+ * back.
+ *
+ * This is the customer-side counterpart of `queueSnappayAdminCancel`, and the
+ * answer to the one gap wallet holds had: `isSupersedableHoldRow` refuses to
+ * reclaim a SnappPay hold on the checkout path — SnappPay mints a transaction
+ * id the moment an attempt is created, keeps reporting `REGISTERED` long after
+ * the shopper has gone, and must never be probed synchronously while a shopper
+ * waits. Until now nothing but an operator or the 1.5h reservation defer
+ * ceiling could resolve that, so a shopper who opened SnappPay with a wallet
+ * split and pressed back had their credit pinned for up to an hour and a half.
+ *
+ * It is deliberately only a *request*: it queues the same RECONCILE the return
+ * paths queue, flagged with the shopper's claim, and the worker still reads
+ * `GET /status` before doing anything. The claim can only turn `REGISTERED` or
+ * `PENDING` into a revert; every state in which SnappPay says the payment
+ * happened is settled and honoured instead, so a shopper who pays and then
+ * clicks this keeps their order. Nothing here touches the wallet — the hold is
+ * released by `applySnappayCancellation` -> `releaseOrderReservation`, once the
+ * provider has actually answered.
+ *
+ * `accepted: false` means the claim was not recorded — the attempt is already
+ * resolved, or the shopper's own browser already came back `OK` and that
+ * outranks this. The caller must not then tell them a release is on its way.
+ */
+export async function requestSnappayCustomerAbandon(
+  strapi: Strapi,
+  orderId: number,
+  reason = "customer_abandoned_checkout",
+): Promise<{ accepted: boolean; attempt: any | null }> {
+  const { attempt, claimAccepted } = await queueSnappayReconcileOperation(
+    strapi,
+    orderId,
+    reason,
+    { customerAbandoned: true },
+  );
+  return { accepted: claimAccepted, attempt };
 }
 
 const stableDigest = (value: unknown) =>
@@ -2629,12 +2706,20 @@ async function performVerify(strapi: Strapi, operation: any, bundle: AttemptBund
   );
 }
 
-async function performRevert(strapi: Strapi, operation: any, bundle: AttemptBundle, token: string) {
+async function performRevert(
+  strapi: Strapi,
+  operation: any,
+  bundle: AttemptBundle,
+  token: string,
+  // Names what authorized the revert, so an order log distinguishes the
+  // provider's own FAILED callback from the shopper abandoning the payment.
+  reason = "failed_callback",
+) {
   const adapter = createSnappayAdapter(strapi);
   const revertResult = await adapter.revert(token);
   if (revertResult.successful) {
     await updateProviderObservation(strapi, bundle, revertResult, "REVERT");
-    return cancelLocallyAndComplete(strapi, operation, bundle, "REVERT", "failed_callback");
+    return cancelLocallyAndComplete(strapi, operation, bundle, "REVERT", reason);
   }
   const statusResult = await adapter.status(token);
   const status = normalizeSnappayProviderStatus(statusResult.response?.status);
@@ -2649,7 +2734,7 @@ async function performRevert(strapi: Strapi, operation: any, bundle: AttemptBund
     );
   }
   if (status === "SETTLE") {
-    return performCancel(strapi, operation, bundle, token, "failed_callback_already_settled");
+    return performCancel(strapi, operation, bundle, token, `${reason}_already_settled`);
   }
   if (status === "VERIFY") {
     return performSettle(strapi, operation, bundle, token, true);
@@ -2835,6 +2920,7 @@ async function executeRecoveryAction(
   bundle: AttemptBundle,
   token: string,
   action: SnappayRecoveryAction,
+  revertReason = "failed_callback",
 ) {
   switch (action) {
     case "VERIFY":
@@ -2844,7 +2930,7 @@ async function executeRecoveryAction(
     case "SETTLE_THEN_CANCEL":
       return performSettle(strapi, operation, bundle, token, true);
     case "REVERT":
-      return performRevert(strapi, operation, bundle, token);
+      return performRevert(strapi, operation, bundle, token, revertReason);
     case "FINALIZE_LOCAL":
       return finalizeAndComplete(strapi, operation, bundle);
     case "CANCEL_LOCAL": {
@@ -3069,8 +3155,14 @@ export async function processSnappayOperation(
     const attemptCreatedAt = bundle.attempt.createdAt
       ? new Date(bundle.attempt.createdAt).getTime()
       : null;
+    // Set only by `requestSnappayCustomerAbandon`, i.e. by the owning shopper
+    // saying they did not pay. It is a claim about their browser, never about
+    // the provider, so the state machine consults it only for a token SnappPay
+    // still reports as uncommitted.
+    const customerAbandoned = operation.metadata?.customerAbandoned === true;
     const action = decideSnappayRecovery({
       callbackState,
+      customerAbandoned,
       providerStatus,
       // Only the code from the status read just performed. Falling back to
       // `operation.providerCode` let a code left behind by an earlier call (a
@@ -3096,7 +3188,16 @@ export async function processSnappayOperation(
       );
       return { status: "completed", operationId, providerStatus, action };
     }
-    await executeRecoveryAction(strapi, operation, bundle, token, action);
+    await executeRecoveryAction(
+      strapi,
+      operation,
+      bundle,
+      token,
+      action,
+      customerAbandoned && callbackState !== "FAILED"
+        ? "customer_abandoned_checkout"
+        : "failed_callback",
+    );
     return { status: "completed", operationId, providerStatus, action };
   } catch (error: any) {
     const retryCount = Number(operation.retryCount || 0);
@@ -3296,6 +3397,8 @@ export function createSnappayOrchestrator(strapi: Strapi) {
     acceptCallback: (input: SnappayCallbackInput) => acceptSnappayCallback(strapi, input),
     reconcileOrder: (orderId: number, reason?: string) =>
       requestSnappayReconciliation(strapi, orderId, reason),
+    abandonOrder: (orderId: number, reason?: string) =>
+      requestSnappayCustomerAbandon(strapi, orderId, reason),
     queueAdminCancel: (input: Parameters<typeof queueSnappayAdminCancel>[1]) =>
       queueSnappayAdminCancel(strapi, input),
     queueAdminUpdate: (input: Parameters<typeof queueSnappayAdminUpdate>[1]) =>

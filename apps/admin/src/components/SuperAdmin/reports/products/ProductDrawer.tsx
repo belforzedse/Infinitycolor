@@ -103,7 +103,7 @@ export default function ProductDrawer({
                 <Stat label="فروش ناخالص" value={priceFormatter(data.totals.gross, " ت")} />
                 <Stat label="خالص فروش" value={priceFormatter(data.totals.net, " ت")} />
                 <Stat label="تعداد فروش" value={faNum(data.totals.units)} />
-                <Stat label="موجودی فعلی" value={faNum(data.totals.currentStock)} />
+                <Stat label="موجودی کل محصول" value={faNum(data.totals.currentStock)} />
               </div>
 
               {data.trend.length > 0 && (
@@ -145,15 +145,26 @@ export default function ProductDrawer({
                     <thead className="text-xs text-neutral-400">
                       <tr>
                         <th className="px-2 py-2 text-right">SKU</th>
+                        <th className="px-2 py-2 text-right">رنگ / سایز</th>
+                        <th className="px-2 py-2 text-right">ویژگی‌ها</th>
                         <th className="px-2 py-2 text-right">تعداد</th>
                         <th className="px-2 py-2 text-right">خالص</th>
-                        <th className="px-2 py-2 text-right">موجودی</th>
+                        <th className="px-2 py-2 text-right">موجودی متغیر</th>
                       </tr>
                     </thead>
                     <tbody>
                       {data.variations.map((v) => (
                         <tr key={v.variationId} className="border-t border-neutral-100">
                           <td className="px-2 py-2 font-mono text-xs text-neutral-700">{v.sku}</td>
+                          <td className="px-2 py-2 text-neutral-700">
+                            {v.variantLabel || <span className="text-neutral-300">—</span>}
+                          </td>
+                          <td
+                            className="max-w-[160px] truncate px-2 py-2 text-xs text-neutral-500"
+                            title={v.variantOther || undefined}
+                          >
+                            {v.variantOther || <span className="text-neutral-300">—</span>}
+                          </td>
                           <td className="px-2 py-2">{faNum(v.units)}</td>
                           <td className="px-2 py-2">{priceFormatter(v.net, " ت")}</td>
                           <td className="px-2 py-2">

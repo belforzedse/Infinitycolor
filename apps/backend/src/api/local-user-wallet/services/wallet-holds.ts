@@ -222,6 +222,17 @@ const RECLAIMABLE_HOLD_STATUSES = new Set(["Created", "Redirected"]);
  * question while the shopper waits; and a synchronous provider call on the
  * checkout path is a known outage mode here. Its hold is released only once a
  * queued cancel operation has the provider's answer.
+ *
+ * That queue is reachable by the shopper, not only by an operator:
+ * `requestSnappayCustomerAbandon` records their statement that they did not pay
+ * on the same RECONCILE the return paths queue, which lets the recovery state
+ * machine revert a token SnappPay still reports as uncommitted. The revert
+ * cancels the order, the cancellation releases the reservation, and the hold
+ * goes with it — so a shopper who opens SnappPay with a wallet split and comes
+ * back gets their credit within seconds instead of waiting out the reservation
+ * defer ceiling. Both the checkout path (`requestProviderHoldRelease`) and the
+ * payment result page (`POST /orders/:id/payment-reconcile` with `abandon`)
+ * hand the claim to it.
  */
 export const isSupersedableHoldRow = (row: {
   status?: unknown;

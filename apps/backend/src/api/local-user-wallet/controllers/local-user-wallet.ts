@@ -18,7 +18,27 @@ const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const WALLET_TRANSACTION_UID =
   "api::local-user-wallet-transaction.local-user-wallet-transaction";
 
+const LEDGER_SELECT = [
+  "id",
+  "Amount",
+  "Type",
+  "Date",
+  "Cause",
+  "Note",
+  "ReferenceId",
+  "createdAt",
+] as const;
+
 const rialToToman = (irr: number) => Math.round(Number(irr || 0) / 10);
+
+const parseLedgerPage = (query: { page?: unknown; pageSize?: unknown } | undefined) => {
+  const page = Math.max(1, Number.parseInt(String(query?.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number.parseInt(String(query?.pageSize ?? "25"), 10) || 25),
+  );
+  return { page, pageSize };
+};
 
 /** Read a user's current wallet balance (IRR) without creating a wallet. */
 async function readBalanceIrr(strapi: any, userId: number): Promise<number> {
@@ -94,6 +114,60 @@ export default factories.createCoreController(
         strapi.log.error(error);
         return ctx.internalServerError(
           "An error occurred while fetching the wallet"
+        );
+      }
+    },
+
+    /**
+     * Owner ledger as flat rows. Content-API `find` wraps Type/Amount/Date in
+     * `attributes`, which the storefront then treats as missing and shows empty.
+     */
+    async getCurrentUserWalletTransactions(ctx) {
+      try {
+        const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!pluginUserId) return;
+
+        const { page, pageSize } = parseLedgerPage(
+          ctx.query as { page?: unknown; pageSize?: unknown },
+        );
+        const wallet = await strapi.db.query(WALLET_UID).findOne({
+          where: { user: Number(pluginUserId) },
+          select: ["id"],
+        });
+        if (!wallet) {
+          return ctx.send({
+            data: [],
+            meta: { pagination: { page, pageSize, pageCount: 0, total: 0 } },
+          });
+        }
+
+        const where = { user_wallet: wallet.id };
+        const [transactions, total] = await Promise.all([
+          strapi.db.query(WALLET_TRANSACTION_UID).findMany({
+            where,
+            select: [...LEDGER_SELECT],
+            orderBy: [{ Date: "desc" }, { id: "desc" }],
+            limit: pageSize,
+            offset: (page - 1) * pageSize,
+          }),
+          strapi.db.query(WALLET_TRANSACTION_UID).count({ where }),
+        ]);
+
+        return ctx.send({
+          data: transactions,
+          meta: {
+            pagination: {
+              page,
+              pageSize,
+              pageCount: total === 0 ? 0 : Math.ceil(total / pageSize),
+              total,
+            },
+          },
+        });
+      } catch (error) {
+        strapi.log.error(error);
+        return ctx.internalServerError(
+          "An error occurred while fetching wallet transactions"
         );
       }
     },

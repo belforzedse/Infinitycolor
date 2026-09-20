@@ -9,7 +9,10 @@
 import { createCheckoutQuote } from "../../../api/cart/services/lib/checkout-quote";
 import { PaymentAllocationError } from "../../../api/cart/services/lib/payment-allocation";
 import { buildWalletCheckoutContext } from "../../../api/cart/services/lib/wallet-checkout";
-import { supersedeCheckoutAttempt } from "../../../api/cart/services/lib/checkout-supersede";
+import {
+  requestProviderHoldRelease,
+  supersedeCheckoutAttempt,
+} from "../../../api/cart/services/lib/checkout-supersede";
 import { finalizeGatewaySettlement } from "../../../api/order/controllers/helpers/gatewaySettlement";
 import { settleOrderWithWallet } from "../../../api/cart/controllers/handlers/wallet-settlement";
 import { claimPaymentAttemptForInitiation } from "../../../api/payment-attempt/services/claim-payment-attempt";
@@ -686,6 +689,45 @@ describe("mixed wallet + gateway checkout", () => {
       replacementAttemptId: `next-${shopper.user.id}`,
     });
     expect(outcome).toMatchObject({ outcome: "refused", reason: "provider_bound" });
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
+
+    // Refusing inline is right, but it used to be the end of the story: the
+    // shopper's credit then stayed committed until the 1.5h reservation defer
+    // ceiling. Naming this predecessor while re-checking-out is them saying
+    // they did not complete that payment, so the release is asked for through
+    // the queue instead — still without touching the wallet here, and still
+    // with the provider getting the final word.
+    const orchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
+    const abandonOrder = jest
+      .spyOn(orchestrator, "abandonOrder")
+      .mockResolvedValue({ accepted: true, attempt: null });
+    try {
+      await expect(
+        requestProviderHoldRelease(strapi, shopper.user.id, `bound-${shopper.user.id}`),
+      ).resolves.toBe(true);
+      expect(abandonOrder).toHaveBeenCalledWith(
+        Number(first.result.order.id),
+        "customer_replaced_checkout",
+      );
+
+      // Another customer naming the same attempt gets nothing: ownership is
+      // part of the lookup, against the real link tables.
+      const stranger = await seedShopper({ balanceIrr: 1_000_000 });
+      await expect(
+        requestProviderHoldRelease(strapi, stranger.user.id, `bound-${shopper.user.id}`),
+      ).resolves.toBe(false);
+      expect(abandonOrder).toHaveBeenCalledTimes(1);
+
+      // A claim the orchestrator refuses — the shopper's own OK return got there
+      // first — must not be reported as a release on its way.
+      abandonOrder.mockResolvedValue({ accepted: false, attempt: null });
+      await expect(
+        requestProviderHoldRelease(strapi, shopper.user.id, `bound-${shopper.user.id}`),
+      ).resolves.toBe(false);
+    } finally {
+      abandonOrder.mockRestore();
+    }
+    // Nothing was released here — that is the worker's job, after GET /status.
     expect((await wallet(shopper.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
   });
 

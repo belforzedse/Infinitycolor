@@ -1,22 +1,16 @@
-import CirculePlusIcon from "@/components/User/Icons/CirculePlusIcon";
 import { useEffect, useState } from "react";
 import WalletService from "@/services/wallet";
 
-type WalletBalanceProps = {
-  /** Mirrors the wallet page: top-up is currently switched off site-wide. */
-  chargeDisabled?: boolean;
-  /** Moves focus to the top-up amounts once charging is enabled again. */
-  onIncrease?: () => void;
-};
-
-export default function WalletBalance({ chargeDisabled = false, onIncrease }: WalletBalanceProps) {
+export default function WalletBalance() {
   const [balanceIrr, setBalanceIrr] = useState<number>(0);
   useEffect(() => {
     const run = async () => {
       try {
         const res = await WalletService.getMyWallet();
         if (res?.success && res.data) setBalanceIrr(Number(res.data.balance || 0));
-      } catch {}
+      } catch {
+        // The page still renders; a failed read keeps the last known zero.
+      }
     };
     run();
   }, []);
@@ -31,24 +25,6 @@ export default function WalletBalance({ chargeDisabled = false, onIncrease }: Wa
         <span className="text-[20px] text-white">کیف پول اینفینیتی</span>
         <span className="text-[36px] text-white">{(balanceIrr / 10).toLocaleString()} تومان</span>
       </div>
-
-      {/*
-        This button carried no handler and no disabled state, so it looked live
-        and did nothing at all — the reported "top-up does nothing". The page's
-        other top-up entry point was already correctly disabled behind a notice;
-        this one now matches it, and takes the customer to the amounts once
-        charging is switched back on.
-      */}
-      <button
-        type="button"
-        disabled={chargeDisabled}
-        onClick={onIncrease}
-        aria-describedby={chargeDisabled ? "wallet-charge-disabled-notice" : undefined}
-        className="flex items-center gap-1 rounded-lg disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        <span className="text-base text-infinity-primary">افزایش موجودی</span>
-        <CirculePlusIcon />
-      </button>
     </div>
   );
 }

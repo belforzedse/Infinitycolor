@@ -476,7 +476,7 @@ export const walletTopupLimits = () => ({
   maxToman: Math.max(1, Number(process.env.WALLET_TOPUP_MAX_TOMAN || 50_000_000)),
   maxPending: Math.max(1, Number(process.env.WALLET_TOPUP_MAX_PENDING || 3)),
   ttlMinutes: Math.max(1, Number(process.env.WALLET_TOPUP_TTL_MINUTES || 30)),
-  presetsToman: text(process.env.WALLET_TOPUP_PRESETS_TOMAN || "100000,200000,500000,1000000")
+  presetsToman: text(process.env.WALLET_TOPUP_PRESETS_TOMAN || "1000000,2000000,3000000,4000000,5000000")
     .split(",")
     .map((entry) => Number(entry.trim()))
     .filter((value) => Number.isInteger(value) && value > 0),

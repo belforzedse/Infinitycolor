@@ -1,20 +1,11 @@
-import clsx from "clsx";
-
 export const TransactionHeader = ({
   icon,
   title,
-  showOnlyMobile = false,
 }: {
   icon: React.ReactNode;
   title: string;
-  showOnlyMobile?: boolean;
 }) => (
-  <div
-    className={clsx(
-      "col-span-1 items-center gap-1",
-      showOnlyMobile ? "flex lg:hidden" : "hidden lg:flex",
-    )}
-  >
+  <div className="col-span-1 flex items-center gap-1">
     {icon}
     <span className="text-2xl text-foreground-primary">{title}</span>
   </div>

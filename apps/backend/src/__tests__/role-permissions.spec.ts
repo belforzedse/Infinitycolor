@@ -487,6 +487,7 @@ function createActionTree() {
       controllers: {
         "local-user-wallet": {
           getCurrentUserWallet: action(),
+          getCurrentUserWalletTransactions: action(),
           adminGetUserWallet: action(),
           adminGetUserWalletHistory: action(),
           adminAdjustWallet: action(),
@@ -1412,6 +1413,7 @@ describe("role permission templates", () => {
     ]);
     expect(enabled("api::local-user-wallet", "local-user-wallet")).toEqual([
       "getCurrentUserWallet",
+      "getCurrentUserWalletTransactions",
     ]);
     expect(enabled("api::local-user-wallet-transaction", "local-user-wallet-transaction")).toEqual([
       "find",

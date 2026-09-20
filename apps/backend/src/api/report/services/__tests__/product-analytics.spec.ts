@@ -21,6 +21,10 @@ import {
   paidOrdersCte,
   aggCte,
   performanceCoreSelect,
+  performanceCtes,
+  productStockTotalsCte,
+  variationAttributesCte,
+  variantLabel,
   categoryMembershipCte,
   categoryFilterSql,
   ELIGIBLE_ORDER_STATUS,
@@ -37,6 +41,39 @@ import {
   MAX_PAGE_SIZE,
   type ResolvedJoins,
 } from "../product-analytics";
+
+/**
+ * Stand-in for what `resolveJoins` discovers, for the SQL builders that take it.
+ * Every member `performanceCoreSelect` dereferences must be present: the
+ * `as unknown as ResolvedJoins` cast hides a missing one from tsc, and the builder
+ * then throws on `undefined.titleExpr` at runtime.
+ */
+const PERF_JOINS = {
+  oiToOrder: "JOIN orders o ON o.id = oi.order_id",
+  oiToVariation: { join: "", idExpr: "oi.product_variation_id" },
+  orderToContract: "JOIN contracts c ON c.order_id = o.id",
+  contractToTx: "JOIN contract_transactions ct ON ct.contract_id = c.id",
+  variationToProduct: "JOIN products p ON p.id = pv.product_id",
+  variationToStock: "LEFT JOIN product_stocks ps ON ps.product_variation_id = pv.id",
+  variationToColor: {
+    join: "LEFT JOIN product_variation_colors pvc ON pvc.id = pv.color_id",
+    titleExpr: "pvc.title",
+    codeExpr: "pvc.color_code",
+  },
+  variationToSize: {
+    join: "LEFT JOIN product_variation_sizes pvs ON pvs.id = pv.size_id",
+    titleExpr: "pvs.title",
+  },
+  variationToModel: {
+    join: "LEFT JOIN product_variation_models pvm ON pvm.id = pv.model_id",
+    titleExpr: "pvm.title",
+  },
+  hasVariationAttributes: true,
+  productToCategory: {
+    join: "LEFT JOIN product_categories pc ON pc.id = p.category_id",
+    titleExpr: "pc.title",
+  },
+} as unknown as ResolvedJoins;
 
 describe("product-analytics pure helpers", () => {
   describe("periodDelta", () => {
@@ -679,19 +716,209 @@ describe("product-analytics pure helpers", () => {
       // whose column the SELECT never emits is a runtime 400 ("column net does
       // not exist"), not a compile error. `net`, `refunds` and `avgPrice` were all
       // reachable from the UI's sort dropdown while missing from the SELECT.
-      const joins = {
-        variationToProduct: "JOIN products p ON p.id = pv.product_id",
-        variationToStock: "LEFT JOIN product_stocks ps ON ps.product_variation_id = pv.id",
-        productToCategory: {
-          join: "LEFT JOIN product_categories pc ON pc.id = p.category_id",
-          titleExpr: "pc.title",
-        },
-      } as unknown as ResolvedJoins;
+      const joins = PERF_JOINS;
 
       const sql = performanceCoreSelect(joins);
       for (const column of Object.values(PERFORMANCE_SORT_COLUMNS)) {
         expect(sql).toMatch(new RegExp(`(AS\\s+|\\.)${column}\\b`, "i"));
       }
+    });
+  });
+});
+
+describe("variant identity and product-level stock", () => {
+  describe("variantLabel", () => {
+    it("joins the three axes in display order", () => {
+      expect(variantLabel({ color: "مشکی", size: "L", model: "کلاسیک" })).toBe(
+        "مشکی / L / کلاسیک",
+      );
+    });
+
+    it("drops absent axes rather than leaving empty separators", () => {
+      expect(variantLabel({ color: "مشکی", size: null, model: undefined })).toBe("مشکی");
+      expect(variantLabel({ color: null, size: "XL" })).toBe("XL");
+    });
+
+    it("returns null — not an empty string — when nothing is known", () => {
+      // The UI renders "—" on null. An empty string would render as a blank cell
+      // that looks like a loading state.
+      expect(variantLabel({})).toBeNull();
+      expect(variantLabel({ color: "   ", size: "" })).toBeNull();
+    });
+  });
+
+  describe("productStockTotalsCte", () => {
+    it("declares no bindings", () => {
+      // The callers pass [start, end, ...filters] positionally and knex numbers
+      // placeholders by textual position, so a single `?` here would silently
+      // shift every filter parameter.
+      expect(productStockTotalsCte(PERF_JOINS)).not.toContain("?");
+    });
+
+    it("sums stock over every variation of the product, counting nulls as zero", () => {
+      const sql = productStockTotalsCte(PERF_JOINS);
+      expect(sql).toContain("SUM(COALESCE(ps.count, 0))");
+      expect(sql).toContain("GROUP BY p.id");
+      expect(sql).toContain("sold_products");
+    });
+
+    it("keeps the product join INNER so orphan variations form no NULL bucket", () => {
+      const sql = productStockTotalsCte(PERF_JOINS);
+      expect(sql).toContain("JOIN products p ON p.id = pv.product_id");
+      expect(sql).not.toContain("LEFT JOIN products p");
+    });
+
+    it("applies no publish or removal filter, matching the drawer's total", () => {
+      // productDetail sums the same variations in JS with no such filter. A filter
+      // here would produce a third number for the same question.
+      const sql = productStockTotalsCte(PERF_JOINS);
+      expect(sql).not.toContain("removed_at");
+      expect(sql).not.toContain("is_published");
+    });
+  });
+
+  describe("variationAttributesCte", () => {
+    it("emits exactly one row per variation", () => {
+      // This is what keeps countSql's total and the pagination correct: the outer
+      // query joins this CTE once, so duplicate link rows cannot multiply results.
+      const sql = variationAttributesCte(PERF_JOINS);
+      expect(sql).toContain("DISTINCT ON (pv.id)");
+      expect(sql).toContain("ORDER BY pv.id");
+    });
+
+    it("declares no bindings", () => {
+      expect(variationAttributesCte(PERF_JOINS)).not.toContain("?");
+      expect(variationAttributesCte(PERF_JOINS, "all")).not.toContain("?");
+    });
+
+    it("prefers the dedicated relation and falls back to the projected term", () => {
+      const sql = variationAttributesCte(PERF_JOINS);
+      expect(sql).toContain("COALESCE(pvc.title, ga.gen_color)");
+      expect(sql).toContain("COALESCE(pvs.title, ga.gen_size)");
+      expect(sql).toContain("COALESCE(pvm.title, ga.gen_model)");
+    });
+
+    it("keeps a swatch with the colour it belongs to", () => {
+      // A plain COALESCE would pair a legacy colour that has no code with some
+      // other attribute's code.
+      expect(variationAttributesCte(PERF_JOINS)).toContain(
+        "CASE WHEN pvc.title IS NOT NULL THEN pvc.color_code",
+      );
+    });
+
+    it("carries every term unfiltered, so no attribute is ever hidden", () => {
+      const sql = variationAttributesCte(PERF_JOINS);
+      expect(sql).toContain("jsonb_agg");
+      expect(sql).toContain("'projection', COALESCE(pa.legacy_projection, 'None')");
+      expect(sql).toMatch(/FILTER \(WHERE COALESCE\(pa\.legacy_projection, 'None'\) = 'None'\)/);
+    });
+
+    it("scopes to sold variations only when asked", () => {
+      expect(variationAttributesCte(PERF_JOINS, "agg")).toContain(
+        "JOIN agg ON agg.product_variation_id = pv.id",
+      );
+      expect(variationAttributesCte(PERF_JOINS, "all")).not.toContain("JOIN agg");
+    });
+
+    it("keeps colour and size when the generic attribute tables are absent", () => {
+      // Two independent degradation paths: a database lagging the generic-attribute
+      // migration must not also lose the colour it already has.
+      const sql = variationAttributesCte({
+        ...PERF_JOINS,
+        hasVariationAttributes: false,
+      } as unknown as ResolvedJoins);
+      expect(sql).not.toContain("product_attribute_terms");
+      expect(sql).toContain("WHERE false");
+      expect(sql).toContain("COALESCE(pvc.title, ga.gen_color)");
+      expect(sql).toContain("LEFT JOIN product_variation_colors");
+    });
+  });
+
+  describe("performanceCoreSelect", () => {
+    it("exposes the variant identity and the product total", () => {
+      const sql = performanceCoreSelect(PERF_JOINS);
+      expect(sql).toContain("va.variant_color");
+      expect(sql).toContain("va.variant_size");
+      expect(sql).toContain("va.variant_other");
+      expect(sql).toContain("AS product_total_stock");
+      expect(sql).toContain("LEFT JOIN product_stock_totals pst ON pst.product_id = p.id");
+      expect(sql).toContain("LEFT JOIN variation_attributes va");
+    });
+
+    it("never leftifies an already-LEFT fragment into LEFT LEFT JOIN", () => {
+      expect(performanceCoreSelect(PERF_JOINS)).not.toContain("LEFT LEFT JOIN");
+    });
+  });
+
+  describe("performanceCtes", () => {
+    it("declares agg before the CTEs that read it", () => {
+      const sql = performanceCtes(PERF_JOINS);
+      // Non-recursive WITH resolves left to right, so a CTE referencing `agg`
+      // must be declared after it.
+      expect(sql.indexOf("agg AS (")).toBeGreaterThan(-1);
+      expect(sql.indexOf("variation_attributes AS (")).toBeGreaterThan(sql.indexOf("agg AS ("));
+      expect(sql.indexOf("product_stock_totals AS (")).toBeGreaterThan(sql.indexOf("agg AS ("));
+      expect(sql.indexOf("sold_products AS (")).toBeGreaterThan(sql.indexOf("agg AS ("));
+    });
+
+    it("adds no bindings beyond the two the paid-orders window already takes", () => {
+      expect(performanceCtes(PERF_JOINS).match(/\?/g)).toHaveLength(2);
+    });
+  });
+
+  describe("serializeProductRow", () => {
+    const base = {
+      product_variation_id: 7,
+      product_id: 3,
+      product_title: "شلوار",
+      product_sku: "G01170-1",
+      product_type: "Variable",
+      category_title: null,
+      units: "2",
+      gross: "1000",
+      discounts: "0",
+      refunds_irr: "0",
+      orders_count: "1",
+      current_stock: "6",
+      reserved_stock: "0",
+      variant_color: "مشکی",
+      variant_color_code: "#000000",
+      variant_size: "L",
+      variant_model: null,
+      variant_other: "جنس: نخی",
+      product_total_stock: "40",
+      product_variation_count: "5",
+    } as any;
+
+    it("reports the variant's own stock and the product's total side by side", () => {
+      const row = serializeProductRow(base);
+      expect(row.currentStock).toBe(6);
+      expect(row.productTotalStock).toBe(40);
+      expect(row.productVariationCount).toBe(5);
+    });
+
+    it("builds the label from the variant axes", () => {
+      expect(serializeProductRow(base).variantLabel).toBe("مشکی / L");
+      expect(serializeProductRow(base).variantOther).toBe("جنس: نخی");
+    });
+
+    it("leaves the product total null for a deleted variation", () => {
+      // 0 would read as "out of stock". There is no product here to total at all.
+      const row = serializeProductRow({
+        ...base,
+        product_variation_id: null,
+        product_id: null,
+        product_total_stock: null,
+        product_variation_count: null,
+        variant_color: null,
+        variant_size: null,
+      });
+      expect(row.productTotalStock).toBeNull();
+      expect(row.variantLabel).toBeNull();
+    });
+
+    it("keeps a real zero total distinct from an absent one", () => {
+      expect(serializeProductRow({ ...base, product_total_stock: "0" }).productTotalStock).toBe(0);
     });
   });
 });

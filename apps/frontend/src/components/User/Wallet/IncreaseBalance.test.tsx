@@ -1,7 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { priceFormatter } from "@/utils/price";
-import IncreaseBalance from "./IncreaseBalance";
+import IncreaseBalance, { DEFAULT_WALLET_TOPUP_PRESETS_TOMAN } from "./IncreaseBalance";
 import WalletService from "@/services/wallet";
 
 jest.mock("@/services/wallet", () => ({
@@ -227,6 +227,20 @@ describe("IncreaseBalance", () => {
     fireEvent.click(button);
     await waitFor(() => expect(startTopup).toHaveBeenCalledTimes(2));
     expect(startTopup.mock.calls[1][0].idempotencyKey).not.toBe(firstKey);
+  });
+
+  it("lays five one-to-five million chips in a three-column grid when the server sends none", () => {
+    render(
+      <IncreaseBalance options={options({ presetsToman: [] })} navigate={assign} />,
+    );
+
+    const group = screen.getByTestId("wallet-topup-presets");
+    expect(group).toHaveClass("grid-cols-3");
+    for (const preset of DEFAULT_WALLET_TOPUP_PRESETS_TOMAN) {
+      expect(
+        screen.getByRole("button", { name: `${priceFormatter(preset)} تومان` }),
+      ).toBeInTheDocument();
+    }
   });
 
   it("is inert while the capability is switched off", () => {

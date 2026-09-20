@@ -282,14 +282,26 @@ export const getOrderPaymentStatus = async (
   }
 };
 
+export type ReconcileOrderPaymentOptions = OrderPaymentRequestOptions & {
+  /**
+   * The shopper is telling us they did not complete this payment and want the
+   * checkout unwound, so the wallet credit it holds becomes spendable again.
+   *
+   * Never send it from a poll. The server treats it as the shopper's own claim,
+   * which is what lets a SnappPay token stuck at `REGISTERED` be reverted — it
+   * still reads the provider first and keeps a payment that actually happened.
+   */
+  abandon?: boolean;
+};
+
 export const reconcileOrderPayment = async (
   orderId: number,
-  options?: OrderPaymentRequestOptions,
+  options?: ReconcileOrderPaymentOptions,
 ): Promise<OrderPaymentStatusResponse> => {
   const headers = paymentRequestHeaders(options);
   const response = await apiClient.post<OrderPaymentStatusResponse>(
     `/orders/${orderId}/payment-reconcile`,
-    {},
+    options?.abandon ? { abandon: true } : {},
     headers ? { headers } : undefined,
   );
   return response.data;

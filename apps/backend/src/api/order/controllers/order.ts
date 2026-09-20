@@ -591,6 +591,10 @@ export default factories.createCoreController(
             // alongside it so the result page can show what came from the
             // wallet and what the bank carried.
             amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
+            // Whether this checkout still has the shopper's credit committed.
+            // "Active" is what makes the abandon action worth offering; once it
+            // is Released or Captured the money is no longer in limbo.
+            walletHoldStatus: attempt?.WalletHoldStatus || undefined,
             ...(Number(attempt?.WalletAmount || 0) > 0
               ? {
                   walletAmountIrr: Number(attempt.WalletAmount),
@@ -622,23 +626,55 @@ export default factories.createCoreController(
       }
     },
 
+    /**
+     * Re-read the provider for one of the caller's own orders.
+     *
+     * `abandon: true` additionally carries the shopper's statement that they did
+     * not pay — the signal that lets a SnappPay attempt stuck at `REGISTERED`
+     * be reverted, which is what hands a wallet split's held credit back. It is
+     * only a claim: the worker still reads `GET /status` first and honours the
+     * payment if SnappPay says it happened. Everything else about the request is
+     * unchanged, so the response is the same payment status as a plain poll.
+     */
     async reconcilePayment(ctx) {
       const orderId = Number(ctx.params?.id);
       const userId = await resolveCustomerTargetUserId(ctx, strapi as any);
       if (!userId) return;
       const order = await strapi.db.query("api::order.order").findOne({
         where: { id: orderId, user: { id: userId } },
-        fields: ["id", "PaymentGateway"],
+        fields: ["id", "Status", "PaymentGateway"],
       } as any);
       if (!order) {
         return ctx.forbidden("You do not have permission to access this order");
       }
+      const body = (ctx.request as any)?.body || {};
+      // A shopper can only abandon a checkout that is still trying to pay. An
+      // order already carrying goods is never unwound from the storefront.
+      const abandon =
+        (body?.abandon === true || body?.abandon === "true") &&
+        String(order.Status) === "Paying";
+      let walletReleaseRequested = false;
       if (isSnappayGatewayValue(order.PaymentGateway)) {
-        await strapi
-          .service("api::payment-gateway.snappay-orchestrator")
-          .reconcileOrder(orderId, "customer_request");
+        const orchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
+        if (abandon) {
+          strapi.log.info("Customer abandoned a SnappPay checkout", { orderId, userId });
+          const outcome = await orchestrator.abandonOrder(
+            orderId,
+            "customer_abandoned_checkout",
+          );
+          walletReleaseRequested = outcome?.accepted === true;
+        } else {
+          await orchestrator.reconcileOrder(orderId, "customer_request");
+        }
       }
-      return this.checkPaymentStatus(ctx);
+      const response = await this.checkPaymentStatus(ctx);
+      // Only ever reported for a claim that was actually recorded. A shopper
+      // whose own `OK` return already reached us is told nothing about a
+      // release, because none was queued and none is coming.
+      if (abandon && response?.data) {
+        response.data.walletReleaseRequested = walletReleaseRequested;
+      }
+      return response;
     },
 
     async getActiveReserve(ctx) {

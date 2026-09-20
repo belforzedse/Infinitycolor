@@ -218,6 +218,16 @@ const checkoutErrorPresentation = (
           "بخشی از موجودی کیف پول برای پرداخت در حال انجام رزرو شده است. لطفاً نتیجه آن پرداخت را بررسی کنید.",
         clearAttempt: false,
       };
+    // The same held credit, except the server has just asked the provider to
+    // let go of it because this checkout named that payment as the one it
+    // replaces. Retrying in a few seconds is the whole fix, so the copy says
+    // that instead of sending the shopper off to inspect an old payment.
+    case "WALLET_HOLD_RELEASE_IN_PROGRESS":
+      return {
+        displayError:
+          "در حال آزادسازی اعتبار کیف پول از پرداخت قبلی شماست. چند لحظه دیگر دوباره تلاش کنید.",
+        clearAttempt: false,
+      };
     case "WALLET_SPLIT_UNSUPPORTED_GATEWAY":
       return {
         displayError: "مبلغ پرداخت از کیف پول برای این روش پرداخت قابل استفاده نیست.",

@@ -67,6 +67,27 @@ export function decideSnappayRecovery(input: {
    * answered.
    */
   providerCode?: number | null;
+  /**
+   * The shopper has explicitly told us they did not pay — they asked to cancel
+   * this checkout so their wallet credit and stock come back.
+   *
+   * It is the one signal that can authorize a revert without a FAILED callback,
+   * and it authorizes it only from the two states where nothing is committed
+   * (`REGISTERED`, `PENDING`). It never overrides provider evidence: a token the
+   * provider has already carried to `VERIFY`, `SETTLE`, `REVERT` or `CANCEL`, or
+   * one whose state we could not read at all, is resolved exactly as it would be
+   * without the claim. The customer knows what they did in their browser; they
+   * do not know what SnappPay recorded.
+   *
+   * That includes their *own* earlier evidence: an `OK` callback is the shopper's
+   * browser saying the payment succeeded, and it outranks the same shopper later
+   * saying it did not. The provider's status legitimately lags its callbacks — it
+   * is why `OK` + 1007 goes to verify above — so a token still reading `PENDING`
+   * or `REGISTERED` behind an `OK` return is recovered, never reverted. Both
+   * orderings reach here: the callback can land after the claim, because the two
+   * share one reconcile operation.
+   */
+  customerAbandoned?: boolean;
   /** Age of the payment attempt. Kept for callers; age is not a terminal signal. */
   attemptAgeMs?: number | null;
   /** Unused override retained so existing test call sites keep compiling. */
@@ -95,6 +116,15 @@ export function decideSnappayRecovery(input: {
   // authorize local cancel, stock release, or a replacement token.
   if (code === 1007) return "MANUAL_REVIEW";
 
+  // The two claims that a payment was not completed: the provider's own FAILED
+  // callback, and the shopper telling us so. Both are only ever consulted for a
+  // token the provider still reports as uncommitted, and the shopper's claim is
+  // additionally void once their own browser has returned `OK` — this is the one
+  // place that sees both signals at once, whichever order they arrived in.
+  const unpaidClaimed =
+    input.callbackState === "FAILED" ||
+    (input.customerAbandoned === true && input.callbackState !== "OK");
+
   switch (status) {
     case "SETTLE":
       return "FINALIZE_LOCAL";
@@ -106,13 +136,15 @@ export function decideSnappayRecovery(input: {
     case "CANCEL":
       return "CANCEL_LOCAL";
     case "PENDING":
-      // PENDING is not unpaid. FAILED callback still needs revert (Fa.txt).
+      // PENDING is not unpaid. FAILED callback still needs revert (Fa.txt), and
+      // so does a shopper who came back to say they abandoned the payment page.
       // Otherwise recover through verify (Action row for verify 1000).
-      return input.callbackState === "FAILED" ? "REVERT" : "VERIFY";
+      return unpaidClaimed ? "REVERT" : "VERIFY";
     case "REGISTERED":
-      // Age is not proof the customer will not pay. Revert only after an
-      // explicit FAILED callback. Exhausted reconcile parks for review.
-      return input.callbackState === "FAILED" ? "REVERT" : "RECONCILE";
+      // Age is not proof the customer will not pay, so time alone never reverts
+      // — but an explicit FAILED callback or the shopper's own abandonment does.
+      // Without either, exhausted reconcile parks for review.
+      return unpaidClaimed ? "REVERT" : "RECONCILE";
     default:
       // UNKNOWN covers "we could not read the provider at all" (a timed-out or
       // unparseable status call). Never auto-cancel a payment whose state we

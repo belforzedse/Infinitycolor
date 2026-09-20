@@ -1,5 +1,7 @@
+import * as Sentry from "@sentry/node";
 import type { Strapi } from "@strapi/strapi";
 import { consumeOrderReservation, releaseOrderReservation } from "../../../utils/stockReservations";
+import { decrementStockAtomic } from "../../cart/services/lib/stock";
 import {
   hasDiscountClaim,
   releaseOrderDiscountClaim,
@@ -162,6 +164,76 @@ async function incrementDiscountUsage(strapi: Strapi, order: any, trx: any): Pro
   }
 }
 
+/**
+ * Takes stock for an order whose provider payment is already captured but whose
+ * stock reservation clock has run out.
+ *
+ * The reservation TTL exists to stop *unpaid* checkouts pinning inventory. Once
+ * SnappPay reports SETTLE the money is gone from the customer's credit, so the
+ * TTL has no further authority: refusing here is how order 113678 ended up
+ * Cancelled with 3,149,000 T captured (verify succeeded at 09:58:31, the sweep
+ * cancelled the order at 09:59:00). We take the stock directly instead — there
+ * is no reservation left to consume — and only park for an operator when the
+ * goods genuinely are not there, which is the one case a human must decide.
+ *
+ * Note the wallet leg is captured by the caller, *after* this, to keep the
+ * global lock order orders -> payment_attempts -> product_stocks -> wallet. If
+ * the reservation was released rather than merely lapsed, the wallet hold went
+ * back to spendable with it, and that capture then fails closed with
+ * SNAPPAY_WALLET_HOLD_NOT_ACTIVE — correct, because the order really is
+ * underpaid and must not ship on a refunded wallet leg.
+ */
+async function takeStockForSettledOrder(
+  strapi: Strapi,
+  ids: FinalizationIds,
+  order: any,
+  trx: any,
+): Promise<void> {
+  const items = order?.order_items || [];
+  const taken: Array<{ stockId: number; quantity: number }> = [];
+
+  for (const item of items) {
+    const stockId = Number(item?.product_variation?.product_stock?.id);
+    const quantity = Number(item?.Count || 0);
+    if (!Number.isFinite(stockId) || stockId <= 0 || quantity <= 0) continue;
+
+    const result = await decrementStockAtomic(strapi, stockId, quantity, trx);
+    if (!result.success) {
+      // Fail the whole finalization: the transaction rolls back every decrement
+      // above, the attempt parks, and an operator decides between sourcing the
+      // stock and refunding at the provider.
+      throw new Error(`SNAPPAY_SETTLED_STOCK_UNAVAILABLE:${stockId}`);
+    }
+    taken.push({ stockId, quantity });
+  }
+
+  await strapi.db.query("api::order.order").update({
+    where: { id: ids.orderId },
+    data: { ReservationStatus: "Consumed" },
+    ...(trx ? { transacting: trx } : {}),
+  } as any);
+
+  const detail = {
+    orderId: ids.orderId,
+    attemptId: ids.attemptId,
+    transactionId: ids.transactionId,
+    reservationStatus: String(order?.ReservationStatus || ""),
+    stockTaken: taken,
+  };
+  strapi.log.warn(
+    `SnappPay settled order recovered stock after its reservation lapsed ${JSON.stringify(detail)}`,
+  );
+  try {
+    Sentry.captureMessage("snappay.settlement.reservation_lapsed_recovered", {
+      level: "warning",
+      tags: { area: "payment", stage: "settlement", reasonCode: "RESERVATION_LAPSED" },
+      extra: detail,
+    });
+  } catch {
+    // Reporting must never break a settlement that is otherwise complete.
+  }
+}
+
 export async function finalizeSnappaySettlement(
   strapi: Strapi,
   ids: FinalizationIds,
@@ -207,19 +279,10 @@ export async function finalizeSnappaySettlement(
       throw new Error("SNAPPAY_LOCAL_STATE_CONFLICT");
     }
 
-    const reservationStatus = String(order.ReservationStatus || "");
-    if (reservationStatus === "Reserved") {
-      const consumed = await consumeOrderReservation(strapi, ids.orderId, trx);
-      if (consumed.outcome !== "consumed") {
-        throw new Error(
-          `SNAPPAY_STOCK_FINALIZATION_FAILED:${
-            consumed.expired ? "reservation_expired" : "reservation_not_consumed"
-          }`,
-        );
-      }
-      // Wallet leg, after stock and last in the lock order. SnappPay mixed
-      // tender captures in the same transaction as provider settlement, so a
-      // captured gateway leg can never sit beside an uncaptured wallet leg.
+    // Wallet leg, after stock and last in the lock order. SnappPay mixed
+    // tender captures in the same transaction as provider settlement, so a
+    // captured gateway leg can never sit beside an uncaptured wallet leg.
+    const captureWalletLeg = async () => {
       const walletLeg = await captureWalletLegForSettlement(
         strapi,
         {
@@ -232,6 +295,25 @@ export async function finalizeSnappaySettlement(
       if (walletLeg.outcome === "not_active") {
         throw new Error(`SNAPPAY_WALLET_HOLD_NOT_ACTIVE:${String(walletLeg.status)}`);
       }
+    };
+
+    const reservationStatus = String(order.ReservationStatus || "");
+    if (reservationStatus === "Reserved") {
+      const consumed = await consumeOrderReservation(strapi, ids.orderId, trx);
+      if (consumed.outcome === "consumed") {
+        await captureWalletLeg();
+      } else if (consumed.expired) {
+        // The clock ran out while the provider leg was in flight. See below:
+        // a captured payment outranks the reservation TTL.
+        await takeStockForSettledOrder(strapi, ids, order, trx);
+        await captureWalletLeg();
+      } else {
+        throw new Error("SNAPPAY_STOCK_FINALIZATION_FAILED:reservation_not_consumed");
+      }
+    } else if (reservationStatus === "Expired" || reservationStatus === "Released") {
+      // The reservation was already swept before we got here. Same rule.
+      await takeStockForSettledOrder(strapi, ids, order, trx);
+      await captureWalletLeg();
     } else if (reservationStatus !== "Consumed") {
       throw new Error(`SNAPPAY_RESERVATION_STATE_CONFLICT:${reservationStatus || "missing"}`);
     }

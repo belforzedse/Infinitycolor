@@ -14,6 +14,14 @@ export default {
     },
     {
       method: "GET",
+      path: "/local-user-wallet/me/transactions",
+      handler: "local-user-wallet.getCurrentUserWalletTransactions",
+      config: {
+        auth: { scope: [] },
+      },
+    },
+    {
+      method: "GET",
       path: "/local-user-wallet/admin/:userId/history",
       handler: "local-user-wallet.adminGetUserWalletHistory",
       config: {

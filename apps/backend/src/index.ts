@@ -596,7 +596,7 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
         ],
       },
       "api::local-user-wallet": {
-        "local-user-wallet": ["getCurrentUserWallet"],
+        "local-user-wallet": ["getCurrentUserWallet", "getCurrentUserWalletTransactions"],
       },
       "api::local-user-wallet-transaction": {
         "local-user-wallet-transaction": READ_ACTIONS,

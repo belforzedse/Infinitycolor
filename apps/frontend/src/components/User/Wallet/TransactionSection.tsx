@@ -3,17 +3,13 @@ import { TransactionHeader } from "./TransactionHeader";
 import { EmptyState } from "./EmptyState";
 import TransactionsListRow from "./TransactionsListRow";
 
-interface Transaction {
-  date: string;
-  amount: string;
-}
+import type { WalletLedgerUiRow } from "@/services/wallet/ledger";
 
 interface TransactionSectionProps {
   title: string;
   icon: React.ReactNode;
-  transactions: Transaction[];
+  transactions: WalletLedgerUiRow[];
   type: "deposit" | "debit";
-  showOnlyMobile?: boolean;
 }
 
 export const TransactionSection = ({
@@ -21,10 +17,9 @@ export const TransactionSection = ({
   icon,
   transactions,
   type,
-  showOnlyMobile = false,
 }: TransactionSectionProps) => (
   <div className="flex flex-col gap-1 rounded-xl border border-slate-100 p-3 lg:border-none lg:p-0">
-    <TransactionHeader icon={icon} title={title} showOnlyMobile={showOnlyMobile} />
+    <TransactionHeader icon={icon} title={title} />
 
     {transactions.length > 0 ? (
       <div
@@ -39,7 +34,7 @@ export const TransactionSection = ({
             key={item.date + index}
             type={type}
             date={item.date}
-            amount={item.amount}
+            amountToman={item.amountToman}
           />
         ))}
       </div>

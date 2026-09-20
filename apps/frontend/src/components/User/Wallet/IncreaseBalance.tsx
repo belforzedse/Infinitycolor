@@ -37,6 +37,11 @@ const parseAmount = (raw: string): number | null => {
 
 export { submitPaymentHandoff as goToProvider };
 
+/** Shown when the options payload has no presets of its own. */
+export const DEFAULT_WALLET_TOPUP_PRESETS_TOMAN = [
+  1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000,
+] as const;
+
 const IncreaseBalance = ({
   options,
   loading = false,
@@ -45,8 +50,8 @@ const IncreaseBalance = ({
 }: IncreaseBalanceProps) => {
   const presets = options?.presetsToman?.length
     ? options.presetsToman
-    : [100_000, 200_000, 500_000, 1_000_000];
-  const [amountText, setAmountText] = useState(String(presets[0] ?? 100_000));
+    : [...DEFAULT_WALLET_TOPUP_PRESETS_TOMAN];
+  const [amountText, setAmountText] = useState(String(presets[0] ?? 1_000_000));
   const [gateway, setGateway] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   // One key per intended payment. It survives re-renders and double taps, so a
@@ -167,17 +172,20 @@ const IncreaseBalance = ({
           <p className="mb-2 text-sm text-slate-500">{priceFormatter(amount)} تومان</p>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 lg:gap-3">
+        <div
+          data-testid="wallet-topup-presets"
+          className="grid grid-cols-3 gap-1.5 lg:gap-3"
+        >
           {presets.map((preset) => (
             <button
               key={preset}
               type="button"
               disabled={disabled}
               onClick={() => setAmountText(String(preset))}
-              className={`rounded-lg border bg-white px-3 py-2 ${
+              className={`rounded-lg border bg-white px-1.5 py-1.5 text-[11px] leading-tight lg:px-3 lg:py-2 lg:text-sm ${
                 amount === preset
-                  ? "border-blue-500 text-lg text-blue-500 lg:text-xl"
-                  : "border border-slate-100 text-slate-400 hover:border-blue-500 hover:text-blue-500"
+                  ? "border-blue-500 text-blue-500"
+                  : "border-slate-100 text-slate-400 hover:border-blue-500 hover:text-blue-500"
               } text-center transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-100 disabled:hover:text-slate-400`}
             >
               {priceFormatter(preset)} تومان

@@ -199,6 +199,8 @@ describe('Wallet Operations - Real Implementation', () => {
 
     mock.registerQuery('api::local-user-wallet-transaction.local-user-wallet-transaction', {
       findOne: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn(),
     });
 
@@ -297,6 +299,90 @@ describe('Wallet Operations - Real Implementation', () => {
         },
       });
       expect(ctx.send.mock.calls[0][0].data).not.toHaveProperty("id");
+    });
+  });
+
+  describe("getCurrentUserWalletTransactions - owner ledger", () => {
+    it("uses the shared content API auth strategy", () => {
+      const route = walletRoutes.routes.find(
+        (candidate: { path?: string }) =>
+          candidate.path === "/local-user-wallet/me/transactions",
+      );
+
+      expect(route?.config.auth).toEqual({ scope: [] });
+      expect(route?.handler).toBe("local-user-wallet.getCurrentUserWalletTransactions");
+    });
+
+    it("returns flat Add and Minus rows for the authenticated owner", async () => {
+      const walletQuery = mockStrapi.db.query("api::local-user-wallet.local-user-wallet");
+      const transactionQuery = mockStrapi.db.query(
+        "api::local-user-wallet-transaction.local-user-wallet-transaction",
+      );
+      const rows = [
+        { id: 2, Amount: "200000", Type: "Minus", Date: "2026-09-19T10:00:00.000Z" },
+        { id: 1, Amount: "1000000", Type: "Add", Date: "2026-09-18T10:00:00.000Z" },
+      ];
+      walletQuery.findOne.mockResolvedValue({ id: 10 });
+      transactionQuery.findMany.mockResolvedValue(rows);
+      transactionQuery.count.mockResolvedValue(2);
+
+      const ctx = mockContext({
+        query: { page: "1", pageSize: "25" },
+        state: { user: { id: 1 } },
+      });
+
+      await walletController.getCurrentUserWalletTransactions(ctx);
+
+      expect(walletQuery.findOne).toHaveBeenCalledWith({
+        where: { user: 1 },
+        select: ["id"],
+      });
+      expect(transactionQuery.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { user_wallet: 10 },
+          orderBy: [{ Date: "desc" }, { id: "desc" }],
+          limit: 25,
+          offset: 0,
+        }),
+      );
+      expect(ctx.send).toHaveBeenCalledWith({
+        data: rows,
+        meta: { pagination: { page: 1, pageSize: 25, pageCount: 1, total: 2 } },
+      });
+      expect(ctx.send.mock.calls[0][0].data[0]).toHaveProperty("Type", "Minus");
+      expect(ctx.send.mock.calls[0][0].data[0]).not.toHaveProperty("attributes");
+    });
+
+    it("returns an empty page when the customer has no wallet yet", async () => {
+      const walletQuery = mockStrapi.db.query("api::local-user-wallet.local-user-wallet");
+      const transactionQuery = mockStrapi.db.query(
+        "api::local-user-wallet-transaction.local-user-wallet-transaction",
+      );
+      walletQuery.findOne.mockResolvedValue(null);
+
+      const ctx = mockContext({
+        state: { user: { id: 1 } },
+      });
+
+      await walletController.getCurrentUserWalletTransactions(ctx);
+
+      expect(transactionQuery.findMany).not.toHaveBeenCalled();
+      expect(ctx.send).toHaveBeenCalledWith({
+        data: [],
+        meta: { pagination: { page: 1, pageSize: 25, pageCount: 0, total: 0 } },
+      });
+    });
+
+    it("rejects unauthenticated callers", async () => {
+      const ctx = mockContext({
+        request: { header: {} },
+        state: {},
+        unauthorized: jest.fn(),
+      });
+
+      await walletController.getCurrentUserWalletTransactions(ctx);
+
+      expect(ctx.unauthorized).toHaveBeenCalledWith("Authentication required");
     });
   });
 

@@ -1,6 +1,11 @@
 jest.mock("@strapi/strapi", () => ({
   factories: {
     createCoreController: (_uid: string, extension: any) => (params: any) => extension(params),
+    // The controller's import chain reaches the wallet service, which calls
+    // this at module load. Only its presence matters here — nothing in these
+    // specs exercises the wallet.
+    createCoreService: (_uid: string, extension?: any) => (params: any) =>
+      typeof extension === "function" ? extension(params) : {},
   },
 }));
 

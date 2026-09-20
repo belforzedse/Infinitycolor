@@ -46,7 +46,10 @@ import {
   tomanToIrr,
   type PaymentAllocation,
 } from "./lib/payment-allocation";
-import { supersedeCheckoutAttempt } from "./lib/checkout-supersede";
+import {
+  requestProviderHoldRelease,
+  supersedeCheckoutAttempt,
+} from "./lib/checkout-supersede";
 import {
   holdWalletForAttempt,
   WalletHoldError,
@@ -132,6 +135,8 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     const expectedQuoteHash = String(shippingData?.quoteHash || "").trim();
     const requestedWalletAmount = shippingData?.walletAmountToman;
     const supersedeAttemptId = String(shippingData?.supersedeAttemptId || "").trim();
+    /** A provider-bound predecessor whose hold we have just asked to have released. */
+    let walletReleaseRequested = false;
 
     if (managesPaymentAttempt) {
       if (!attemptId || attemptId.length > 128) {
@@ -217,6 +222,19 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           strapi.log.info(
             `Checkout attempt ${supersedeAttemptId} was not superseded by ${attemptId}: ${superseded.reason}`,
           );
+          if (superseded.reason === "provider_bound") {
+            // A SnappPay predecessor: its hold can never be released inline,
+            // but the shopper naming it while re-checking-out *is* them saying
+            // they did not complete that payment. Ask the queue to resolve it
+            // against the provider; the release lands a few seconds later, and
+            // the refusal below tells them to try again rather than leaving
+            // their credit pinned until the reservation defer ceiling.
+            walletReleaseRequested = await requestProviderHoldRelease(
+              strapi as any,
+              userId,
+              supersedeAttemptId,
+            );
+          }
         }
       }
     }
@@ -294,11 +312,22 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         });
       } catch (allocationError: any) {
         if (!(allocationError instanceof PaymentAllocationError)) throw allocationError;
+        // The credit this checkout wants is the credit we just asked the
+        // provider to let go of. Say so, so the storefront offers "try again in
+        // a moment" instead of "check that other payment" for a payment the
+        // shopper has already told us they abandoned.
+        const releasePending =
+          walletReleaseRequested &&
+          allocationError.code === "WALLET_FUNDS_HELD_BY_PENDING_PAYMENT";
         return {
           success: false,
           status: 409,
-          errorCode: allocationError.code,
-          message: allocationError.message,
+          errorCode: releasePending
+            ? "WALLET_HOLD_RELEASE_IN_PROGRESS"
+            : allocationError.code,
+          message: releasePending
+            ? "در حال آزادسازی اعتبار کیف پول از پرداخت قبلی شماست. چند لحظه دیگر دوباره تلاش کنید."
+            : allocationError.message,
           paymentCapabilities: walletContext.capabilities,
           details: allocationError.details,
         };

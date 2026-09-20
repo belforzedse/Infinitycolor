@@ -23,6 +23,7 @@ import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
 import ShoppingCartIcon from "@/components/PLP/Icons/ShoppingCartIcon";
 import AccountAccessMenu from "@/components/PLP/Header/AccountAccessMenu";
+import MobileWalletBalance from "@/components/PLP/Header/Mobile/MobileWalletBalance";
 import SaleBadgeIcon from "../SaleBadgeIcon";
 
 interface Props {
@@ -631,6 +632,8 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
                 <OrderTrackingIcon className="h-4 w-4 shrink-0" />
                 <span>پیگیری سفارش</span>
               </a>
+
+              <MobileWalletBalance isOpen={isOpen} onNavigate={onClose} />
 
               <div className="ml-auto flex items-center gap-2">
                 <AccountAccessMenu

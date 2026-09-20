@@ -86,10 +86,12 @@ describe("applySnappayAdminUpdate -> analytics refund outbox", () => {
     });
 
     expect(enqueueRefundMock).toHaveBeenCalledTimes(1);
+    // The caller now passes IRR directly rather than toman. Same money:
+    // `enqueueRefundForReturn` normalizes with `amountIrr ?? amountToman * 10`.
     expect(enqueueRefundMock).toHaveBeenCalledWith(strapi, {
       orderId: 22,
       contractTransactionId: 777,
-      amountToman: 110_000,
+      amountIrr: 1_100_000,
     });
   });
 

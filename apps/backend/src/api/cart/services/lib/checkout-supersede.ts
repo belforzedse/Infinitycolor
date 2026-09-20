@@ -47,7 +47,9 @@ export type SupersedeOutcome =
  * back to the cart. SnappPay is the exception and is refused outright — it mints
  * a transaction id at creation, reports `PENDING` long after the shopper has
  * gone, and must not be probed synchronously on the checkout path. Its hold is
- * reclaimed by a queued cancel operation instead.
+ * reclaimed by a queued cancel operation instead, which the caller asks for
+ * through `requestProviderHoldRelease` below when this refuses with
+ * `provider_bound`.
  *
  * ## Stock
  * This runs in its own transaction, before the replacement reserves anything.
@@ -166,4 +168,73 @@ export async function supersedeCheckoutAttempt(
       releasedIrr: released.outcome === "released" ? released.amountIrr : heldIrr,
     };
   });
+}
+
+/**
+ * Asks the queue to resolve a *SnappPay* predecessor so its wallet hold comes
+ * back, and reports whether the request was accepted.
+ *
+ * `supersedeCheckoutAttempt` refuses these outright, for good reasons that have
+ * not changed: SnappPay mints a transaction id the moment an attempt exists, it
+ * keeps answering `REGISTERED` long after the shopper has walked away, and a
+ * synchronous provider call on the checkout path is a known outage mode here.
+ * So nothing about the hold is decided inline. What the shopper naming this
+ * predecessor *does* establish is that they did not complete that payment — the
+ * one piece of evidence the reconciliation state machine was missing — and that
+ * is what gets queued. The worker still reads `GET /status` before acting, and a
+ * payment SnappPay says happened is settled and honoured instead.
+ *
+ * Returning `false` means nothing was queued (not this shopper's attempt, not
+ * SnappPay, no live hold, or the queue refused), and the caller must not promise
+ * the customer that credit is on its way back.
+ */
+export async function requestProviderHoldRelease(
+  strapi: Strapi,
+  userId: number,
+  attemptId: string,
+): Promise<boolean> {
+  const trimmed = String(attemptId || "").trim();
+  if (!trimmed) return false;
+
+  const candidate = await strapi.db.connection.raw(
+    `SELECT pa.gateway, pa.wallet_hold_status, pol.order_id
+       FROM payment_attempts pa
+       JOIN payment_attempts_user_links pul ON pul.payment_attempt_id = pa.id
+       LEFT JOIN payment_attempts_order_links pol ON pol.payment_attempt_id = pa.id
+      WHERE pa.attempt_id = ?
+        AND pul.user_id = ?
+      LIMIT 1`,
+    [trimmed, userId],
+  );
+  const row = candidate?.rows?.[0];
+  if (!row) return false;
+  // Only ever for a live hold on a SnappPay attempt: everything else either has
+  // no money committed or is already reclaimable inline.
+  if (row.wallet_hold_status !== "Active") return false;
+  if (!isSnappayGatewayValue(row.gateway)) return false;
+  const orderId = Number(row.order_id);
+  if (!Number.isInteger(orderId) || orderId <= 0) return false;
+
+  try {
+    const outcome = await strapi
+      .service("api::payment-gateway.snappay-orchestrator")
+      .abandonOrder(orderId, "customer_replaced_checkout");
+    // Refused when the predecessor is already resolved or its own `OK` return
+    // has landed; there is then no release to wait for, so say so rather than
+    // sending the shopper back to retry a checkout that will keep refusing.
+    if (outcome?.accepted !== true) return false;
+    strapi.log.info(
+      `Queued a SnappPay abandonment for attempt ${trimmed} (order ${orderId}) so user ${userId} can spend their wallet credit again`,
+    );
+    return true;
+  } catch (error: any) {
+    // The replacement checkout is still refused for held funds either way; this
+    // only decides which refusal the shopper is told.
+    strapi.log.error(
+      `Failed to queue a SnappPay abandonment for attempt ${trimmed}: ${String(
+        error?.message || error,
+      ).slice(0, 300)}`,
+    );
+    return false;
+  }
 }

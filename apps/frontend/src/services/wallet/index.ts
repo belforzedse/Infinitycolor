@@ -1,5 +1,9 @@
 import { apiClient } from "../index";
 import { CHECKOUT_MAX_RETRIES, CHECKOUT_REQUEST_TIMEOUT_MS } from "@/constants/api";
+import { toWalletLedgerEntries, type WalletLedgerEntry } from "./ledger";
+
+export type { WalletLedgerEntry } from "./ledger";
+export { splitWalletLedger, toWalletLedgerEntries } from "./ledger";
 
 export interface ChargeIntentResponse {
   success: boolean;
@@ -164,11 +168,30 @@ export interface WalletTransactionsResponse {
   };
 }
 
-export const getWalletTransactions = async (walletId: number): Promise<WalletTransactionsResponse> => {
-  const res = await apiClient.get<WalletTransactionsResponse>(
-    `/local-user-wallet-transactions?filters[user_wallet][id][$eq]=${walletId}&sort[0]=Date:desc&pagination[pageSize]=100`
+const toLegacyWalletTransactions = (entries: WalletLedgerEntry[]): WalletTransaction[] =>
+  entries.map((entry) => ({
+    id: entry.id,
+    Amount: entry.amountIrr,
+    Type: entry.type,
+    Date: entry.date,
+    Cause: entry.cause,
+    ReferenceId: entry.referenceId,
+    Note: entry.note,
+  }));
+
+/** Owner-scoped flat ledger. Does not depend on a wallet id the page already has. */
+export const getMyWalletTransactions = async (): Promise<WalletLedgerEntry[]> => {
+  const page = await apiClient.get<unknown[]>(
+    "/local-user-wallet/me/transactions?page=1&pageSize=100",
   );
-  return res as any;
+  return toWalletLedgerEntries(page.data);
+};
+
+export const getWalletTransactions = async (
+  _walletId?: number,
+): Promise<WalletTransactionsResponse> => {
+  const entries = await getMyWalletTransactions();
+  return { data: toLegacyWalletTransactions(entries) };
 };
 
 export interface AdminWalletResponse {
@@ -210,6 +233,7 @@ const WalletService = {
   startTopup,
   getTopupStatus,
   getMyTopups,
+  getMyWalletTransactions,
   getWalletTransactions,
   adminGetUserWallet,
   adminAdjustWallet,

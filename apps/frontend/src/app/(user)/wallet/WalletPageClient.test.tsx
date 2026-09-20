@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import WalletService from "@/services/wallet";
 import WalletPage from "./WalletPageClient";
 
@@ -8,15 +8,25 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
 }));
 
-jest.mock("@/services/wallet", () => ({
-  __esModule: true,
-  default: {
-    getTopupOptions: jest.fn(),
-    getTopupStatus: jest.fn(),
-    getMyWallet: jest.fn(),
-    getWalletTransactions: jest.fn(),
-  },
-}));
+jest.mock("@/services/wallet", () => {
+  const { splitWalletLedger } = jest.requireActual("@/services/wallet/ledger") as {
+    splitWalletLedger: (entries: unknown[]) => {
+      deposits: unknown[];
+      purchases: unknown[];
+    };
+  };
+  return {
+    __esModule: true,
+    splitWalletLedger,
+    default: {
+      getTopupOptions: jest.fn(),
+      getTopupStatus: jest.fn(),
+      getMyWallet: jest.fn(),
+      getMyWalletTransactions: jest.fn(),
+      getWalletTransactions: jest.fn(),
+    },
+  };
+});
 
 jest.mock("@/components/layout/UserContainer", () => ({
   __esModule: true,
@@ -34,7 +44,18 @@ jest.mock("@/components/User/Account/QuickLinks", () => ({
 
 jest.mock("@/components/User/Wallet/TransactionsList", () => ({
   __esModule: true,
-  default: () => null,
+  default: ({
+    depositList,
+    purchaseList,
+  }: {
+    depositList: Array<{ amountToman: number }>;
+    purchaseList: Array<{ amountToman: number }>;
+  }) => (
+    <div>
+      <div data-testid="wallet-deposits">{depositList.length}</div>
+      <div data-testid="wallet-purchases">{purchaseList.length}</div>
+    </div>
+  ),
 }));
 
 jest.mock("@/components/User/Icons/TransactionsIcon", () => ({
@@ -44,11 +65,7 @@ jest.mock("@/components/User/Icons/TransactionsIcon", () => ({
 
 jest.mock("@/components/User/Wallet/Balance", () => ({
   __esModule: true,
-  default: ({ chargeDisabled }: { chargeDisabled: boolean }) => (
-    <button data-testid="wallet-balance-increase" disabled={chargeDisabled}>
-      increase
-    </button>
-  ),
+  default: () => <div data-testid="wallet-balance-card">balance</div>,
 }));
 
 jest.mock("@/components/User/Wallet/IncreaseBalance", () => ({
@@ -78,8 +95,22 @@ describe("WalletPage storefront top-up switch", () => {
     render(<WalletPage />);
 
     expect(screen.getByText("در حال حاضر امکان شارژ کیف پول وجود ندارد.")).toBeInTheDocument();
-    expect(screen.getByTestId("wallet-balance-increase")).toBeDisabled();
     expect(screen.getByTestId("wallet-topup-form")).toBeDisabled();
     await waitFor(() => expect(WalletService.getTopupOptions).not.toHaveBeenCalled());
+  });
+
+  it("shows both deposits and purchases from the owner ledger", async () => {
+    process.env.NEXT_PUBLIC_WALLET_TOPUP_UI_ENABLED = "false";
+    (WalletService.getMyWalletTransactions as jest.Mock).mockResolvedValue([
+      { id: 1, amountIrr: 1_000_000, type: "Add", date: "2026-09-18T10:00:00.000Z" },
+      { id: 2, amountIrr: 250_000, type: "Minus", date: "2026-09-19T10:00:00.000Z" },
+    ]);
+
+    render(<WalletPage />);
+    fireEvent.click(screen.getByRole("button", { name: "مشاهده سوابق تراکنش" }));
+
+    await waitFor(() => expect(WalletService.getMyWalletTransactions).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("wallet-deposits")).toHaveTextContent("1");
+    expect(screen.getByTestId("wallet-purchases")).toHaveTextContent("1");
   });
 });

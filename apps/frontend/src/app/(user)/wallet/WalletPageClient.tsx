@@ -9,9 +9,11 @@ import UserContainer from "@/components/layout/UserContainer";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
 import { AlertCircleIcon, CheckIcon, InfoIcon } from "lucide-react";
 import WalletService, {
+  splitWalletLedger,
   type WalletTopupOptions,
   type WalletTopupStatus,
 } from "@/services/wallet";
+import type { WalletLedgerUiRow } from "@/services/wallet/ledger";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 import { isWalletTopupUiEnabled } from "@/config/walletTopup";
@@ -61,15 +63,11 @@ function ChargingDisabledNotice({ reason }: { reason: WalletTopupOptions["disabl
   );
 }
 
-interface Transaction {
-  date: string;
-  amount: string;
-}
-
 export default function WalletPage() {
   const topupUiEnabled = isWalletTopupUiEnabled();
   const [isTransactionsHistoryOpen, setIsTransactionsHistoryOpen] = useState(false);
-  const [depositList, setDepositList] = useState<Transaction[]>([]);
+  const [depositList, setDepositList] = useState<WalletLedgerUiRow[]>([]);
+  const [purchaseList, setPurchaseList] = useState<WalletLedgerUiRow[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
   const searchParams = useSearchParams();
@@ -239,37 +237,17 @@ export default function WalletPage() {
         setTransactionsLoading(true);
         setTransactionsError(null);
 
-        // First get wallet to get wallet ID
-        const walletResponse = await WalletService.getMyWallet();
-        if (!walletResponse.success || !walletResponse.data?.id) {
-          throw new Error("Wallet not found");
-        }
-
-        const walletId = walletResponse.data.id;
-
-        // Fetch transactions
-        const transactionsResponse = await WalletService.getWalletTransactions(walletId);
-        const transactionsData = transactionsResponse.data || [];
-
-        // Transform transactions to match Transaction interface (only deposits)
-        const deposits: Transaction[] = [];
-
-        transactionsData.forEach((tx) => {
-          // Only include "Add" type transactions (deposits)
-          if (tx.Type === "Add") {
-            const transaction: Transaction = {
-              date: tx.Date ? new Date(tx.Date).toISOString().split("T")[0] : "",
-              amount: tx.Amount ? (tx.Amount / 10).toLocaleString() : "0", // Convert IRR to toman
-            };
-            deposits.push(transaction);
-          }
-        });
-
+        const entries = await WalletService.getMyWalletTransactions();
+        const { deposits, purchases } = splitWalletLedger(entries);
         setDepositList(deposits);
+        setPurchaseList(purchases);
       } catch (err: unknown) {
         console.error("Failed to fetch transactions:", err);
-        setTransactionsError(getUserFacingErrorMessage(err, "خطا در دریافت تراکنش‌ها"));
+        setTransactionsError(
+          getUserFacingErrorMessage(err, "خطا در دریافت تراکنش‌ها. دوباره تلاش کنید."),
+        );
         setDepositList([]);
+        setPurchaseList([]);
       } finally {
         setTransactionsLoading(false);
       }
@@ -327,19 +305,11 @@ export default function WalletPage() {
                 <span>{transactionsError}</span>
               </div>
             ) : (
-              <TransactionsList depositList={depositList} />
+              <TransactionsList depositList={depositList} purchaseList={purchaseList} />
             )
           ) : (
             <>
-              <WalletBalance
-                key={balanceRefreshKey}
-                chargeDisabled={!topupOptions?.enabled}
-                onIncrease={() =>
-                  document
-                    .querySelector<HTMLElement>("[data-wallet-topup]")
-                    ?.scrollIntoView({ behavior: "smooth", block: "center" })
-                }
-              />
+              <WalletBalance key={balanceRefreshKey} />
               <IncreaseBalance
                 options={topupOptions}
                 loading={optionsLoading}
