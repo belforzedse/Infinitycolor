@@ -153,7 +153,7 @@ export default function DesktopMegaMenu({ item, onLinkClick }: Props) {
     }
 
     return (
-      <div key={category.id} className="relative h-[41px] min-w-0">
+      <div key={category.id} className="relative h-[41px] w-full min-w-0">
         <button
           id={`desktop-mega-trigger-${category.id}`}
           type="button"
@@ -174,14 +174,13 @@ export default function DesktopMegaMenu({ item, onLinkClick }: Props) {
 
         {renderedNested?.id === category.id && (
           <div
-            className={[
-              "absolute top-[calc(100%+8px)] z-30 w-[min(340px,calc(100vw-48px))]",
-              flyoutAlignmentClass,
-            ].join(" ")}
+            className={["absolute top-[calc(100%+8px)] z-30 w-full", flyoutAlignmentClass].join(
+              " ",
+            )}
           >
             <div
               id={`desktop-mega-flyout-${renderedNested.id}`}
-              className="storefront-mega-flyout max-h-[320px] overflow-y-auto rounded-xl border border-stone-200 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.16)]"
+              className="storefront-mega-flyout relative z-50 max-h-[320px] w-full shrink-0 overflow-y-auto rounded-xl border border-stone-200 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.16)]"
               data-state={activeNested ? "open" : "closed"}
               data-testid="desktop-mega-menu-flyout"
               aria-label={`زیرمجموعه‌های ${renderedNested.name}`}
@@ -263,7 +262,7 @@ export default function DesktopMegaMenu({ item, onLinkClick }: Props) {
             <div
               data-testid="desktop-mega-menu-links"
               className={[
-                "grid min-w-0 flex-1 auto-rows-[41px] gap-x-4 gap-y-[21px] overflow-visible pb-1",
+                "grid min-w-0 flex-1 auto-rows-[41px] grid-cols-[repeat(3,minmax(0,1fr))] gap-x-4 gap-y-[21px] overflow-visible pb-1",
                 gridColumnsClass,
               ].join(" ")}
             >
