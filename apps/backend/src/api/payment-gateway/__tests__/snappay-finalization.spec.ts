@@ -214,6 +214,45 @@ describe("SnappPay admin update finalization", () => {
     expect(notifyAnipoMock).not.toHaveBeenCalled();
   });
 
+  it.each(["Expired", "Cancelled", "Failed", "Succeeded"] as const)(
+    "treats a locally decided cancel as a replay when the attempt is already %s",
+    async (status) => {
+      const { strapi, rows, updates } = createHarness();
+      // The reservation sweep stamps `Expired`, not `Cancelled`, so the narrow
+      // replay check below would miss it: a confirmed NOT_FOUND landing at
+      // +30:59 against a sweep that won at +31:00 would re-run the release and
+      // write a second `released` evidence row for the same money, which the
+      // 24-hour wallet value breaker would then count twice.
+      rows["api::payment-attempt.payment-attempt"].Status = status;
+      rows["api::payment-attempt.payment-attempt"].providerStatus = "PENDING";
+
+      await expect(
+        applySnappayCancellation(strapi, ids, "NOT_FOUND", "provider_not_found_confirmed", {
+          walletReleaseReason: "provider_not_found_confirmed",
+        }),
+      ).resolves.toEqual({ replayed: true });
+
+      // Nothing was written anywhere: the guard returns before the order is
+      // even read, and the attempt's update spy (created when the guard read
+      // the row) was never called.
+      expect(updates["api::order.order"]).toBeUndefined();
+      expect(updates["api::payment-attempt.payment-attempt"]).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still lets an operator cancel a settled order on the provider side", async () => {
+    const { strapi, rows, updates } = createHarness();
+    rows["api::payment-attempt.payment-attempt"].Status = "Succeeded";
+    rows["api::payment-attempt.payment-attempt"].providerStatus = "SETTLE";
+    rows["api::order.order"].ReservationStatus = "Released";
+
+    await expect(
+      applySnappayCancellation(strapi, ids, "CANCEL", "Operator cancellation"),
+    ).resolves.toEqual({ replayed: false });
+
+    expect(updates["api::payment-attempt.payment-attempt"]).toHaveBeenCalled();
+  });
+
   it("still refuses cancellation after the order is Returned", async () => {
     const { strapi, rows, updates } = createHarness();
     rows["api::order.order"].Status = "Returned";

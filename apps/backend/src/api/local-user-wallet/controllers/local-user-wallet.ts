@@ -12,7 +12,34 @@ import { writeAuditEvent } from "../../../audit/writer";
 import { getAuditContext } from "../../../utils/audit-context";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { requireCapability } from "../../../utils/adminAuthorization";
-import { readWalletAvailability } from "../services/wallet-holds";
+import {
+  listActiveHoldsForUser,
+  readWalletAvailability,
+  type ActiveWalletHold,
+} from "../services/wallet-holds";
+import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
+
+/**
+ * Nudges reconciliation for the SnappPay holds the shopper is looking at.
+ *
+ * Fire-and-forget by construction: the response must not wait on a queue, and a
+ * failed nudge is invisible because the worker's own ladder still runs. This is
+ * what makes the wallet page self-healing — a customer who opens it after an
+ * abandoned checkout moves their own recovery forward just by looking.
+ */
+function pullReconcileForHolds(strapi: any, holds: ActiveWalletHold[]): void {
+  const pullable = holds.filter(
+    (hold) =>
+      isSnappayGatewayValue(hold.gateway) &&
+      (hold.state === "reconciling" || hold.state === "reclaimable"),
+  );
+  if (pullable.length === 0) return;
+  const orchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
+  if (typeof orchestrator?.pullForHold !== "function") return;
+  for (const hold of pullable.slice(0, 3)) {
+    void Promise.resolve(orchestrator.pullForHold(hold.paymentAttemptId)).catch(() => undefined);
+  }
+}
 
 const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const WALLET_TRANSACTION_UID =
@@ -98,6 +125,18 @@ export default factories.createCoreController(
         // runs the same query, so it would refuse this money anyway.
         const trustworthy = !availability.degraded && availability.walletId !== null;
 
+        // Held money is the customer's money, temporarily committed to a
+        // checkout. Reporting only a shrunken balance is why it "looks gone":
+        // the storefront needs to be able to say how much is held, for which
+        // order, and by when it comes back on its own.
+        const holds =
+          trustworthy && availability.heldIrr > 0
+            ? await listActiveHoldsForUser(strapi, Number(pluginUserId))
+            : [];
+        if (holds.length > 0) {
+          pullReconcileForHolds(strapi, holds);
+        }
+
         return ctx.send({
           success: true,
           data: {
@@ -106,6 +145,7 @@ export default factories.createCoreController(
             heldBalance: trustworthy ? availability.heldIrr : 0,
             availableBalance: trustworthy ? availability.availableIrr : 0,
             reusableBalance: trustworthy ? availability.reusableIrr : 0,
+            holds,
             lastTransactionDate: wallet.LastTransactionDate,
             description: wallet.Description,
           },

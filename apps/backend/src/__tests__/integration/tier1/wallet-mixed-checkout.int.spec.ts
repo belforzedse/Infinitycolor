@@ -23,6 +23,17 @@ import {
   applySnappayCancellation,
   finalizeSnappaySettlement,
 } from "../../../api/payment-gateway/services/snappay-finalization";
+import {
+  hasTerminalEvidence,
+  listEvidenceForAttempt,
+} from "../../../api/payment-attempt-evidence/services/evidence";
+import { processSnappayOperation } from "../../../api/payment-gateway/services/snappay-orchestrator";
+import {
+  __resetRecoveryReadinessForTests,
+  __setRecoveryReadinessForTests,
+} from "../../../api/payment-gateway/services/snappay-recovery-mode";
+import { resetSnappayE2EState } from "../../../api/payment-gateway/services/snappay-e2e";
+import { createHash } from "node:crypto";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
 
@@ -81,8 +92,8 @@ const wallet = async (userId: number) => {
 
 const attemptRow = async (id: number) => {
   const result = await strapi.db.connection.raw(
-    `SELECT status, wallet_hold_status, wallet_amount, gateway_amount, amount,
-            supersedes_attempt_id
+    `SELECT attempt_id, status, wallet_hold_status, wallet_amount, gateway_amount, amount,
+            wallet_release_reason, failure_code, provider_status, supersedes_attempt_id
        FROM payment_attempts WHERE id = ?`,
     [id],
   );
@@ -897,5 +908,374 @@ describe("mixed wallet + gateway checkout", () => {
     });
     expect(outcome).toMatchObject({ outcome: "refused", reason: "not_owner" });
     expect((await wallet(owner.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
+  });
+});
+
+
+/**
+ * A split wallet + SnappPay checkout left exactly where an abandoned one sits:
+ * order `Paying`, stock reserved, wallet hold `Active`, nothing settled.
+ */
+async function abandonedSplitSnappayOrder(attemptName: string) {
+  const shopper = await seedShopper();
+  const snappayOrchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
+  const originalEligibility = snappayOrchestrator.checkEligibility;
+  snappayOrchestrator.checkEligibility = jest.fn().mockResolvedValue(undefined);
+  const { result } = await quoteAndFinalize(shopper.user.id, {
+    attemptId: `${attemptName}-${shopper.user.id}`,
+    gateway: "snappay",
+    walletAmountToman: WALLET_TOMAN,
+  }).finally(() => {
+    snappayOrchestrator.checkEligibility = originalEligibility;
+  });
+  expect(result.success).toBe(true);
+
+  const attempt: any = await strapi.db
+    .query("api::payment-attempt.payment-attempt")
+    .findOne({ where: { id: result.paymentAttempt.id } });
+  const providerTx: any = await strapi.db
+    .query("api::contract-transaction.contract-transaction")
+    .findOne({
+      where: { contract: { id: result.contract.id }, external_source: "SnappPay" },
+    });
+
+  return {
+    shopper,
+    result,
+    attempt,
+    providerTx,
+    ids: {
+      attemptId: Number(attempt.id),
+      orderId: Number(result.order.id),
+      contractId: Number(result.contract.id),
+      transactionRowId: Number(providerTx.id),
+      transactionId: String(attempt.providerReference || providerTx.TrackId || ""),
+    },
+  };
+}
+
+const notFoundEvidence = (
+  ids: { attemptId: number; orderId: number },
+  walletAmountIrr: number,
+  overrides: Record<string, unknown> = {},
+) =>
+  ({
+    attemptId: ids.attemptId,
+    orderId: ids.orderId,
+    kind: "not_found_confirmed",
+    mode: "enforce",
+    decision: "released",
+    providerStatus: "NOT_FOUND",
+    walletAmountIrr,
+    tokenAgeMs: 35 * 60 * 1000,
+    observedAt: new Date(),
+    ...overrides,
+  }) as any;
+
+describe("automatic recovery of a wallet hold after an abandoned SnappPay payment", () => {
+  it("returns the credit exactly once and records why, atomically", async () => {
+    const { shopper, ids } = await abandonedSplitSnappayOrder("recover-once");
+    const walletIrr = WALLET_TOMAN * 10;
+
+    const before = await wallet(shopper.user.id);
+    expect(before.heldIrr).toBe(walletIrr);
+
+    await applySnappayCancellation(strapi, ids, "NOT_FOUND", "provider_not_found_confirmed", {
+      walletReleaseReason: "provider_not_found_confirmed",
+      evidence: notFoundEvidence(ids, walletIrr),
+    });
+
+    const after = await wallet(shopper.user.id);
+    // The money is spendable again and the posted balance never moved: a
+    // release is a hold transition, not a ledger entry.
+    expect(after.heldIrr).toBe(0);
+    expect(after.balanceIrr).toBe(before.balanceIrr);
+
+    const attempt = await attemptRow(ids.attemptId);
+    const ledger = await strapi.db.connection.raw(
+      `SELECT COUNT(*)::int AS count FROM local_user_wallet_transactions
+        WHERE reference_id = ?`,
+      [`wallet-order-${ids.orderId}-${String(attempt.attempt_id)}`],
+    );
+    expect(Number(ledger.rows[0].count)).toBe(0);
+    expect(attempt.wallet_hold_status).toBe("Released");
+    // The reason names the evidence, not just "a reservation ended".
+    expect(attempt.wallet_release_reason).toBe("provider_not_found_confirmed");
+    expect(attempt.status).toBe("Cancelled");
+    expect(attempt.failure_code).toBe("SNAPPAY_STATUS_NOT_FOUND_TERMINAL");
+
+    const evidence = await listEvidenceForAttempt(strapi, ids.attemptId);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({ kind: "not_found_confirmed", decision: "released" });
+    await expect(hasTerminalEvidence(strapi, ids.attemptId)).resolves.toBe(true);
+  });
+
+  it("rolls the release back when its evidence cannot be written", async () => {
+    const { shopper, ids } = await abandonedSplitSnappayOrder("recover-rollback");
+    const walletIrr = WALLET_TOMAN * 10;
+
+    await expect(
+      applySnappayCancellation(strapi, ids, "NOT_FOUND", "provider_not_found_confirmed", {
+        walletReleaseReason: "provider_not_found_confirmed",
+        // `kind` is not in the enumeration, so the INSERT fails inside the
+        // cancellation transaction.
+        evidence: notFoundEvidence(ids, walletIrr, { kind: "not_a_real_kind" }),
+      }),
+    ).rejects.toThrow();
+
+    // Nothing moved: the evidence row exists if and only if the release
+    // committed, and neither did.
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(walletIrr);
+    const attempt = await attemptRow(ids.attemptId);
+    expect(attempt.wallet_hold_status).toBe("Active");
+    expect(attempt.status).not.toBe("Cancelled");
+    expect(await listEvidenceForAttempt(strapi, ids.attemptId)).toHaveLength(0);
+  });
+
+  it("refuses a second release of the same money", async () => {
+    const { shopper, ids } = await abandonedSplitSnappayOrder("recover-replay");
+    const walletIrr = WALLET_TOMAN * 10;
+
+    await applySnappayCancellation(strapi, ids, "NOT_FOUND", "provider_not_found_confirmed", {
+      walletReleaseReason: "provider_not_found_confirmed",
+      evidence: notFoundEvidence(ids, walletIrr),
+    });
+
+    // A second confirming read finds the attempt already terminal and stops
+    // before touching anything — without this the 24-hour wallet value breaker
+    // would count the same release twice.
+    await expect(
+      applySnappayCancellation(strapi, ids, "NOT_FOUND", "provider_not_found_confirmed", {
+        walletReleaseReason: "provider_not_found_confirmed",
+        evidence: notFoundEvidence(ids, walletIrr),
+      }),
+    ).resolves.toEqual({ replayed: true });
+
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(0);
+    expect(await listEvidenceForAttempt(strapi, ids.attemptId)).toHaveLength(1);
+  });
+
+  it("loses to the reservation sweep rather than releasing on top of it", async () => {
+    const { shopper, ids } = await abandonedSplitSnappayOrder("recover-vs-sweep");
+    const walletIrr = WALLET_TOMAN * 10;
+
+    // The sweep wins the race: it releases the reservation, cancels the order
+    // and stamps the attempt `Expired`.
+    await strapi.db.transaction(async ({ trx }: any) => {
+      await releaseOrderReservation(strapi, ids.orderId, "Expired", trx);
+    });
+    await strapi.db.query("api::payment-attempt.payment-attempt").update({
+      where: { id: ids.attemptId },
+      data: { Status: "Expired" },
+    });
+
+    await expect(
+      applySnappayCancellation(strapi, ids, "NOT_FOUND", "provider_not_found_confirmed", {
+        walletReleaseReason: "provider_not_found_confirmed",
+        evidence: notFoundEvidence(ids, walletIrr),
+      }),
+    ).resolves.toEqual({ replayed: true });
+
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(0);
+    // One release, one record. The sweep's own evidence is written by the job;
+    // the confirming read must not add a second `released` row for the same
+    // money under a different kind.
+    expect(await listEvidenceForAttempt(strapi, ids.attemptId)).toHaveLength(0);
+    const attempt = await attemptRow(ids.attemptId);
+    expect(attempt.status).toBe("Expired");
+  });
+
+});
+
+
+/**
+ * The case the whole feature is shaped around, wired end to end.
+ *
+ * Production data: 56 of 481 settled attempts carried a `providerCode: 1007`
+ * from an earlier status read and settled a median 4.3 minutes later. The
+ * deterministic `not_found_then_ok` script replays exactly that — 1007, 1007,
+ * PENDING, VERIFY — through the real orchestrator, the real state machine, the
+ * real evidence table and a real Postgres. The one thing that must never
+ * happen here is a wallet release.
+ */
+describe("an early 1007 that the shopper goes on to pay", () => {
+  const enforceEverything = () =>
+    __setRecoveryReadinessForTests({
+      evidenceImmutable: true,
+      evidenceDeduplicated: true,
+      evidenceConstrained: true,
+      paths: {
+        not_found: { configured: "enforce", effective: "enforce", blockedBy: [] },
+        registered: { configured: "enforce", effective: "enforce", blockedBy: [] },
+        late_success: { configured: "enforce", effective: "enforce", blockedBy: [] },
+      },
+    } as any);
+
+  beforeEach(() => {
+    resetSnappayE2EState();
+    process.env.SNAPPAY_E2E_STATUS_SCRIPT = "not_found_then_ok";
+    // Generous limits: this test is about the confirmation protocol refusing to
+    // fire, not about a breaker masking the result.
+    process.env.SNAPPAY_AUTO_RELEASE_MAX_WALLET_IRR_PER_24H = "1000000000";
+    process.env.SNAPPAY_AUTO_RELEASE_MAX_SINGLE_WALLET_IRR = "1000000000";
+    enforceEverything();
+  });
+
+  afterEach(() => {
+    delete process.env.SNAPPAY_E2E_STATUS_SCRIPT;
+    delete process.env.SNAPPAY_AUTO_RELEASE_MAX_WALLET_IRR_PER_24H;
+    delete process.env.SNAPPAY_AUTO_RELEASE_MAX_SINGLE_WALLET_IRR;
+    resetSnappayE2EState();
+    __resetRecoveryReadinessForTests();
+  });
+
+  /**
+   * Stamps the attempt with the generation a real token mint produces.
+   *
+   * Provenance is checked locally because a 404 carries no body, so the token,
+   * the transaction's `track_id`, the recorded provider host and the client-id
+   * fingerprint all have to agree before a 1007 is even considered. Without
+   * this the operation would resolve no token at all and park as
+   * `SNAPPAY_PAYMENT_TOKEN_MISSING` — which would look like a pass while
+   * exercising none of the confirmation protocol.
+   */
+  const stampIssuedToken = async (ids: { attemptId: number; transactionRowId: number }) => {
+    const paymentToken = `E2E-${ids.attemptId}-token`;
+    const attempt: any = await strapi.db
+      .query("api::payment-attempt.payment-attempt")
+      .findOne({ where: { id: ids.attemptId } });
+    await strapi.db.query("api::payment-attempt.payment-attempt").update({
+      where: { id: ids.attemptId },
+      data: {
+        Status: "Redirected",
+        redirectedAt: new Date(),
+        providerResponse: {
+          ...(attempt?.providerResponse || {}),
+          tokenAttemptSeq: 1,
+          generation: {
+            seq: 1,
+            transactionId: String(attempt?.providerReference || `tx-${ids.attemptId}`),
+            dispatchedAt: new Date().toISOString(),
+            paymentToken,
+            paymentTokenFingerprint: "fp-int",
+            providerHost: new URL(String(process.env.SNAPPAY_BASE_URL)).host,
+            clientIdFingerprint: createHash("sha256")
+              .update(String(process.env.SNAPPAY_CLIENT_ID))
+              .digest("hex")
+              .slice(0, 12),
+          },
+        },
+      },
+    });
+    await strapi.db.query("api::contract-transaction.contract-transaction").update({
+      where: { id: ids.transactionRowId },
+      data: { TrackId: paymentToken },
+    });
+    return paymentToken;
+  };
+
+  const queueReconcile = async (ids: { attemptId: number; orderId: number; contractId: number; transactionRowId: number }) => {
+    const operation: any = await strapi.db
+      .query("api::payment-operation.payment-operation")
+      .create({
+        data: {
+          idempotencyKey: `reconcile:${ids.attemptId}`,
+          OperationType: "RECONCILE",
+          Status: "Queued",
+          retryCount: 0,
+          nextRunAt: new Date(Date.now() - 1000),
+          metadata: {},
+          attemptKey: ids.attemptId,
+          payment_attempt: ids.attemptId,
+          order: ids.orderId,
+          contract_transaction: ids.transactionRowId,
+        },
+      });
+    f.remember("api::payment-operation.payment-operation", operation.id);
+    return Number(operation.id);
+  };
+
+  it("never releases the wallet on an early 1007, even with every path enforcing", async () => {
+    const { shopper, ids } = await abandonedSplitSnappayOrder("not-found-then-ok");
+    await stampIssuedToken(ids);
+    const walletIrr = WALLET_TOMAN * 10;
+    const operationId = await queueReconcile(ids);
+
+    // First read: the token was minted moments ago, so it is far below the
+    // 30-minute floor. This is where a naive implementation cancels a paying
+    // customer.
+    await processSnappayOperation(strapi, operationId);
+
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(walletIrr);
+    const attempt = await attemptRow(ids.attemptId);
+    expect(attempt.wallet_hold_status).toBe("Active");
+    expect(attempt.status).not.toBe("Cancelled");
+    // Parked exactly as today, which is what keeps the reservation sweep in
+    // charge of the timeout.
+    expect(attempt.failure_code).toBe("SNAPPAY_STATUS_NOT_FOUND");
+
+    const evidence = await listEvidenceForAttempt(strapi, ids.attemptId);
+    expect(evidence.map((row) => row.decision)).toEqual(["observed"]);
+    expect(evidence[0].kind).toBe("not_found_read");
+    await expect(hasTerminalEvidence(strapi, ids.attemptId)).resolves.toBe(false);
+  });
+
+  it("still refuses to release after a second 1007, because the token is too young", async () => {
+    const { shopper, ids } = await abandonedSplitSnappayOrder("not-found-twice");
+    await stampIssuedToken(ids);
+    const walletIrr = WALLET_TOMAN * 10;
+    const operationId = await queueReconcile(ids);
+
+    await processSnappayOperation(strapi, operationId);
+    // Make the operation due again without advancing the token's age.
+    await strapi.db.query("api::payment-operation.payment-operation").update({
+      where: { id: operationId },
+      data: { Status: "Queued", nextRunAt: new Date(Date.now() - 1000), leaseUntil: null },
+    });
+    await processSnappayOperation(strapi, operationId);
+
+    // Two proven reads is *not* enough on its own — the token-age floor is what
+    // stands between this customer and a cancelled payment.
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(walletIrr);
+    expect((await attemptRow(ids.attemptId)).wallet_hold_status).toBe("Active");
+    await expect(hasTerminalEvidence(strapi, ids.attemptId)).resolves.toBe(false);
+  });
+
+  it("settles normally once the shopper finishes, capturing the wallet exactly once", async () => {
+    const { shopper, ids, providerTx } = await abandonedSplitSnappayOrder("not-found-then-settle");
+    await stampIssuedToken(ids);
+    const walletIrr = WALLET_TOMAN * 10;
+    const before = await wallet(shopper.user.id);
+    const operationId = await queueReconcile(ids);
+
+    // Burn the two 1007 reads the script answers first.
+    for (let index = 0; index < 2; index += 1) {
+      await strapi.db.query("api::payment-operation.payment-operation").update({
+        where: { id: operationId },
+        data: { Status: "Queued", nextRunAt: new Date(Date.now() - 1000), leaseUntil: null },
+      });
+      await processSnappayOperation(strapi, operationId);
+    }
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(walletIrr);
+
+    // The shopper paid. The provider now reports the payment, and settlement
+    // proceeds through the ordinary path.
+    await strapi.db.query("api::contract-transaction.contract-transaction").update({
+      where: { id: providerTx.id },
+      data: { GatewayStatus: "SETTLE" },
+    });
+    await finalizeSnappaySettlement(strapi, ids);
+
+    const after = await wallet(shopper.user.id);
+    // Captured, not released: the held credit is spent, so the posted balance
+    // falls by exactly the wallet leg and nothing is left held.
+    expect(after.heldIrr).toBe(0);
+    expect(after.balanceIrr).toBe(before.balanceIrr - walletIrr);
+    const attempt = await attemptRow(ids.attemptId);
+    expect(attempt.wallet_hold_status).toBe("Captured");
+
+    // Replaying the settlement must not debit a second time.
+    await finalizeSnappaySettlement(strapi, ids).catch(() => undefined);
+    expect((await wallet(shopper.user.id)).balanceIrr).toBe(before.balanceIrr - walletIrr);
   });
 });

@@ -69,6 +69,26 @@ const WALLET_UNIQUE_INDEXES = [
 ] as const;
 
 /**
+ * Lookup indexes. Not uniqueness, so deliberately *not* part of
+ * `WALLET_UNIQUE_INDEXES`: that list is compared statement-for-statement
+ * against the already-applied repair migration by `wallet-database-parity.spec`,
+ * and an applied migration must not be edited after the fact.
+ *
+ * `/local-user-wallet/me`, the checkout quote's self-heal nudge and the hourly
+ * hold audit all filter on `wallet_hold_status = 'Active'`, which has no index
+ * today. Strapi may drop a column-based index on a schema sync; this installer
+ * runs in `bootstrap` after sync on every boot and puts it straight back.
+ */
+const WALLET_PERFORMANCE_INDEXES = [
+  {
+    name: "idx_payment_attempts_active_wallet_holds",
+    statement: `CREATE INDEX IF NOT EXISTS idx_payment_attempts_active_wallet_holds
+       ON payment_attempts (wallet_held_at)
+       WHERE wallet_hold_status = 'Active'`,
+  },
+] as const;
+
+/**
  * Money invariants. CHECK constraints are the one object class Strapi's schema
  * diff has no concept of (the 4.25.21 bundle contains no check handling at
  * all), so they are installed once and then left alone.
@@ -176,6 +196,15 @@ export async function ensureWalletDatabaseInvariants(strapi: Strapi): Promise<vo
         );
       }
     }
+    for (const index of WALLET_PERFORMANCE_INDEXES) {
+      try {
+        await strapi.db.connection.raw(index.statement);
+      } catch (error) {
+        strapi.log.error(
+          `Failed to assert wallet lookup index ${index.name}: ${shortError(error)}`,
+        );
+      }
+    }
     for (const constraint of WALLET_CHECK_CONSTRAINTS) {
       try {
         await ensureCheckConstraint(strapi, constraint);
@@ -197,5 +226,6 @@ export async function ensureWalletDatabaseInvariants(strapi: Strapi): Promise<vo
 export const __private = {
   WALLET_MIGRATION_LOCK_KEY,
   WALLET_UNIQUE_INDEXES,
+  WALLET_PERFORMANCE_INDEXES,
   WALLET_CHECK_CONSTRAINTS,
 };

@@ -216,11 +216,21 @@ export async function requeueParkedSnappayReconcile(
 ): Promise<SnappayReconcileResume> {
   const now = new Date();
   const callbackState = String(input.metadata.callbackState || "");
+  // Both branches below start a run the reconciliation ladder did not schedule.
+  // Stamping that fact is what stops a result-page poll, a sweep deferral tick
+  // or a bare-GET return from burning a ladder slot: `scheduleOperationRetry`
+  // reschedules a pulled run at the same index instead of advancing it. On
+  // production this is why `RECONCILIATION_EXHAUSTED` attempts park after a
+  // median of 10 minutes instead of running the intended 5m/40m/3h/12h/24h.
+  const pullStamp = `jsonb_build_object(
+      'pulledAt', ?::text,
+      'pullCount', COALESCE((metadata->>'pullCount')::int, 0) + 1
+    )`;
   const requeued = await strapi.db.connection.raw(
     `UPDATE payment_operations
         SET status = 'Queued',
             next_run_at = ?,
-            metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb,
+            metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb || ${pullStamp},
             updated_at = ?
       WHERE id = ?
         AND attempt_key = ?
@@ -232,6 +242,7 @@ export async function requeueParkedSnappayReconcile(
     [
       input.nextRunAt,
       asJson(input.metadata),
+      now.toISOString(),
       now,
       input.operationId,
       input.attemptId,
@@ -247,7 +258,7 @@ export async function requeueParkedSnappayReconcile(
   const pulledForward = await strapi.db.connection.raw(
     `UPDATE payment_operations
         SET next_run_at = ?,
-            metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb,
+            metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb || ${pullStamp},
             updated_at = ?
       WHERE id = ?
         AND attempt_key = ?
@@ -264,6 +275,7 @@ export async function requeueParkedSnappayReconcile(
     [
       input.nextRunAt,
       asJson(input.metadata),
+      now.toISOString(),
       now,
       input.operationId,
       input.attemptId,
@@ -331,4 +343,76 @@ export async function mergePreviousGenerationCallback(
     ],
   );
   return Boolean(firstRow(result));
+}
+
+/**
+ * Stamps an attempt terminal because a *local* timeout ended it, not because
+ * the provider said anything.
+ *
+ * The reservation sweep has always released stock and cancelled the order at
+ * the TTL or the deferral ceiling while leaving the attempt in its open
+ * `Unknown`/`Redirected` state. That left no durable record that the attempt
+ * was over, so nothing downstream could tell "this checkout timed out" from
+ * "this checkout is still in flight" — which is why a late provider success on
+ * such an order had no handler at all.
+ *
+ * Marking it `Expired` is what makes the late-success matrix reachable, and it
+ * is the reason `acceptSnappayCallback` must route a late callback on a
+ * terminal attempt to that matrix in the same change: an `Expired` attempt that
+ * still looked open to the callback would be resurrected into `Pending/verify`
+ * and verified against an order whose stock is already gone.
+ *
+ * The CAS refuses to overwrite a settled or already-terminal attempt, so a
+ * sweep racing a settlement loses and reports it.
+ */
+export async function markSnappayAttemptLocallyExpired(
+  strapi: Strapi,
+  input: {
+    attemptId: number;
+    /** `local_ttl` (parked attempt at the 30-minute TTL) or `local_ceiling`. */
+    reason: "local_ttl" | "local_ceiling";
+    trx?: { raw: (sql: string, bindings?: unknown[]) => Promise<{ rows?: Array<Record<string, unknown>> }> };
+  },
+): Promise<{
+  expired: boolean;
+  walletAmountIrr: number;
+  gatewayAmountIrr: number;
+  providerStatus: string | null;
+} | null> {
+  const now = new Date();
+  const exec = input.trx ?? strapi.db.connection;
+  const failureCode =
+    input.reason === "local_ceiling"
+      ? "SNAPPAY_RESERVATION_CEILING_EXPIRED"
+      : "SNAPPAY_RESERVATION_TTL_EXPIRED";
+  const result = await exec.raw(
+    `UPDATE payment_attempts
+        SET status = 'Expired',
+            next_action = NULL,
+            next_action_at = NULL,
+            failure_code = ?,
+            failure_message = ?,
+            resolved_at = ?,
+            updated_at = ?
+      WHERE id = ?
+        AND status NOT IN ('Succeeded', 'Cancelled', 'Failed', 'Expired')
+      RETURNING id, wallet_amount, gateway_amount, provider_status`,
+    [
+      failureCode,
+      input.reason === "local_ceiling"
+        ? "The SnappPay reservation ceiling was reached before the provider resolved this payment"
+        : "The stock reservation expired while this SnappPay payment was parked for review",
+      now,
+      now,
+      input.attemptId,
+    ],
+  );
+  const row = firstRow(result);
+  if (!row) return { expired: false, walletAmountIrr: 0, gatewayAmountIrr: 0, providerStatus: null };
+  return {
+    expired: true,
+    walletAmountIrr: Number(row.wallet_amount || 0),
+    gatewayAmountIrr: Number(row.gateway_amount || 0),
+    providerStatus: (row.provider_status as string) ?? null,
+  };
 }

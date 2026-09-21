@@ -31,7 +31,8 @@ import type {
   ResumableCheckout,
 } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
-import WalletService from "@/services/wallet";
+import WalletService, { type WalletHold } from "@/services/wallet";
+import { holdsAreReconciling } from "@/utils/walletHolds";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
@@ -449,6 +450,7 @@ function ShoppingCartBillForm({}: Props) {
   // Spendable now, and what another of this customer's checkouts is holding.
   const [walletAvailableIrr, setWalletAvailableIrr] = useState<number>(0);
   const [walletHeldIrr, setWalletHeldIrr] = useState<number>(0);
+  const [walletHolds, setWalletHolds] = useState<WalletHold[]>([]);
   const [paymentCapabilities, setPaymentCapabilities] = useState<PaymentCapabilities | null>(null);
   // All or nothing: ticking the wallet spends as much of this order as the
   // shopper has, so there is no amount to carry in state.
@@ -852,8 +854,11 @@ function ShoppingCartBillForm({}: Props) {
         // worth showing them, since the reusable part is already offered.
         setWalletHeldIrr(Math.max(0, heldIrr - reusableIrr));
         setWalletAvailableIrr(Math.max(0, availableIrr + reusableIrr));
+        setWalletHolds(Array.isArray(res.data.holds) ? res.data.holds : []);
+        return holdsAreReconciling(res.data.holds);
       }
     } catch {}
+    return false;
   }, [canLoadProtectedCheckoutData]);
 
   // Load wallet balance on mount
@@ -861,9 +866,19 @@ function ShoppingCartBillForm({}: Props) {
     if (!canLoadProtectedCheckoutData) {
       setWalletAvailableIrr(0);
       setWalletHeldIrr(0);
+      setWalletHolds([]);
       return;
     }
-    void refreshWalletBalance();
+    // Reading the balance also nudges the backend to re-check the provider for
+    // any hold this customer has, so a shopper who returns to the cart shortly
+    // after abandoning a payment usually watches the credit come back without
+    // touching anything. Two short re-reads cover that window.
+    void (async () => {
+      const stillReconciling = await refreshWalletBalance();
+      if (!stillReconciling) return;
+      setTimeout(() => void refreshWalletBalance(), 3_000);
+      setTimeout(() => void refreshWalletBalance(), 8_000);
+    })();
   }, [canLoadProtectedCheckoutData, refreshWalletBalance]);
 
   // Validate cart has items and total price on mount
@@ -1961,6 +1976,7 @@ function ShoppingCartBillForm({}: Props) {
                     totalToman={totalToman}
                     availableIrr={walletAvailableIrr}
                     heldIrr={walletHeldIrr}
+                    holds={walletHolds}
                     capabilities={paymentCapabilities}
                     enabled={useWalletCredit}
                     onEnabledChange={setUseWalletCredit}

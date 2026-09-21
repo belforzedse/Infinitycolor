@@ -2,6 +2,8 @@
 import React from "react";
 import type { PaymentCapabilities } from "@repo/api/commerce";
 import { priceFormatter } from "@/utils/price";
+import type { WalletHold } from "@/services/wallet";
+import { heldBalanceMessage } from "@/utils/walletHolds";
 
 export interface WalletContributionProps {
   /** Order total in toman. */
@@ -14,6 +16,8 @@ export interface WalletContributionProps {
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
   disabled?: boolean;
+  /** Live holds behind `heldIrr`, used to state when the credit comes back. */
+  holds?: WalletHold[];
 }
 
 /** IRR to spendable toman, always rounding down — see the server's irrToSpendableToman. */
@@ -48,6 +52,7 @@ export default function WalletContribution({
   enabled,
   onEnabledChange,
   disabled = false,
+  holds,
 }: WalletContributionProps) {
   const availableToman = irrToToman(availableIrr);
   const heldToman = irrToToman(heldIrr);
@@ -60,7 +65,28 @@ export default function WalletContribution({
     walletToman > 0 && gatewayToman > 0 && capabilities && !capabilities.splitEnabled,
   );
 
-  if (!capabilities?.walletEnabled || availableToman <= 0) return null;
+  if (!capabilities?.walletEnabled) return null;
+
+  // Nothing spendable, but money is committed to an unfinished payment.
+  //
+  // Returning null here is the single worst moment of the whole defect: the
+  // shopper's credit is sitting in a checkout they abandoned, the card that
+  // would explain it disappears precisely because the balance reads zero, and
+  // the storefront offers no account of where the money went. Say it instead.
+  if (availableToman <= 0) {
+    const heldMessage = heldBalanceMessage(heldIrr, holds);
+    if (!heldMessage) return null;
+    return (
+      <section
+        data-testid="wallet-contribution-held-only"
+        className="flex flex-col gap-2 rounded-lg border border-amber-100 bg-amber-50 p-4 text-right"
+        dir="rtl"
+      >
+        <span className="text-base text-neutral-800 lg:text-lg">کیف پول</span>
+        <span className="text-sm leading-6 text-amber-900">{heldMessage}</span>
+      </section>
+    );
+  }
 
   return (
     <section

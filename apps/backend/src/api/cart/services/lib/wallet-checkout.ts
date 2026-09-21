@@ -3,7 +3,11 @@ import {
   isWalletSnappaySplitEnabled,
   isWalletSplitEnabled,
 } from "../../../local-user-wallet/services/wallet-readiness";
-import { readWalletAvailability } from "../../../local-user-wallet/services/wallet-holds";
+import {
+  listActiveHoldsForUser,
+  readWalletAvailability,
+} from "../../../local-user-wallet/services/wallet-holds";
+import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
 import { isCheckoutGatewayEnabled } from "../../../payment-gateway/services/checkout-gateway-availability";
 import {
   buildPaymentCapabilities,
@@ -49,6 +53,15 @@ export async function buildWalletCheckoutContext(
     reusableAttemptId: input.supersedeAttemptId,
   });
 
+  // Opening the checkout with credit tied up in an earlier attempt nudges that
+  // attempt's reconciliation forward. This is the same self-heal the wallet
+  // page performs: the shopper who most wants their money back is the one
+  // looking at the page, and a page view is a free opportunity to move the
+  // recovery along. Fire-and-forget — the quote never waits on it.
+  if (availability.heldIrr > 0) {
+    void nudgeHeldAttempts(strapi, userId);
+  }
+
   return {
     capabilities,
     availability,
@@ -65,4 +78,26 @@ export async function buildWalletCheckoutContext(
         capabilities,
       }),
   };
+}
+
+
+/**
+ * Throttled, fire-and-forget reconcile nudge for the caller's live SnappPay
+ * holds. Never throws and never delays the quote.
+ */
+async function nudgeHeldAttempts(strapi: Strapi, userId: number): Promise<void> {
+  try {
+    const orchestrator = strapi.service("api::payment-gateway.snappay-orchestrator") as any;
+    if (typeof orchestrator?.pullForHold !== "function") return;
+    const holds = await listActiveHoldsForUser(strapi, userId);
+    for (const hold of holds.slice(0, 3)) {
+      if (!isSnappayGatewayValue(hold.gateway)) continue;
+      if (hold.state !== "reconciling" && hold.state !== "reclaimable") continue;
+      await Promise.resolve(orchestrator.pullForHold(hold.paymentAttemptId)).catch(
+        () => undefined,
+      );
+    }
+  } catch {
+    // A checkout quote must never fail because a background nudge did.
+  }
 }

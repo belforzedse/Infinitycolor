@@ -1,11 +1,29 @@
 import type { Strapi } from "@strapi/strapi";
 import { releaseOrderReservation } from "../utils/stockReservations";
 import { isSnappayAttemptParkedForReview } from "../api/payment-gateway/services/snappay-orchestrator";
+import { markSnappayAttemptLocallyExpired } from "../api/payment-attempt/services/snappay-attempt-writes";
+import { recordEvidence } from "../api/payment-attempt-evidence/services/evidence";
+import { readPaymentAttemptLegs } from "../api/payment-attempt/services/payment-legs";
+import { incrementMetric } from "../utils/metrics";
 import {
   type BackgroundJobStats,
   formatError,
   runBackgroundJob,
 } from "./backgroundJobRunner";
+
+/**
+ * How close the queued reconcile has to be before a deferral tick leaves it
+ * alone.
+ *
+ * Every tick used to call `reconcileOrder`, which pulls the operation forward
+ * to now. With a one-minute sweep that is up to ninety unscheduled runs inside
+ * the 1.5-hour ceiling, each of which used to consume a retry slot — which is
+ * why production attempts reach `RECONCILIATION_EXHAUSTED` after a median of
+ * ten minutes instead of running the intended 5m/40m/3h/12h/24h ladder. A tick
+ * now only intervenes when the ladder has genuinely left the attempt
+ * unattended.
+ */
+const RECONCILE_PULL_THRESHOLD_MS = 10 * 60 * 1000;
 
 const MAX_CONSECUTIVE_FAILURES = 5;
 let consecutiveFailures = 0;
@@ -32,27 +50,80 @@ const SNAPPAY_DEFER_CEILING_HOURS = Number(
   process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS || 1.5,
 );
 
-const incrementMetric = (
+/**
+ * Is the queued reconcile for this attempt far enough away to be worth pulling?
+ *
+ * A missing or already-due operation answers "yes": the point is to make sure
+ * something is going to happen, not to add another run on top of one that is
+ * about to fire anyway.
+ */
+async function reconcileIsUnattended(
   strapi: Strapi,
-  name: string
-) => {
-  const metrics = (strapi as any).metrics;
-  if (!metrics) return;
-  if (typeof metrics.increment === "function") {
-    metrics.increment(name);
-    return;
+  attemptId: number,
+  now: Date,
+): Promise<boolean> {
+  try {
+    const operation: any = await strapi.db
+      .query("api::payment-operation.payment-operation")
+      .findOne({
+        where: {
+          attemptKey: attemptId,
+          OperationType: "RECONCILE",
+          Status: { $in: ["Queued", "Processing"] },
+        },
+        orderBy: { nextRunAt: "asc" },
+      } as any);
+    if (!operation?.nextRunAt) return true;
+    return new Date(operation.nextRunAt).getTime() - now.getTime() > RECONCILE_PULL_THRESHOLD_MS;
+  } catch {
+    return true;
   }
-  if (typeof metrics.counter === "function") {
-    const counter = metrics.counter(name);
-    if (counter?.inc) {
-      counter.inc();
-      return;
-    }
+}
+
+/**
+ * Marks a swept SnappPay attempt terminal and records why, best-effort.
+ *
+ * Never throws: the release it describes has already committed, and there is
+ * nothing useful to do with a failure here except report it.
+ */
+async function recordLocalExpiry(
+  strapi: Strapi,
+  input: { attempt: any; orderId: number; kind: "local_ttl" | "local_ceiling" },
+): Promise<void> {
+  try {
+    const stamped = await markSnappayAttemptLocallyExpired(strapi as any, {
+      attemptId: Number(input.attempt.id),
+      reason: input.kind,
+    });
+    if (!stamped?.expired) return;
+    const legs = readPaymentAttemptLegs(input.attempt);
+    await recordEvidence(strapi as any, {
+      attemptId: Number(input.attempt.id),
+      orderId: input.orderId,
+      kind: input.kind,
+      // A local timeout is not a mode-gated decision: it records what happened,
+      // and it happens identically whatever the recovery modes are set to.
+      mode: "off",
+      decision: "released",
+      providerStatus: stamped.providerStatus,
+      walletAmountIrr: legs.walletIrr,
+      gatewayAmountIrr: legs.gatewayIrr,
+      observedAt: new Date(),
+      details: {
+        reason:
+          input.kind === "local_ttl" ? "parked_for_manual_review" : "defer_ceiling_exceeded",
+        deferCeilingHours: SNAPPAY_DEFER_CEILING_HOURS,
+      },
+    });
+  } catch (error: any) {
+    strapi.log.error("Failed to record the local expiry of a SnappPay attempt", {
+      attemptId: input.attempt?.attemptId,
+      orderId: input.orderId,
+      kind: input.kind,
+      error: String(error?.message || error).slice(0, 300),
+    });
   }
-  if (metrics?.counter?.inc) {
-    metrics.counter.inc();
-  }
-};
+}
 
 type ExpireStockReservationsOptions = {
   batchSize?: number;
@@ -89,6 +160,7 @@ async function expireStockReservationsBatch(
     }
 
     let stage = "transaction";
+    let cancelled = false;
     try {
       const activeSnappayAttempt: any = await strapi.db
         .query("api::payment-attempt.payment-attempt")
@@ -128,18 +200,20 @@ async function expireStockReservationsBatch(
           },
           data: { ReservedUntil: extendedUntil },
         } as any);
-        await strapi
-          .service("api::payment-gateway.snappay-orchestrator")
-          .reconcileOrder(orderId, "reservation_expiry")
-          .catch((error: any) => {
-            strapi.log.error(
-              "Failed to enqueue SnappPay reconciliation during reservation expiry",
-              {
-                orderId,
-                error: String(error?.message || error).slice(0, 300),
-              },
-            );
-          });
+        if (await reconcileIsUnattended(strapi, Number(activeSnappayAttempt.id), options.now)) {
+          await strapi
+            .service("api::payment-gateway.snappay-orchestrator")
+            .reconcileOrder(orderId, "reservation_expiry")
+            .catch((error: any) => {
+              strapi.log.error(
+                "Failed to enqueue SnappPay reconciliation during reservation expiry",
+                {
+                  orderId,
+                  error: String(error?.message || error).slice(0, 300),
+                },
+              );
+            });
+        }
         skipped += 1;
         strapi.log.warn(
           "Deferred reservation expiry for active SnappPay payment",
@@ -239,7 +313,33 @@ async function expireStockReservationsBatch(
           transacting: trx,
         } as any);
         processed += 1;
+        cancelled = true;
       });
+
+      // Deliberately after the commit, not inside it.
+      //
+      // Stamping the attempt terminal is what makes a late provider success
+      // reachable at all: until now the sweep released the stock and cancelled
+      // the order while leaving the attempt in an open `Unknown` state, so
+      // nothing downstream could tell a timed-out checkout from one still in
+      // flight and a shopper who paid afterwards had no handler.
+      // `acceptSnappayCallback` now routes such a callback to the late-success
+      // matrix, which is why the two changes ship together.
+      //
+      // It runs outside the transaction because a failed INSERT aborts a
+      // PostgreSQL transaction outright: an audit row that could not be written
+      // would take the stock release and the wallet release down with it, which
+      // is precisely backwards. Losing the stamp costs nothing that matters —
+      // the late-success routing also triggers on the order being `Cancelled`,
+      // which this transaction has already committed.
+      if (cancelled && activeSnappayAttempt?.id) {
+        stage = "attempt_expiry";
+        await recordLocalExpiry(strapi, {
+          attempt: activeSnappayAttempt,
+          orderId,
+          kind: parkedForReview ? "local_ttl" : "local_ceiling",
+        });
+      }
     } catch (orderErr) {
       failed += 1;
       if (stage === "order_log") logsFailed += 1;

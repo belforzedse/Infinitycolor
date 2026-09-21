@@ -212,6 +212,17 @@ export async function releaseOrderReservation(
     userId?: number | string;
     requireOrderStatus?: "Paying";
     expiresBefore?: Date;
+    /**
+     * Overrides the wallet hold's release reason.
+     *
+     * By default a hold released here is stamped `reservation_{reason}`, which
+     * says only that a stock reservation ended. When the release was caused by
+     * named provider evidence — a confirmed NOT_FOUND, an aged registered token
+     * we reverted — the caller passes that name instead, so the hold records
+     * *why* the money came back for the rest of its life. It never changes what
+     * is released or whether it is released.
+     */
+    walletReleaseReason?: string;
   }
 ): Promise<ReleaseOrderReservationResult> {
   if (!trx) {
@@ -275,7 +286,11 @@ export async function releaseOrderReservation(
     // aborts one side with a deadlock — see wallet-lock-order.int.spec.ts, which
     // reproduces it deterministically. Still unconditional: the two holds can be out
     // of step, and a CAS'd release repeats safely.
-    await releaseWalletHoldsForOrder(strapi, { orderId, reason: `reservation_${reason}` }, trx);
+    await releaseWalletHoldsForOrder(
+      strapi,
+      { orderId, reason: context?.walletReleaseReason || `reservation_${reason}` },
+      trx
+    );
 
     return transitioned ? { outcome: "released" } : { outcome: "skipped" };
   } catch (e: any) {

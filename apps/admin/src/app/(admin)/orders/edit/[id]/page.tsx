@@ -32,6 +32,7 @@ import {
 } from "@/utils/orderAttributes";
 import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
 import { primaryGatewayMethod, readOrderPaymentLegs } from "@/utils/paymentLegs";
+import WalletRecoveryPanel from "@/components/SuperAdmin/Order/WalletRecoveryPanel";
 import PaymentLegBreakdown from "@/components/SuperAdmin/Order/PaymentLegBreakdown";
 import {
   getOrderStatusMeta,
@@ -692,6 +693,13 @@ export default function EditOrderPage() {
             : undefined
         }
       />
+
+      {data && canReadFinancials ? (
+        <section className="mt-6 rounded-xl border border-neutral-200 bg-white p-4" dir="rtl">
+          <h3 className="mb-3 text-base font-medium">وضعیت کیف پول و بازیابی پرداخت</h3>
+          <WalletRecoveryPanel orderId={Number(data.id)} />
+        </section>
+      ) : null}
 
       {data && (
         <OrderStatusActions

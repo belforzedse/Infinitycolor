@@ -1,4 +1,8 @@
 import type { Strapi } from "@strapi/strapi";
+import {
+  walletHoldStateFor,
+  type WalletHoldState,
+} from "../../payment-attempt/services/payment-attempt-outcome";
 import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
 
 /**
@@ -830,4 +834,201 @@ export async function captureWalletLegForSettlement(
     },
     trx,
   );
+}
+
+/**
+ * One live hold, as the storefront needs to talk about it.
+ *
+ * `boundAt` is the honest upper bound on how long the money can stay held: the
+ * reservation ceiling for a SnappPay attempt, the reservation expiry for
+ * everything else. It exists because "it will come back automatically" is only
+ * reassuring if the page can say by when.
+ */
+export type ActiveWalletHold = {
+  paymentAttemptId: number;
+  attemptId: string;
+  orderId: number | null;
+  gateway: string;
+  amountIrr: number;
+  heldAt: string | null;
+  state: WalletHoldState;
+  nextCheckAt: string | null;
+  boundAt: string | null;
+};
+
+const SNAPPAY_GATEWAYS = ["snappay", "snapppay"];
+
+/**
+ * Read at call time, not at module load: the reservation-expiry job reads the
+ * same variable the same way, and tests override it per case.
+ */
+const snappayDeferCeilingMs = (): number => {
+  const hours = Number(process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS || 1.5);
+  return (Number.isFinite(hours) && hours > 0 ? hours : 1.5) * 60 * 60 * 1000;
+};
+
+function toActiveHold(row: Record<string, any>): ActiveWalletHold {
+  const gateway = String(row.gateway || "");
+  const isSnappay = SNAPPAY_GATEWAYS.includes(gateway.toLowerCase());
+  const createdAt = row.created_at ? new Date(row.created_at) : null;
+  const reservedUntil = row.reserved_until ? new Date(row.reserved_until) : null;
+  const boundAt = isSnappay
+    ? createdAt
+      ? new Date(createdAt.getTime() + snappayDeferCeilingMs())
+      : null
+    : reservedUntil;
+  return {
+    paymentAttemptId: Number(row.id),
+    attemptId: String(row.attempt_id || ""),
+    orderId: row.order_id === null || row.order_id === undefined ? null : Number(row.order_id),
+    gateway,
+    amountIrr: toInt(row.wallet_amount),
+    heldAt: row.wallet_held_at ? new Date(row.wallet_held_at).toISOString() : null,
+    state: walletHoldStateFor(row),
+    nextCheckAt: row.next_action_at ? new Date(row.next_action_at).toISOString() : null,
+    boundAt: boundAt ? boundAt.toISOString() : null,
+  };
+}
+
+const ACTIVE_HOLD_COLUMNS = `pa.id, pa.attempt_id, pa.gateway, pa.wallet_amount,
+        pa.wallet_held_at, pa.status, pa.next_action, pa.next_action_at,
+        pa.failure_code, pa.created_at, pol.order_id, o.reserved_until`;
+
+/**
+ * Every live hold belonging to one customer, newest first.
+ *
+ * Lock-free on purpose: this feeds a read model, and a hold that is released
+ * while the response is in flight simply disappears from the next one.
+ */
+export async function listActiveHoldsForUser(
+  strapi: Strapi,
+  userId: number,
+): Promise<ActiveWalletHold[]> {
+  try {
+    const result = await strapi.db.connection.raw(
+      `SELECT ${ACTIVE_HOLD_COLUMNS}
+         FROM payment_attempts pa
+         JOIN payment_attempts_user_links pul ON pul.payment_attempt_id = pa.id
+         LEFT JOIN payment_attempts_order_links pol ON pol.payment_attempt_id = pa.id
+         LEFT JOIN orders o ON o.id = pol.order_id
+        WHERE pul.user_id = ?
+          AND pa.wallet_hold_status = 'Active'
+        ORDER BY pa.id DESC
+        LIMIT 20`,
+      [userId],
+    );
+    return (result?.rows || []).map(toActiveHold);
+  } catch (error) {
+    // Same contract as `readWalletAvailability`: a read model must never take
+    // down the page it decorates.
+    strapi.log.error(
+      `Active wallet holds could not be listed for user ${userId}: ${String(
+        (error as any)?.message || error,
+      ).slice(0, 200)}`,
+    );
+    return [];
+  }
+}
+
+/** Every live hold, for the sweep's audit. */
+export async function listActiveHolds(
+  strapi: Strapi,
+  options: { limit?: number } = {},
+): Promise<ActiveWalletHold[]> {
+  const result = await strapi.db.connection.raw(
+    `SELECT ${ACTIVE_HOLD_COLUMNS}
+       FROM payment_attempts pa
+       LEFT JOIN payment_attempts_order_links pol ON pol.payment_attempt_id = pa.id
+       LEFT JOIN orders o ON o.id = pol.order_id
+      WHERE pa.wallet_hold_status = 'Active'
+      ORDER BY pa.id ASC
+      LIMIT ?`,
+    [Math.max(1, Math.min(1000, options.limit ?? 500))],
+  );
+  return (result?.rows || []).map(toActiveHold);
+}
+
+export type WalletHoldAudit = {
+  activeHolds: number;
+  heldIrr: number;
+  ageMs: { p50: number; p90: number; max: number };
+  byGateway: Record<string, number>;
+  /** Wallets whose `held_balance` disagrees with the sum of their Active holds. */
+  ledgerMismatches: Array<{ walletId: number; heldBalanceIrr: number; activeSumIrr: number }>;
+  /** Active holds whose order is no longer paying — an integrity problem. */
+  stuckHolds: Array<{ paymentAttemptId: number; orderId: number | null; orderStatus: string }>;
+};
+
+const percentile = (sorted: number[], fraction: number): number => {
+  if (sorted.length === 0) return 0;
+  const index = Math.min(sorted.length - 1, Math.floor(sorted.length * fraction));
+  return sorted[index];
+};
+
+/**
+ * Invariant 8, asserted rather than assumed: `held_balance` equals the sum of
+ * that wallet's Active holds, and no Active hold outlives its order's payment.
+ *
+ * Read-only. It reports; it never repairs. A drift here is an operator's
+ * problem, and silently "fixing" a balance would destroy the evidence of
+ * whatever caused it.
+ */
+export async function auditWalletHoldConsistency(
+  strapi: Strapi,
+  options: { now?: Date } = {},
+): Promise<WalletHoldAudit> {
+  const now = options.now ?? new Date();
+  const holds = await listActiveHolds(strapi, { limit: 1000 });
+
+  const ages = holds
+    .map((hold) => (hold.heldAt ? now.getTime() - new Date(hold.heldAt).getTime() : 0))
+    .sort((a, b) => a - b);
+  const byGateway: Record<string, number> = {};
+  for (const hold of holds) {
+    byGateway[hold.gateway] = (byGateway[hold.gateway] || 0) + 1;
+  }
+
+  const mismatch = await strapi.db.connection.raw(
+    `SELECT w.id AS wallet_id,
+            COALESCE(w.held_balance, 0) AS held_balance,
+            COALESCE(SUM(pa.wallet_amount) FILTER (WHERE pa.wallet_hold_status = 'Active'), 0) AS active_sum
+       FROM local_user_wallets w
+       JOIN local_user_wallets_user_links wl ON wl.local_user_wallet_id = w.id
+       LEFT JOIN payment_attempts_user_links pul ON pul.user_id = wl.user_id
+       LEFT JOIN payment_attempts pa ON pa.id = pul.payment_attempt_id
+      GROUP BY w.id, w.held_balance
+     HAVING COALESCE(w.held_balance, 0) <> COALESCE(
+              SUM(pa.wallet_amount) FILTER (WHERE pa.wallet_hold_status = 'Active'), 0)`,
+  );
+
+  const stuck = await strapi.db.connection.raw(
+    `SELECT pa.id, pol.order_id, o.status
+       FROM payment_attempts pa
+       LEFT JOIN payment_attempts_order_links pol ON pol.payment_attempt_id = pa.id
+       LEFT JOIN orders o ON o.id = pol.order_id
+      WHERE pa.wallet_hold_status = 'Active'
+        AND (o.status IS NULL OR o.status <> 'Paying')
+      LIMIT 100`,
+  );
+
+  return {
+    activeHolds: holds.length,
+    heldIrr: holds.reduce((total, hold) => total + hold.amountIrr, 0),
+    ageMs: {
+      p50: percentile(ages, 0.5),
+      p90: percentile(ages, 0.9),
+      max: ages.length > 0 ? ages[ages.length - 1] : 0,
+    },
+    byGateway,
+    ledgerMismatches: (mismatch?.rows || []).map((row: any) => ({
+      walletId: Number(row.wallet_id),
+      heldBalanceIrr: toInt(row.held_balance),
+      activeSumIrr: toInt(row.active_sum),
+    })),
+    stuckHolds: (stuck?.rows || []).map((row: any) => ({
+      paymentAttemptId: Number(row.id),
+      orderId: row.order_id === null ? null : Number(row.order_id),
+      orderStatus: String(row.status || "missing"),
+    })),
+  };
 }

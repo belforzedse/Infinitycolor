@@ -205,12 +205,36 @@ export interface OrderPaymentStatusResponse {
    */
   walletHoldStatus?: "None" | "DirectDebit" | "Active" | "Captured" | "Released";
   /**
+   * How a live hold reads right now.
+   *
+   * `reclaimable` is the only state where the shopper's own claim can move
+   * anything: their statement that they did not pay is consulted only for a
+   * token the provider still reports as uncommitted. Everywhere else the
+   * release is the worker's job and offering a button would promise something
+   * the server would refuse.
+   */
+  walletHoldState?: "reconciling" | "awaiting_provider" | "reclaimable" | "releasing";
+  /** When the credit was committed, ISO. Used to hold the manual button back. */
+  walletHeldAt?: string;
+  /**
+   * Latest moment this hold can still be held: the SnappPay reservation
+   * ceiling, or the order's reservation expiry for a bank gateway. Lets the
+   * page promise an automatic release *and* say by when.
+   */
+  walletHoldBoundAt?: string;
+  /**
    * Only present on a reconcile sent with `abandon: true`. `false` means the
    * claim was refused — the attempt is already resolved, or the shopper's own
    * successful return reached us first and outranks it — so no release is
    * coming and the page must not promise one.
    */
   walletReleaseRequested?: boolean;
+  /**
+   * Why `walletReleaseRequested` is what it is. `not_applicable` means this
+   * gateway has no provider call behind the claim, so the button is not offered
+   * at all rather than offered and silently ignored.
+   */
+  walletReleaseReason?: "queued" | "already_resolved" | "not_applicable";
   canRetry?: boolean;
   nextAction?: "view_order" | "return_to_cart" | "recheck";
   failureCode?: string;

@@ -34,6 +34,9 @@ import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/
 import { ensurePaymentAttemptDatabaseInvariants } from "./api/payment-attempt/services/payment-attempt-database";
 import { ensureWalletDatabaseInvariants } from "./api/local-user-wallet/services/wallet-database";
 import { refreshWalletReadiness } from "./api/local-user-wallet/services/wallet-readiness";
+import { ensurePaymentAttemptEvidenceInvariants } from "./api/payment-attempt-evidence/services/evidence-database";
+import { evaluateRecoveryReadiness } from "./api/payment-gateway/services/snappay-recovery-mode";
+import { createMetricsRegistry } from "./utils/metrics";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
   mapLegacyFaqCategories,
@@ -1351,6 +1354,13 @@ export default {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }) {
+    // Every `incrementMetric` call in the jobs and sweeps has been a no-op
+    // because nothing ever assigned `strapi.metrics`. Install the registry
+    // first, so counters recorded during the rest of bootstrap are kept.
+    if (!(strapi as any).metrics) {
+      (strapi as any).metrics = createMetricsRegistry();
+    }
+
     const snappayHardenedInitiationEnabled = isSnappayHardenedInitiationEnabled();
     if (snappayHardenedInitiationEnabled) {
       assertSnappayRuntimeConfig();
@@ -1385,6 +1395,13 @@ export default {
       strapi.log.info(
         `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
       );
+      // Append-only evidence for every provider-evidence recovery decision.
+      // Installed before the readiness evaluation below, because the presence of
+      // the immutability trigger is itself an ENFORCE prerequisite: a mutable
+      // evidence table would make a release unprovable after the fact and let a
+      // circuit breaker be talked out of tripping.
+      await ensurePaymentAttemptEvidenceInvariants(strapi as any);
+      await evaluateRecoveryReadiness(strapi as any);
       await ensureCategoryEditorialDatabaseInvariant(strapi);
       const issueReportStorage = await ensureIssueReportStorage(strapi);
       if (issueReportStorage.repaired) {

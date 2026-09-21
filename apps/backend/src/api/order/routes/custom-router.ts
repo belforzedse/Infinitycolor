@@ -171,6 +171,15 @@ export default {
       },
     },
     {
+      method: "GET",
+      path: "/orders/:id/admin/wallet-recovery",
+      handler: "order.adminWalletRecovery",
+      config: {
+        auth: { scope: [] },
+        policies: capabilityPolicy("order.financial.read"),
+      },
+    },
+    {
       method: "POST",
       path: "/orders/:id/admin/void-barcode",
       handler: "order.adminVoidBarcode",
