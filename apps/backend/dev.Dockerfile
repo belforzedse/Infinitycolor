@@ -17,29 +17,39 @@ ENV CI=true
 
 WORKDIR /repo
 
-COPY .cursor/docker/fallback-apk.sh .cursor/docker/fallback-registry.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/fallback-apk.sh /usr/local/bin/fallback-registry.sh
+COPY .cursor/docker/fallback-apk.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-apk.sh
 
 RUN /usr/local/bin/fallback-apk.sh build-base python3 vips-dev fftw-dev
+
+# Registry fallback changes must not invalidate the expensive native toolchain.
+COPY .cursor/docker/fallback-registry.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-registry.sh
 
 ENV npm_config_nodedir=/usr/local
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY patches ./patches
 COPY apps/backend/package.json ./apps/backend/package.json
-COPY packages ./packages
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/auth-core/package.json ./packages/auth-core/package.json
 RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,id=infinity-pnpm-node20,target=/pnpm-store,sharing=shared \
     --mount=type=cache,target=/root/.cache/node/corepack \
     /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm install --filter @repo/backend... --frozen-lockfile
-RUN pnpm --filter @repo/auth-core build
+    pnpm install --filter @repo/backend... --frozen-lockfile --store-dir /pnpm-store
+COPY packages/api ./packages/api
+COPY packages/auth-core ./packages/auth-core
+RUN --mount=type=cache,target=/root/.cache/node/corepack \
+    pnpm --filter @repo/auth-core build
 
 # Materialize production dependencies before application source is copied. This
 # keeps the expensive pnpm deploy layer reusable for source-only changes.
-RUN --mount=type=cache,target=/root/.cache/node/corepack \
+RUN --mount=type=cache,id=infinity-pnpm-node20,target=/pnpm-store,sharing=shared \
+    --mount=type=cache,target=/root/.cache/node/corepack \
     echo "starting cacheable production dependency deploy..." \
     && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm --filter @repo/backend deploy --legacy --prod /app \
+    pnpm --store-dir /pnpm-store --filter @repo/backend deploy --legacy --prod /app \
     && cd /app \
     && echo "rebuilding sharp for musl runtime..." \
     && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \
@@ -52,8 +62,7 @@ COPY apps/backend ./apps/backend
 WORKDIR /repo/apps/backend
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
     echo "starting strapi build at $(date -Iseconds)..." \
-    && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm run build \
+    && pnpm run build \
     && echo "strapi build finished at $(date -Iseconds)"
 RUN echo "removing build artifacts..." \
     && rm -rf .strapi .cache .tmp \
@@ -88,10 +97,11 @@ ENV NODE_ENV=production \
     STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS} \
     NODE_OPTIONS=${NODE_OPTIONS}
 
-COPY .cursor/docker/fallback-apk.sh .cursor/docker/fallback-registry.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/fallback-apk.sh /usr/local/bin/fallback-registry.sh
-
+COPY .cursor/docker/fallback-apk.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-apk.sh
 RUN /usr/local/bin/fallback-apk.sh vips vips-dev
+COPY .cursor/docker/fallback-registry.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-registry.sh
 RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" pnpm --version
 
 WORKDIR /app

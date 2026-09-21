@@ -5,6 +5,8 @@
 ############################
 
 node_modules/
+.pnpm-store/
+ci-scoped.yml
 /.pnp
 .pnp.*
 .yarn/*

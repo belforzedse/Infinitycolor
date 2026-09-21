@@ -14,19 +14,25 @@ RUN chmod +x /usr/local/bin/fallback-registry.sh
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY patches ./patches
 COPY apps/social/package.json ./apps/social/package.json
-COPY packages ./packages
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/auth-core/package.json ./packages/auth-core/package.json
+COPY packages/auth-ui/package.json ./packages/auth-ui/package.json
+COPY packages/brand/package.json ./packages/brand/package.json
+COPY packages/fonts/package.json ./packages/fonts/package.json
+COPY packages/social-posts/package.json ./packages/social-posts/package.json
+COPY packages/story-rail/package.json ./packages/story-rail/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+COPY tools/eslint/package.json ./tools/eslint/package.json
 RUN --mount=type=cache,target=/root/.npm \
-    --mount=type=cache,id=infinity-pnpm-store,target=/pnpm-store \
+    --mount=type=cache,id=infinity-pnpm-node22,target=/pnpm-store,sharing=shared \
     --mount=type=cache,target=/root/.cache/node/corepack \
     fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm install --filter @repo/social... --frozen-lockfile --store-dir /pnpm-store
-# Same corepack cache and registry fallback as every other pnpm invocation
-# here. Without them this line calls bare `pnpm`, corepack tries to fetch
-# pnpm from registry.npmjs.org, and the build dies on a Cloudflare address
-# that is not reachable from this network. The layer cache hid it until a
-# change under packages/ invalidated it.
+COPY packages ./packages
+COPY tools/eslint ./tools/eslint
+# Registry fallback is only for package retrieval. Compilation failures must
+# remain single, original application failures.
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
-    /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm --filter @repo/auth-core build
 
 COPY apps/social ./apps/social
@@ -49,7 +55,6 @@ WORKDIR /repo/apps/social
 ENV NODE_ENV=production
 RUN --mount=type=cache,id=infinity-social-next-16.3.2-node22,target=/repo/apps/social/.next/cache,sharing=locked \
     --mount=type=cache,target=/root/.cache/node/corepack \
-    fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm run build
 
 FROM docker.arvancloud.ir/library/node:22-alpine AS runner
