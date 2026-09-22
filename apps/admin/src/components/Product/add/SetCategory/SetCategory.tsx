@@ -6,9 +6,13 @@ import SimilarCategorySelector from "./SimilarCategorySelector";
 
 interface SetCategoryProps {
   isEditMode?: boolean;
+  categoryError?: string | null;
 }
 
-export default function SetCategory({ isEditMode = false }: SetCategoryProps) {
+export default function SetCategory({
+  isEditMode = false,
+  categoryError,
+}: SetCategoryProps) {
   return (
     <div className="flex flex-col gap-3 rounded-2xl bg-white p-4">
       <div className="mb-2 flex w-full items-center justify-between gap-3">
@@ -19,7 +23,7 @@ export default function SetCategory({ isEditMode = false }: SetCategoryProps) {
         </div>
       </div>
 
-      <MainCategorySelector isEditMode={isEditMode} />
+      <MainCategorySelector isEditMode={isEditMode} error={categoryError} />
 
       <SimilarCategorySelector isEditMode={isEditMode} />
 

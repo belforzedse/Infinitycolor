@@ -18,10 +18,12 @@ import { categoryMatchesQuery, categoryPathLabel } from "./categoryPath";
 
 interface MainCategorySelectorProps {
   isEditMode?: boolean;
+  error?: string | null;
 }
 
 function MainCategorySelector({
   isEditMode = false,
+  error,
 }: MainCategorySelectorProps) {
   const [selectedMainCategoryId, setSelectedMainCategoryId] = useState<
     string | null
@@ -125,13 +127,20 @@ function MainCategorySelector({
   return (
     <>
       <div className="flex flex-col gap-1">
+        <label className="text-base text-gray-700">
+          دسته بندی اصلی <span className="text-red-500">*</span>
+        </label>
         <Combobox<categoryResponseType | null, false>
           value={selectedCategory}
           onChange={onChangeMainCategory}
         >
           <div className="relative">
             <Combobox.Input
-              className="w-full rounded-lg border border-slate-100 px-3 py-3 text-sm text-right text-neutral-600 focus:border-infinity-primary focus:outline-none focus:ring-2 focus:ring-infinity-primary/20"
+              className={`w-full rounded-lg border px-3 py-3 text-sm text-right text-neutral-600 focus:outline-none focus:ring-2 focus:ring-infinity-primary/20 ${
+                error
+                  ? "border-red-500"
+                  : "border-slate-100 focus:border-infinity-primary"
+              }`}
               onChange={(event) => {
                 setSearchQuery(event.target.value);
                 // Clear selection when user starts typing
@@ -191,6 +200,7 @@ function MainCategorySelector({
             </Combobox.Options>
           </div>
         </Combobox>
+        {error && <span className="text-sm text-red-500">{error}</span>}
       </div>
 
       <button
