@@ -1,4 +1,8 @@
+"use client";
+
 import type { GenericAttributeSelector } from "@/services/product/product";
+import AttributeChip from "./AttributeChip";
+import ColorOptionCard, { isValidHex } from "./ColorOptionCard";
 
 type Props = {
   selectors: GenericAttributeSelector[];
@@ -6,9 +10,6 @@ type Props = {
   disabledTermIds: Set<string>;
   onChange: (attributeId: string, termId: string) => void;
 };
-
-const validHex = (value?: string | null) =>
-  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
 
 export default function GenericAttributes({
   selectors,
@@ -20,56 +21,82 @@ export default function GenericAttributes({
 
   return (
     <div className="flex flex-col gap-6" data-testid="generic-attribute-selectors">
-      {selectors.map((selector) => (
-        <section key={selector.attributeId} className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium text-neutral-800">{selector.title}</h3>
-            <span className="text-xs text-neutral-500">
-              {selector.options.find(
-                (option) => option.id === selection[String(selector.attributeId)],
-              )?.title || ""}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {selector.options.map((option) => {
-              const selected = selection[String(selector.attributeId)] === option.id;
-              const disabled = disabledTermIds.has(option.id);
-              const showSwatch = selector.type === "Color" && validHex(option.colorCode);
+      {selectors.map((selector) => {
+        const isColorAttribute = selector.type === "Color";
+        /**
+         * A Color-typed attribute whose terms never got hex codes has nothing to
+         * paint, so it renders as name chips rather than a row of blank boxes. The
+         * heading still follows the attribute's type, not what the data happens to
+         * carry, so a missing hex never restyles the section around it.
+         */
+        const showSwatchCards =
+          isColorAttribute && selector.options.some((option) => isValidHex(option.colorCode));
 
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={selected}
-                  // The other pickers (Size/Color/Model) already spell the
-                  // disabled reason out loud; without this a screen reader gets
-                  // only "disabled" and no idea the option is out of stock.
-                  aria-label={disabled ? `${option.title} ناموجود` : option.title}
-                  title={disabled ? "ناموجود" : option.title}
-                  onClick={() => onChange(String(selector.attributeId), option.id)}
-                  className={[
-                    "inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 py-2 text-sm transition",
-                    selected
-                      ? "border-infinity-primary bg-infinity-primary-lighter/20 text-infinity-primary-dark"
-                      : "border-slate-200 bg-white text-neutral-700 hover:border-infinity-primary-lighter",
-                    disabled ? "cursor-not-allowed opacity-40" : "",
-                  ].join(" ")}
-                >
-                  {showSwatch && (
-                    <span
-                      className="h-5 w-5 rounded-full border border-black/10"
-                      style={{ backgroundColor: option.colorCode || undefined }}
-                      aria-hidden="true"
+        return (
+          <section key={selector.attributeId} className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className={isColorAttribute ? "text-xl text-neutral-800" : "text-sm font-medium text-neutral-800"}>
+                {selector.title}
+              </h3>
+              {!isColorAttribute && (
+                <span className="text-xs text-neutral-500">
+                  {selector.options.find(
+                    (option) => option.id === selection[String(selector.attributeId)],
+                  )?.title || ""}
+                </span>
+              )}
+            </div>
+
+            {/* Terms wrap onto extra rows; nothing is parked off-screen behind a sideways scroll. */}
+            <div className="flex flex-wrap items-center gap-2">
+              {selector.options.map((option) => {
+                const selected = selection[String(selector.attributeId)] === option.id;
+                const disabled = disabledTermIds.has(option.id);
+                // The other pickers (Size/Color/Model) already spell the
+                // disabled reason out loud; without this a screen reader gets
+                // only "disabled" and no idea the option is out of stock.
+                const label = disabled ? `${option.title} ناموجود` : option.title;
+
+                if (showSwatchCards) {
+                  return (
+                    <ColorOptionCard
+                      key={option.id}
+                      title={option.title}
+                      colorCode={option.colorCode}
+                      selected={selected}
+                      disabled={disabled}
+                      onClick={() => onChange(String(selector.attributeId), option.id)}
+                      ariaLabel={label}
+                      dataProps={{
+                        "data-testid": "pdp-generic-color-option",
+                        "data-term-id": option.id,
+                        "data-term-title": option.title,
+                        "data-term-code": option.colorCode || "",
+                      }}
                     />
-                  )}
-                  <span>{option.title}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+                  );
+                }
+
+                return (
+                  <AttributeChip
+                    key={option.id}
+                    title={option.title}
+                    selected={selected}
+                    disabled={disabled}
+                    onClick={() => onChange(String(selector.attributeId), option.id)}
+                    ariaLabel={label}
+                    dataProps={{
+                      "data-testid": "pdp-generic-option",
+                      "data-term-id": option.id,
+                      "data-term-title": option.title,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }

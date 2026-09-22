@@ -14,6 +14,12 @@ import { useCart } from "@/contexts/CartContext";
 import { currentOrderContextAtom } from "@/atoms/issueReportContext";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 import { translateOrderStatus } from "@/utils/statusTranslations";
+import {
+  clearCheckoutIdentity,
+  clearContinuableCheckoutIdentity,
+  readContinuableCheckoutIdentity,
+} from "@/lib/checkout-identity";
+import { formatHoldDeadline } from "@/utils/walletHolds";
 
 const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled", "Expired"]);
 const PAID_ORDER_STATUSES = new Set(["Started", "Shipment", "Done"]);
@@ -32,6 +38,48 @@ const isPaidOrderStatus = (status?: string | null): boolean =>
 const isAuthoritativePaid = (
   result: Pick<OrderPaymentStatusResponse, "isPaid" | "status"> | null,
 ): boolean => Boolean(result && (result.isPaid || isPaidOrderStatus(result.status)));
+
+/**
+ * Whether this checkout is still sitting on the shopper's wallet credit.
+ *
+ * A SnappPay hold is the one kind that cannot be handed back on the checkout
+ * path — the provider mints a transaction id immediately and keeps answering
+ * `REGISTERED` long after the shopper has gone, so nothing local proves the
+ * payment is dead. Until the shopper says so, that credit stays committed for
+ * up to the reservation defer ceiling. This is the shopper saying so.
+ */
+/** A SnappPay hold is the only one the shopper's own claim can shorten. */
+const MANUAL_RELEASE_GRACE_MS = 2 * 60 * 1000;
+
+const canReleaseHeldWallet = (
+  result: OrderPaymentStatusResponse | null,
+): boolean => {
+  if (
+    !result ||
+    result.walletHoldStatus !== "Active" ||
+    isAuthoritativePaid(result) ||
+    !result.paymentStatus ||
+    TERMINAL.has(result.paymentStatus)
+  ) {
+    return false;
+  }
+  // Hidden for every gateway whose abandon call does nothing: the server
+  // answers `not_applicable` for those, and a button that silently fails is
+  // worse than no button.
+  if (resolvePaymentGateway(result.paymentGateway)?.key !== "snappay") return false;
+  // Only where the claim can actually authorize a revert.
+  if (result.walletHoldState && result.walletHoldState !== "reclaimable") return false;
+  // A shopper who was redirected seconds ago is probably still paying. Offering
+  // to cancel their payment at that moment invites them to cancel a payment
+  // they are about to complete.
+  if (result.walletHeldAt) {
+    const heldAtMs = new Date(result.walletHeldAt).getTime();
+    if (Number.isFinite(heldAtMs) && Date.now() - heldAtMs < MANUAL_RELEASE_GRACE_MS) {
+      return false;
+    }
+  }
+  return true;
+};
 
 const pollDelayMs = (checksCompleted: number, snappay: boolean): number => {
   if (!snappay || checksCompleted < 8) return POLL_INTERVAL_MS;
@@ -113,6 +161,10 @@ export default function PaymentResultPageClient() {
   const [result, setResult] = useState<OrderPaymentStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
+  /** Sticky: the release is queued, so the confirmation must outlive the request. */
+  const [abandonRequested, setAbandonRequested] = useState(false);
+  /** Null until the server has answered the claim; false if it refused it. */
+  const [abandonAccepted, setAbandonAccepted] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Best-effort: the order's line items are a separate, session-authenticated
   // call from the payment-status one above, so a failure here (e.g. the
@@ -140,14 +192,27 @@ export default function PaymentResultPageClient() {
 
   const load = useCallback(
     async (
-      mode: "initial" | "poll" | "reconcile" | "quiet-reconcile" = "initial",
+      mode:
+        | "initial"
+        | "poll"
+        | "reconcile"
+        | "quiet-reconcile"
+        | "abandon" = "initial",
     ) => {
       if (!Number.isInteger(orderId) || orderId <= 0) return;
-      const isReconcile = mode === "reconcile";
+      // The shopper's own statement that they did not pay. It rides the same
+      // reconcile request, so the answer is the same payment status — what
+      // changes is that the server may now revert an uncommitted token, and the
+      // wallet credit comes back with it a few seconds later.
+      const isAbandon = mode === "abandon";
+      const isReconcile = mode === "reconcile" || isAbandon;
       const isQuietReconcile = mode === "quiet-reconcile";
       const isPoll = mode === "poll" || isQuietReconcile;
       const skipGlobalLoader = isPoll || isReconcile;
       try {
+        if (isAbandon) {
+          setAbandonRequested(true);
+        }
         if (isReconcile) {
           setChecking(true);
         } else if (!isPoll && !hasResultRef.current) {
@@ -159,15 +224,22 @@ export default function PaymentResultPageClient() {
         }
         const next =
           isReconcile || isQuietReconcile
-            ? await OrderService.reconcileOrderPayment(
-                orderId,
-                skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
-              )
+            ? await OrderService.reconcileOrderPayment(orderId, {
+                ...(skipGlobalLoader ? { skipGlobalLoader: true } : {}),
+                // Only ever on the deliberate action — never on a poll.
+                ...(isAbandon ? { abandon: true } : {}),
+              })
             : await OrderService.getOrderPaymentStatus(
                 orderId,
                 skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
               );
         setResult(next);
+        if (isAbandon) {
+          // The server decides whether the claim was recorded: a shopper whose
+          // own successful return already reached us is refused, and must not be
+          // told a release is coming.
+          setAbandonAccepted(next.walletReleaseRequested === true);
+        }
         await applyPaidSideEffects(next, () => clearCartRef.current());
       } catch (err) {
         if (isReconcile && isRateLimited(err)) {
@@ -189,6 +261,8 @@ export default function PaymentResultPageClient() {
 
   useEffect(() => {
     snappayReconcileKickedRef.current = false;
+    setAbandonRequested(false);
+    setAbandonAccepted(null);
   }, [orderId]);
 
   useEffect(() => {
@@ -296,6 +370,10 @@ export default function PaymentResultPageClient() {
   }, [load, paymentStatus, orderStatus, resultIsPaid, isSnappayResult]);
 
   const paid = isAuthoritativePaid(result);
+  // Offered until the shopper asks, then replaced by the confirmation below so
+  // they cannot queue the same abandonment twice while the worker runs.
+  const walletReleaseOffered = !abandonRequested && canReleaseHeldWallet(result);
+  const walletStillHeld = result?.walletHoldStatus === "Active";
   const presentation = useMemo(() => {
     if (paid) {
       return {
@@ -304,6 +382,51 @@ export default function PaymentResultPageClient() {
         tone: "border-emerald-200 bg-emerald-50 text-emerald-950",
         iconTone: "bg-emerald-100 text-emerald-700",
         icon: CheckCircle2,
+      };
+    }
+    // SnappPay commits the shopper's installment credit when they pick a plan,
+    // before the first instalment is paid, and releases it itself within about
+    // an hour. Saying only "نتیجه پرداخت مشخص نیست" is what makes shoppers
+    // report a deduction they believe is a charge — «از حساب اعتباریم کم شد
+    // ولی پرداخت نشده است». Naming the reservation and its horizon is the
+    // whole fix for the gateway-only checkout; a wallet split keeps its own
+    // copy and release action below, so it is excluded here.
+    //
+    // Deliberately `Unknown` only, not every non-terminal state. `Pending` is
+    // also where a shopper sits in the first couple of minutes while the
+    // payment is still completing — reconciliation rescues that cohort at
+    // roughly T+2m — and telling them their credit is locked for an hour would
+    // be alarming and usually wrong. `Unknown` is the state the backend assigns
+    // once recovery has actually failed to resolve the attempt, which is what
+    // the reported orders carried.
+    if (isSnappayResult && !walletStillHeld && result?.paymentStatus === "Unknown") {
+      return {
+        title: "پرداخت شما کامل نشد",
+        message:
+          "اعتبار اسنپ‌پی شما فقط رزرو شده و مبلغی از شما کسر نشده است. این رزرو حداکثر تا حدود یک ساعت آزاد می‌شود و پس از آن می‌توانید دوباره سفارش دهید. تا آن زمان دوباره پرداخت نکنید.",
+        tone: "border-amber-200 bg-amber-50 text-amber-950",
+        iconTone: "bg-amber-100 text-amber-700",
+        icon: Clock3,
+      };
+    }
+    // A wallet split whose credit is still committed. The one thing the shopper
+    // needs told is that the money comes back by itself, and by when — that is
+    // the whole customer-visible defect this recovery work exists to fix.
+    // Without it the balance simply looks smaller and nothing explains why.
+    if (walletStillHeld && !paid) {
+      const deadline = formatHoldDeadline(result?.walletHoldBoundAt);
+      return {
+        title: "در انتظار تعیین وضعیت پرداخت",
+        message: isSnappayResult
+          ? `اگر پرداخت را کامل نکرده‌اید، اعتبار کیف پول شما پس از تأیید اسنپ‌پی به‌طور خودکار آزاد می‌شود (معمولاً ظرف ۳۰ دقیقه)${
+              deadline ? ` و حداکثر تا ساعت ${deadline}` : ""
+            }. نیازی به هیچ اقدامی نیست و دوباره پرداخت نکنید.`
+          : `اعتبار کیف پول شما برای این پرداخت رزرو شده است و در صورت ناموفق بودن پرداخت به‌طور خودکار آزاد می‌شود${
+              deadline ? ` (حداکثر تا ساعت ${deadline})` : ""
+            }. نیازی به هیچ اقدامی نیست.`,
+        tone: "border-amber-200 bg-amber-50 text-amber-950",
+        iconTone: "bg-amber-100 text-amber-700",
+        icon: Clock3,
       };
     }
     switch (result?.paymentStatus) {
@@ -356,9 +479,26 @@ export default function PaymentResultPageClient() {
           icon: Clock3,
         };
     }
-  }, [paid, result?.paymentStatus]);
+  }, [paid, result?.paymentStatus, isSnappayResult, walletStillHeld]);
 
   const returnToCart = () => {
+    // Clear the whole stored checkout identity, not two legacy keys.
+    //
+    // Leaving the attempt, quote, order, gateway and signature behind meant the
+    // next checkout did not name this attempt as its predecessor, so the
+    // supersession path — the one that hands the shopper their own held credit
+    // straight back — never ran, and the money waited for the reservation
+    // sweep instead.
+    clearCheckoutIdentity();
+    // The *continuable* set is only cleared when it names this very attempt,
+    // mirroring `abandonDeadCheckoutHold` in the cart. A shopper can have a
+    // second checkout in flight, and wiping its resume state because they left
+    // an unrelated result page would strand it.
+    const finishedAttemptId = String(result?.attemptId || "").trim();
+    const continuable = readContinuableCheckoutIdentity();
+    if (finishedAttemptId && continuable?.attemptId === finishedAttemptId) {
+      clearContinuableCheckoutIdentity();
+    }
     window.localStorage.removeItem("pendingCheckoutAttemptId");
     window.localStorage.removeItem("pendingPaymentAttemptId");
     router.push("/cart");
@@ -477,6 +617,31 @@ export default function PaymentResultPageClient() {
               </p>
             )}
 
+            {!paid && walletReleaseOffered && (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-900">
+                بخشی از مبلغ این سفارش از کیف پول شما کنار گذاشته شده و تا مشخص
+                شدن نتیجهٔ پرداخت اسنپ‌پی قابل استفاده نیست. اگر پرداخت را انجام
+                نداده‌اید، با دکمهٔ زیر این سفارش را لغو کنید تا اعتبارتان آزاد
+                شود.
+              </p>
+            )}
+
+            {abandonAccepted === true && !paid && (
+              <p className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm leading-7 text-sky-900">
+                {walletStillHeld
+                  ? "درخواست لغو ثبت شد. وضعیت پرداخت را از اسنپ‌پی می‌پرسیم و به محض پاسخ، اعتبار کیف پول شما آزاد می‌شود. این صفحه خودش به‌روز می‌شود."
+                  : "اعتبار کیف پول شما آزاد شد و می‌توانید دوباره از آن استفاده کنید."}
+              </p>
+            )}
+
+            {abandonAccepted === false && !paid && walletStillHeld && (
+              <p className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm leading-7 text-sky-900">
+                نتیجهٔ پرداخت شما از اسنپ‌پی دریافت شده و در حال بررسی است، بنابراین
+                این سفارش لغو نشد. تا مشخص شدن نتیجه چند لحظه صبر کنید؛ این صفحه
+                خودش به‌روز می‌شود.
+              </p>
+            )}
+
             <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:p-5">
               {paid && (
                 <button
@@ -501,6 +666,15 @@ export default function PaymentResultPageClient() {
                   onClick={() => void load("reconcile")}
                 >
                   {checking ? "در حال بررسی…" : "بررسی دوباره نتیجه"}
+                </button>
+              )}
+              {walletReleaseOffered && (
+                <button
+                  className="w-full rounded-xl border border-slate-300 px-5 py-3 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 sm:w-auto"
+                  disabled={checking}
+                  onClick={() => void load("abandon")}
+                >
+                  پرداخت نکردم؛ اعتبار کیف پولم آزاد شود
                 </button>
               )}
               <button

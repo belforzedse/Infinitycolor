@@ -14,18 +14,25 @@ RUN chmod +x /usr/local/bin/fallback-registry.sh
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY patches ./patches
 COPY apps/frontend/package.json ./apps/frontend/package.json
-COPY packages ./packages
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/auth-core/package.json ./packages/auth-core/package.json
+COPY packages/auth-ui/package.json ./packages/auth-ui/package.json
+COPY packages/brand/package.json ./packages/brand/package.json
+COPY packages/fonts/package.json ./packages/fonts/package.json
+COPY packages/social-posts/package.json ./packages/social-posts/package.json
+COPY packages/story-rail/package.json ./packages/story-rail/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+COPY tools/eslint/package.json ./tools/eslint/package.json
 RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,id=infinity-pnpm-node22,target=/pnpm-store,sharing=shared \
     --mount=type=cache,target=/root/.cache/node/corepack \
     fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm install --filter @repo/frontend... --frozen-lockfile
-# Same corepack cache and registry fallback as every other pnpm invocation
-# here. Without them this line calls bare `pnpm`, corepack tries to fetch
-# pnpm from registry.npmjs.org, and the build dies on a Cloudflare address
-# that is not reachable from this network. The layer cache hid it until a
-# change under packages/ invalidated it.
+    pnpm install --filter @repo/frontend... --frozen-lockfile --store-dir /pnpm-store
+COPY packages ./packages
+COPY tools/eslint ./tools/eslint
+# Registry fallback is only for package retrieval. Compilation failures must
+# remain single, original application failures.
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
-    /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm --filter @repo/auth-core build
 
 COPY apps/frontend ./apps/frontend
@@ -55,6 +62,7 @@ ARG NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_TELEMETRY="true"
 ARG NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ROLLOUT_PERCENT="100"
 ARG NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE="false"
 ARG NEXT_PUBLIC_INFINITY_RESERVE_CHECKOUT_ENABLED="true"
+ARG NEXT_PUBLIC_WALLET_TOPUP_UI_ENABLED="false"
 ARG STRAPI_BUILD_TIME_URL=""
 ARG STRAPI_INTERNAL_URL=""
 ARG FRONTEND_REDIS_URL=""
@@ -82,6 +90,7 @@ ENV NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_TELEMETRY=${NEXT_PUBLIC_INFINITY_ADAPT
 ENV NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ROLLOUT_PERCENT=${NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ROLLOUT_PERCENT}
 ENV NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE=${NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE}
 ENV NEXT_PUBLIC_INFINITY_RESERVE_CHECKOUT_ENABLED=${NEXT_PUBLIC_INFINITY_RESERVE_CHECKOUT_ENABLED}
+ENV NEXT_PUBLIC_WALLET_TOPUP_UI_ENABLED=${NEXT_PUBLIC_WALLET_TOPUP_UI_ENABLED}
 ENV STRAPI_BUILD_TIME_URL=${STRAPI_BUILD_TIME_URL}
 ENV STRAPI_INTERNAL_URL=${STRAPI_INTERNAL_URL}
 ENV FRONTEND_REDIS_URL=${FRONTEND_REDIS_URL}
@@ -98,7 +107,6 @@ WORKDIR /repo/apps/frontend
 ENV NODE_ENV=production
 RUN --mount=type=cache,id=infinity-frontend-next-16.3.2-node22,target=/repo/apps/frontend/.next/cache,sharing=locked \
     --mount=type=cache,target=/root/.cache/node/corepack \
-    fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm run build
 RUN grep -q '"/api/_health/route"' .next/server/app-paths-manifest.json
 

@@ -1,20 +1,140 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import { priceFormatter } from "@/utils/price";
-import { PREDEFINED_INCREASE_BALANCE_AMOUNTS } from "../Constnats";
+import { normalizeDigits } from "@/utils/faNum";
 import LeftUpArrowIcon from "../Icons/LeftUpArrowIcon";
-import WalletService from "@/services/wallet";
+import WalletService, { type WalletTopupOptions } from "@/services/wallet";
+import { submitPaymentHandoff } from "@/utils/paymentHandoff";
 
 interface IncreaseBalanceProps {
-  chargeDisabled?: boolean;
+  options: WalletTopupOptions | null;
+  loading?: boolean;
+  /** Called once the customer is about to leave for the provider. */
+  onTopupStarted?: (saleOrderId: string) => void;
+  /**
+   * How a plain redirect is performed. Injectable because `window.location` is
+   * not writable under jsdom, and because the seam makes the redirect itself
+   * assertable rather than inferred from side effects.
+   */
+  navigate?: (url: string) => void;
 }
 
-const IncreaseBalance = ({ chargeDisabled = false }: IncreaseBalanceProps) => {
-  const [increaseAmount, setIncreaseAmount] = useState(50000);
+/**
+ * Parses what the customer typed.
+ *
+ * Persian and Arabic-Indic digits arrive from Persian keyboards and from
+ * pasted amounts, and thousand separators arrive from both. Anything else is
+ * rejected rather than coerced — "۱۲a۳" must not quietly become 123.
+ */
+const parseAmount = (raw: string): number | null => {
+  const normalized = normalizeDigits(raw).replace(/[,٬،\s]/g, "").trim();
+  if (!normalized) return null;
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};
 
-  const handleAmountSelect = (amount: number) => {
-    if (chargeDisabled) return;
-    setIncreaseAmount(amount);
+export { submitPaymentHandoff as goToProvider };
+
+/** Shown when the options payload has no presets of its own. */
+export const DEFAULT_WALLET_TOPUP_PRESETS_TOMAN = [
+  1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000,
+] as const;
+
+const IncreaseBalance = ({
+  options,
+  loading = false,
+  onTopupStarted,
+  navigate,
+}: IncreaseBalanceProps) => {
+  const presets = options?.presetsToman?.length
+    ? options.presetsToman
+    : [...DEFAULT_WALLET_TOPUP_PRESETS_TOMAN];
+  const [amountText, setAmountText] = useState(String(presets[0] ?? 1_000_000));
+  const [gateway, setGateway] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
+  // One key per intended payment. It survives re-renders and double taps, so a
+  // repeated submission returns the original intent instead of opening a second
+  // payment session.
+  const idempotencyKey = useRef<string>("");
+
+  useEffect(() => {
+    if (!gateway && options?.gateways?.length) setGateway(options.gateways[0].code);
+  }, [gateway, options]);
+
+  const amount = useMemo(() => parseAmount(amountText), [amountText]);
+  const disabled = !options?.enabled || loading || submitting;
+
+  const validationError = useMemo(() => {
+    if (!options?.enabled) return null;
+    if (amountText.trim() === "") return null;
+    if (amount === null) return "مبلغ را با عدد وارد کنید.";
+    if (amount < options.minToman) {
+      return `حداقل مبلغ شارژ ${priceFormatter(options.minToman)} تومان است.`;
+    }
+    if (amount > options.maxToman) {
+      return `حداکثر مبلغ شارژ ${priceFormatter(options.maxToman)} تومان است.`;
+    }
+    return null;
+  }, [amount, amountText, options]);
+
+  const canSubmit = Boolean(options?.enabled) && amount !== null && !validationError && !disabled;
+
+  const submit = async () => {
+    if (!canSubmit || amount === null) return;
+    if (!idempotencyKey.current) {
+      idempotencyKey.current =
+        globalThis.crypto?.randomUUID?.() ||
+        `topup-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await WalletService.startTopup({
+        amountToman: amount,
+        gateway: gateway || undefined,
+        idempotencyKey: idempotencyKey.current,
+      });
+
+      if (result.saleOrderId) onTopupStarted?.(result.saleOrderId);
+
+      if (result.nextAction === "poll") {
+        return;
+      }
+      if (result.nextAction === "complete") {
+        toast.success("موجودی کیف پول به‌روزرسانی شد.");
+        return;
+      }
+      if (!result.success || result.nextAction === "retry") {
+        idempotencyKey.current = "";
+        toast.error(result.message || "شروع پرداخت انجام نشد. لطفاً دوباره تلاش کنید.");
+        return;
+      }
+      if (!submitPaymentHandoff(result, navigate)) {
+        toast.error("آدرس درگاه پرداخت دریافت نشد. لطفاً دوباره تلاش کنید.");
+      }
+    } catch (error) {
+      const payload = (error as {
+        response?: {
+          data?: {
+            data?: {
+              message?: string;
+              nextAction?: "redirect" | "poll" | "complete" | "retry";
+            };
+          };
+        };
+      })?.response?.data?.data;
+      // Strapi rejects 4xx responses at the HTTP client boundary. A provider
+      // refusal still carries the same terminal replay contract, so discard
+      // this key just as we do for a resolved `nextAction: retry` response.
+      if (payload?.nextAction === "retry") idempotencyKey.current = "";
+      toast.error(payload?.message || "شروع پرداخت انجام نشد. لطفاً دوباره تلاش کنید.");
+      // A transport failure is ambiguous: retain the key so a retry asks the
+      // server to replay the same durable intent instead of opening a second.
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -22,63 +142,89 @@ const IncreaseBalance = ({ chargeDisabled = false }: IncreaseBalanceProps) => {
       <div className="h-fit w-full rounded-xl bg-slate-100 p-5">
         <span className="text-foreground-primary text-2xl lg:text-4xl">شارژ سریع کیف پول</span>
 
-        <div className="mb-2 mt-4 flex h-14 w-full items-center justify-center rounded-lg border border-slate-100 bg-white">
-          <span className="text-lg text-slate-800 lg:text-3xl">
-            {priceFormatter(Number(increaseAmount))} تومان
-          </span>
-        </div>
+        <label
+          htmlFor="wallet-topup-amount"
+          className="mt-4 block text-sm text-slate-600 lg:text-base"
+        >
+          مبلغ شارژ (تومان)
+        </label>
+        <input
+          id="wallet-topup-amount"
+          data-testid="wallet-topup-amount"
+          inputMode="numeric"
+          dir="ltr"
+          value={amountText}
+          disabled={disabled}
+          onChange={(event) => setAmountText(event.target.value)}
+          className="mb-2 mt-1 h-14 w-full rounded-lg border border-slate-200 bg-white text-center text-lg text-slate-800 disabled:cursor-not-allowed disabled:opacity-60 lg:text-3xl"
+          aria-invalid={Boolean(validationError)}
+          aria-describedby={validationError ? "wallet-topup-amount-error" : undefined}
+        />
+        {validationError ? (
+          <p
+            id="wallet-topup-amount-error"
+            data-testid="wallet-topup-amount-error"
+            className="mb-2 text-sm text-red-600"
+          >
+            {validationError}
+          </p>
+        ) : amount !== null ? (
+          <p className="mb-2 text-sm text-slate-500">{priceFormatter(amount)} تومان</p>
+        ) : null}
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 lg:gap-3">
-          {PREDEFINED_INCREASE_BALANCE_AMOUNTS.map((amount) => (
+        <div
+          data-testid="wallet-topup-presets"
+          className="grid grid-cols-3 gap-1.5 lg:gap-3"
+        >
+          {presets.map((preset) => (
             <button
-              key={amount}
+              key={preset}
               type="button"
-              disabled={chargeDisabled}
-              onClick={() => handleAmountSelect(amount)}
-              className={`rounded-lg border bg-white px-3 py-2 ${
-                increaseAmount === amount
-                  ? "border-blue-500 text-lg text-blue-500 lg:text-xl"
-                  : "border border-slate-100 text-slate-400 hover:border-blue-500 hover:text-blue-500"
+              disabled={disabled}
+              onClick={() => setAmountText(String(preset))}
+              className={`rounded-lg border bg-white px-1.5 py-1.5 text-[11px] leading-tight lg:px-3 lg:py-2 lg:text-sm ${
+                amount === preset
+                  ? "border-blue-500 text-blue-500"
+                  : "border-slate-100 text-slate-400 hover:border-blue-500 hover:text-blue-500"
               } text-center transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-100 disabled:hover:text-slate-400`}
             >
-              {priceFormatter(amount)} تومان
+              {priceFormatter(preset)} تومان
             </button>
           ))}
         </div>
+
+        {(options?.gateways?.length ?? 0) > 1 ? (
+          <div className="mt-4 flex flex-col gap-2">
+            <span className="text-sm text-slate-600">درگاه پرداخت</span>
+            <div className="flex flex-wrap gap-2">
+              {options!.gateways.map((entry) => (
+                <button
+                  key={entry.code}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setGateway(entry.code)}
+                  className={`rounded-lg border px-4 py-2 text-sm transition ${
+                    gateway === entry.code
+                      ? "border-blue-500 bg-white text-blue-600"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-blue-400"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {entry.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <button
         type="button"
-        disabled={chargeDisabled}
+        data-testid="wallet-topup-submit"
+        disabled={!canSubmit}
         className="flex w-full items-center justify-center gap-1 rounded-lg bg-infinity-primary px-10 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60 lg:w-fit"
-        onClick={async () => {
-          if (chargeDisabled) return;
-          try {
-            // UI shows toman; backend expects IRR
-            const amountIrr = Number(increaseAmount) * 10;
-            const res = await WalletService.startTopup(amountIrr);
-            if (res.success && res.redirectUrl) {
-              // Mellat requires POST with RefId; if URL is the Mellat start pay URL, create a form
-              const form = document.createElement("form");
-              form.method = "POST";
-              form.action = res.redirectUrl;
-              form.style.display = "none";
-              if (res.refId) {
-                const input = document.createElement("input");
-                input.type = "hidden";
-                input.name = "RefId";
-                input.value = String(res.refId);
-                form.appendChild(input);
-              }
-              document.body.appendChild(form);
-              form.submit();
-            }
-          } catch (e) {
-            console.error("startTopup failed", e);
-          }
-        }}
+        onClick={submit}
       >
-        <span>پرداخت آنلاین</span>
+        <span>{submitting ? "در حال انتقال به درگاه…" : "پرداخت آنلاین"}</span>
         <LeftUpArrowIcon />
       </button>
     </div>

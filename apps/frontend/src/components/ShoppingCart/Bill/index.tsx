@@ -3,10 +3,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import type { Option } from "@/components/Kits/Form/Select";
+import type { PaymentCapabilities } from "@repo/api/commerce";
 import ShoppingCartBillInformationForm from "./InformationForm";
 import ShoppingCartBillDeliveryForm from "./DeliveryForm";
 import ShoppingCartBillDiscountCoupon from "./DiscountCoupon";
 import ShoppingCartBillPaymentGateway from "./PaymentGateway";
+import WalletContribution, { walletContributionToman } from "./WalletContribution";
 import CheckoutTermsAcceptance from "./CheckoutTermsAcceptance";
 import ReserveShipping from "./ReserveShipping";
 import ReserveFulfillmentChoice, {
@@ -29,7 +31,8 @@ import type {
   ResumableCheckout,
 } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
-import WalletService from "@/services/wallet";
+import WalletService, { type WalletHold } from "@/services/wallet";
+import { holdsAreReconciling } from "@/utils/walletHolds";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
@@ -39,6 +42,7 @@ import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { isExpectedCheckoutSentryCode } from "@/lib/expected-checkout-sentry";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 import { buildCartStockNoticeText } from "@/utils/cartStock";
+import { submitPaymentHandoff } from "@/utils/paymentHandoff";
 import {
   clearCheckoutIdentity,
   clearContinuableCheckoutIdentity,
@@ -202,6 +206,59 @@ const checkoutErrorPresentation = (
           "وضعیت رزرو موجودی این سفارش الان مشخص نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.",
         clearAttempt: false,
       };
+    // Wallet tender. None of these clear the attempt: the shopper only has to
+    // change the amount or the method, and the order was never created.
+    case "WALLET_INSUFFICIENT_AVAILABLE":
+      return {
+        displayError: "موجودی قابل استفاده کیف پول کافی نیست. مبلغ را تغییر دهید.",
+        clearAttempt: false,
+      };
+    case "WALLET_FUNDS_HELD_BY_PENDING_PAYMENT":
+      return {
+        displayError:
+          "بخشی از موجودی کیف پول برای پرداخت در حال انجام رزرو شده است. لطفاً نتیجه آن پرداخت را بررسی کنید.",
+        clearAttempt: false,
+      };
+    // The same held credit, except the server has just asked the provider to
+    // let go of it because this checkout named that payment as the one it
+    // replaces. Retrying in a few seconds is the whole fix, so the copy says
+    // that instead of sending the shopper off to inspect an old payment.
+    case "WALLET_HOLD_RELEASE_IN_PROGRESS":
+      return {
+        displayError:
+          "در حال آزادسازی اعتبار کیف پول از پرداخت قبلی شماست. چند لحظه دیگر دوباره تلاش کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_SPLIT_UNSUPPORTED_GATEWAY":
+      return {
+        displayError: "مبلغ پرداخت از کیف پول برای این روش پرداخت قابل استفاده نیست.",
+        clearAttempt: false,
+      };
+    case "WALLET_SPLIT_DISABLED":
+      return {
+        displayError:
+          "پرداخت ترکیبی کیف پول و درگاه در حال حاضر فعال نیست. یا کل مبلغ را از کیف پول بپردازید یا بدون کیف پول ادامه دهید.",
+        clearAttempt: false,
+      };
+    case "WALLET_RESIDUAL_BELOW_GATEWAY_MINIMUM":
+      return {
+        displayError:
+          "باقی‌ماندهٔ پرداخت از درگاه بسیار کم است. یا کل مبلغ را از کیف پول بپردازید یا سهم کیف پول را کم کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_COVERS_TOTAL":
+      return {
+        displayError:
+          "موجودی کیف پول کل مبلغ سفارش را پوشش می‌دهد. پرداخت با کیف پول را انتخاب کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_UNAVAILABLE":
+      return {
+        displayError: "موجودی کیف پول در دسترس نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_AMOUNT_INVALID":
+      return { displayError: "مبلغ کیف پول نامعتبر است.", clearAttempt: false };
     case "SNAPPAY_MANUAL_REVIEW":
       return { displayError: SNAPPAY_MANUAL_REVIEW_COPY, clearAttempt: false };
     case "SNAPPAY_RECONCILIATION_PENDING":
@@ -390,7 +447,15 @@ function ShoppingCartBillForm({}: Props) {
     | undefined
   >(undefined);
   const [discountPreviewLoading, setDiscountPreviewLoading] = useState(false);
-  const [walletBalanceIrr, setWalletBalanceIrr] = useState<number>(0);
+  // Spendable now, and what another of this customer's checkouts is holding.
+  const [walletAvailableIrr, setWalletAvailableIrr] = useState<number>(0);
+  const [walletHeldIrr, setWalletHeldIrr] = useState<number>(0);
+  const [walletHolds, setWalletHolds] = useState<WalletHold[]>([]);
+  const [paymentCapabilities, setPaymentCapabilities] = useState<PaymentCapabilities | null>(null);
+  // All or nothing: ticking the wallet spends as much of this order as the
+  // shopper has, so there is no amount to carry in state.
+  const [useWalletCredit, setUseWalletCredit] = useState(false);
+
   const [reserveShipping, setReserveShipping] = useState(false);
   const [reviewedServerQuote, setReviewedServerQuote] = useState<{
     quoteHash: string;
@@ -421,8 +486,14 @@ function ShoppingCartBillForm({}: Props) {
   // to undefined — hit the "gateway not available" guard and failed with a banner
   // the shopper never saw. Unknown means unknown: the quote re-checks eligibility
   // server-side and now reports SNAPPAY_INELIGIBLE with a specific message.
+  // Bank gateways only. The wallet is a tender the shopper ticks above, not a
+  // gateway they select — leaving it here would let it be auto-selected as the
+  // bank leg, for which there is no longer a card to show.
   const selectableGateways = useMemo(
-    () => availableGateways.filter((gw) => gw !== "snappay" || snappEligible !== false),
+    () =>
+      availableGateways.filter(
+        (gw) => gw !== "wallet" && (gw !== "snappay" || snappEligible !== false),
+      ),
     [availableGateways, snappEligible],
   );
 
@@ -430,6 +501,54 @@ function ShoppingCartBillForm({}: Props) {
   const discountToman = discountPreview?.discount ?? 0;
   const subtotalToman = totalPrice;
   const totalToman = Math.max(0, Math.round(subtotalToman - discountToman + shippingToman));
+
+  /**
+   * How much of this order the shopper has asked the wallet to cover, and which
+   * gateway that implies.
+   *
+   * Credit covering the whole total makes this a wallet-only payment, and the
+   * gateway is part of the hashed quote — so the gateway is resolved *before*
+   * quoting rather than discovered afterwards. One authoritative quote, one
+   * matching hash, and no round trip that could loop on "quote changed".
+   */
+  const walletContribution = useMemo(() => {
+    const walletToman = useWalletCredit
+      ? walletContributionToman(walletAvailableIrr, totalToman)
+      : 0;
+    return {
+      walletToman,
+      coversTotal: walletToman > 0 && walletToman === totalToman && totalToman > 0,
+    };
+  }, [totalToman, useWalletCredit, walletAvailableIrr]);
+
+  /**
+   * What SnappPay would actually be asked to finance.
+   *
+   * Wallet credit is a tender, not a discount, so `totalToman` does not move
+   * when the box is ticked — asking SnappPay about the total asked it about an
+   * amount it is never charged. A residual under SnappPay's floor came back
+   * "eligible" and failed at the quote, and a total over its ceiling hid the
+   * card even when the residual was inside it. The server has always checked
+   * `paymentAllocation.gatewayToman` (checkoutQuote and finalize both do), so
+   * the storefront was the only place the two amounts disagreed.
+   */
+  const snappayLegToman = Math.max(0, totalToman - walletContribution.walletToman);
+  /**
+   * Wallet + SnappPay is a merchant capability of its own, separate from wallet
+   * + bank, and it is reported in `splitGateways`. While it is off the server
+   * refuses the split with `WALLET_SPLIT_UNSUPPORTED_GATEWAY` before any
+   * eligibility call is made — so there is nothing to ask SnappPay about, and
+   * leaving the card selectable only buys the shopper a refusal at submit.
+   */
+  const snappaySplitUnsupported = Boolean(
+    walletContribution.walletToman > 0 &&
+      snappayLegToman > 0 &&
+      paymentCapabilities &&
+      // Optional: the storefront and the API deploy separately, and a backend
+      // that predates `splitGateways` must fail toward withholding the card,
+      // not toward a TypeError that takes the whole checkout page down.
+      paymentCapabilities.splitGateways?.includes("snappay") !== true,
+  );
   const addressContextKey = useMemo(
     () => buildAddressContextKey(shippingAddressContext),
     [shippingAddressContext],
@@ -451,7 +570,7 @@ function ShoppingCartBillForm({}: Props) {
 
   useEffect(() => {
     setReviewedServerQuote(null);
-  }, [cartSignature, discountPreviewKey, gateway, mergeChoice]);
+  }, [cartSignature, discountPreviewKey, gateway, mergeChoice, walletContribution.walletToman]);
 
   // Persist/restore discount code
   useEffect(() => {
@@ -521,10 +640,12 @@ function ShoppingCartBillForm({}: Props) {
 
     const loadAvailableGateways = async () => {
       try {
-        const gateways = await CartService.getAvailableGateways();
-        setAvailableGateways(gateways);
+        const options = await CartService.getCheckoutPaymentOptions();
+        setAvailableGateways(options.gateways);
+        setPaymentCapabilities(options.paymentCapabilities);
       } catch {
         setAvailableGateways([]);
+        setPaymentCapabilities(null);
       }
     };
 
@@ -533,8 +654,11 @@ function ShoppingCartBillForm({}: Props) {
 
   useEffect(() => {
     const hasStoredCheckout = Boolean(readCheckoutIdentity()?.attemptId);
+    // Credit covering the whole order needs no bank, so "no gateway is active"
+    // is not the shopper's problem in that case.
+    const needsBank = !walletContribution.coversTotal;
     setError((prev) =>
-      selectableGateways.length === 0 && !hasStoredCheckout
+      selectableGateways.length === 0 && !hasStoredCheckout && needsBank
         ? EMPTY_GATEWAYS_ERROR
         : prev === EMPTY_GATEWAYS_ERROR
           ? null
@@ -545,7 +669,7 @@ function ShoppingCartBillForm({}: Props) {
         ? selectableGateways[0]
         : prev,
     );
-  }, [selectableGateways]);
+  }, [selectableGateways, walletContribution.coversTotal]);
 
   // Refresh discount preview when code or shipping changes (stable deps).
   // Also re-validates a code restored from localStorage: if it is no longer
@@ -599,16 +723,17 @@ function ShoppingCartBillForm({}: Props) {
   }, [discountCode, discountPreview, discountPreviewKey, shippingId, shippingAddressContext]);
 
   // Check SnappPay as soon as authenticated checkout data can load, then refresh
-  // whenever an input to the payable checkout state changes. The backend accepts
-  // the current payable amount even before a delivery method has been selected.
+  // whenever an input to the *gateway leg* changes -- the cart, discount,
+  // shipping, address, and the wallet tender. The backend accepts the current
+  // payable amount even before a delivery method has been selected.
   //
   // A transient failure (network blip, momentary auth refresh, etc.) used to
   // leave SnappPay silently disqualified until the shopper happened to touch
-  // the cart/discount/shipping/address -- the only things that change
-  // `eligibilityKey` and trigger a re-check. A stale cart left untouched just
-  // sat disqualified forever with no visible error. Retrying with backoff
-  // here means the check self-heals on its own instead of depending on the
-  // shopper stumbling into a state change.
+  // one of those inputs -- the only things that change `eligibilityKey` and
+  // trigger a re-check. A stale cart left untouched just sat disqualified
+  // forever with no visible error. Retrying with backoff here means the check
+  // self-heals on its own instead of depending on the shopper stumbling into a
+  // state change.
   useEffect(() => {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -635,9 +760,26 @@ function ShoppingCartBillForm({}: Props) {
           discountCode || "no-discount",
           shippingId || "no-shipping",
           addressContextKey,
-          Math.round(totalToman),
+          // The gateway leg, not the total: ticking the wallet has to invalidate
+          // this key, and `totalToman` never changes when it does.
+          snappayLegToman,
+          snappaySplitUnsupported ? "split-unsupported" : "split-ok",
         ].join(":");
-        if (totalToman <= 0) {
+        // Not "unknown" but "no": an unsupported split is a settled answer, and
+        // `false` is what takes the card out of `selectableGateways` so the
+        // gateway effect moves the selection to a bank instead of leaving
+        // SnappPay picked and doomed.
+        if (snappaySplitUnsupported) {
+          snappEligibilitySeqRef.current += 1;
+          lastSnappEligibilityKeyRef.current = null;
+          setSnappEligible(false);
+          setSnappTitle(undefined);
+          setSnappDescription(undefined);
+          return;
+        }
+        // Zero total, or wallet credit covering all of it — either way there is
+        // no leg for SnappPay to finance. `PaymentGateway` renders wallet-only.
+        if (snappayLegToman <= 0) {
           snappEligibilitySeqRef.current += 1;
           lastSnappEligibilityKeyRef.current = null;
           setSnappEligible(undefined);
@@ -652,7 +794,7 @@ function ShoppingCartBillForm({}: Props) {
         requestSeq = snappEligibilitySeqRef.current + 1;
         snappEligibilitySeqRef.current = requestSeq;
         const res = await CartService.getSnappEligible({
-          amount: totalToman,
+          amount: snappayLegToman,
         });
         if (cancelled || snappEligibilitySeqRef.current !== requestSeq) return;
         lastSnappEligibilityKeyRef.current = eligibilityKey;
@@ -685,25 +827,59 @@ function ShoppingCartBillForm({}: Props) {
     cartSignature,
     discountCode,
     shippingId,
-    totalToman,
+    snappayLegToman,
+    snappaySplitUnsupported,
     mergeChoice,
   ]);
 
-  // Load wallet balance once
+  // Callable rather than inlined in the effect below, because a bfcache restore
+  // does not remount: a shopper returning from an abandoned gateway trip would
+  // otherwise keep the zero balance read before they left, and the contribution
+  // card hides itself entirely when nothing is spendable.
+  const refreshWalletBalance = React.useCallback(async () => {
+    if (!canLoadProtectedCheckoutData) return;
+    try {
+      // Name the attempt this checkout would replace, so credit held by the
+      // shopper's own abandoned attempt is counted as spendable here instead
+      // of locking them out of their balance until the reservation expires.
+      const res = await WalletService.getMyWallet(readCheckoutIdentity()?.attemptId);
+      if (res?.success && res.data) {
+        const balanceIrr = Number(res.data.balance || 0);
+        const heldIrr = Number(res.data.heldBalance || 0);
+        const availableIrr = Number(
+          res.data.availableBalance ?? Math.max(0, balanceIrr - heldIrr),
+        );
+        const reusableIrr = Number(res.data.reusableBalance || 0);
+        // Held by payments the shopper cannot reclaim — the only figure
+        // worth showing them, since the reusable part is already offered.
+        setWalletHeldIrr(Math.max(0, heldIrr - reusableIrr));
+        setWalletAvailableIrr(Math.max(0, availableIrr + reusableIrr));
+        setWalletHolds(Array.isArray(res.data.holds) ? res.data.holds : []);
+        return holdsAreReconciling(res.data.holds);
+      }
+    } catch {}
+    return false;
+  }, [canLoadProtectedCheckoutData]);
+
+  // Load wallet balance on mount
   useEffect(() => {
     if (!canLoadProtectedCheckoutData) {
-      setWalletBalanceIrr(0);
+      setWalletAvailableIrr(0);
+      setWalletHeldIrr(0);
+      setWalletHolds([]);
       return;
     }
-
-    const run = async () => {
-      try {
-        const res = await WalletService.getMyWallet();
-        if (res?.success && res.data) setWalletBalanceIrr(Number(res.data.balance || 0));
-      } catch {}
-    };
-    run();
-  }, [canLoadProtectedCheckoutData]);
+    // Reading the balance also nudges the backend to re-check the provider for
+    // any hold this customer has, so a shopper who returns to the cart shortly
+    // after abandoning a payment usually watches the credit come back without
+    // touching anything. Two short re-reads cover that window.
+    void (async () => {
+      const stillReconciling = await refreshWalletBalance();
+      if (!stillReconciling) return;
+      setTimeout(() => void refreshWalletBalance(), 3_000);
+      setTimeout(() => void refreshWalletBalance(), 8_000);
+    })();
+  }, [canLoadProtectedCheckoutData, refreshWalletBalance]);
 
   // Validate cart has items and total price on mount
   const EMPTY_GATEWAYS_ERROR = "در حال حاضر هیچ درگاه پرداختی فعال نیست";
@@ -969,10 +1145,13 @@ function ShoppingCartBillForm({}: Props) {
     const onPageShow = (event: PageTransitionEvent) => {
       if (!event.persisted) return;
       void reconcileCheckoutStock();
+      // The credit the shopper's abandoned attempt is holding becomes theirs to
+      // spend again the moment they come back, so re-read it here too.
+      void refreshWalletBalance();
     };
     window.addEventListener("pageshow", onPageShow);
     return () => window.removeEventListener("pageshow", onPageShow);
-  }, [reconcileCheckoutStock]);
+  }, [reconcileCheckoutStock, refreshWalletBalance]);
 
   const submitOrder = async (data: FormData, continuation?: CheckoutIdentity) => {
     setError(null);
@@ -1073,6 +1252,7 @@ function ShoppingCartBillForm({}: Props) {
 
     if (
       !continuationCandidate &&
+      !walletContribution.coversTotal &&
       (selectableGateways.length === 0 || !selectableGateways.includes(gateway))
     ) {
       failPayment("درگاه پرداخت انتخاب شده در دسترس نیست");
@@ -1155,6 +1335,27 @@ function ShoppingCartBillForm({}: Props) {
           analyticsCorrelationId: getAnalyticsCorrelationId(),
         } as never);
       } else {
+      // Wallet credit covering the whole total is a wallet-only payment. The
+      // gateway is part of the hashed quote, so it is decided here rather than
+      // renegotiated after the server answers.
+      const submittedGateway = walletContribution.coversTotal ? "wallet" : gateway;
+
+      // The wallet-only card covers the total from credit without the
+      // contribution toggle, so `walletToman` is 0 there while the checkout is
+      // entirely wallet-funded. Gating on the toggle alone would withhold the
+      // predecessor's id exactly when the server needs it — the quote would
+      // then see no reclaimable credit and refuse the card the UI just offered.
+      const spendsWalletCredit =
+        walletContribution.walletToman > 0 || submittedGateway === "wallet";
+
+      // The attempt this checkout replaces, so the server can hand its wallet
+      // credit and stock back. Named only when this checkout actually spends
+      // wallet credit: an ordinary bank checkout must never disturb another
+      // checkout the shopper still has open.
+      const supersedeCandidateId = spendsWalletCredit
+        ? readCheckoutIdentity()?.attemptId
+        : undefined;
+
       const addressPayload =
         isMergeMode || selectedAddressId
           ? undefined
@@ -1174,7 +1375,9 @@ function ShoppingCartBillForm({}: Props) {
         ? {
             reserveGroupId: activeReserve?.reserveGroupId,
             callbackURL: "/orders/payment-callback",
-            gateway,
+            gateway: submittedGateway,
+            walletAmountToman: walletContribution.walletToman || undefined,
+            supersedeAttemptId: supersedeCandidateId,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             note: data.notes || undefined,
@@ -1185,7 +1388,9 @@ function ShoppingCartBillForm({}: Props) {
             callbackURL: "/orders/payment-callback",
             addressId: selectedAddressId,
             addressPayload,
-            gateway,
+            gateway: submittedGateway,
+            walletAmountToman: walletContribution.walletToman || undefined,
+            supersedeAttemptId: supersedeCandidateId,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             reserveShipping: reserveShipping || undefined,
@@ -1227,14 +1432,21 @@ function ShoppingCartBillForm({}: Props) {
         quoteHash: quote.quoteHash,
         cartSignature,
         cartIsEmpty: false,
-        gateway,
+        gateway: submittedGateway,
       });
       checkoutAttemptId = resolvedAttempt.attemptId;
       cartResponse = await CartService.finalizeCart({
         ...finalizeData,
-        gateway: resolvedAttempt.gateway || gateway,
+        gateway: resolvedAttempt.gateway || submittedGateway,
         attemptId: checkoutAttemptId,
         quoteHash: resolvedAttempt.quoteHash,
+        // Resuming the same attempt supersedes nothing; only a freshly minted
+        // one replaces a predecessor, and it names the one it actually rotated
+        // over rather than whatever was in storage when the quote was asked.
+        supersedeAttemptId:
+          resolvedAttempt.continueExisting || !spendsWalletCredit
+            ? undefined
+            : resolvedAttempt.supersedesAttemptId,
         // Keep anonymous attribution ephemeral in the browser, but carry the
         // active opaque analytics identity into authoritative order creation.
         analyticsCorrelationId: getAnalyticsCorrelationId(),
@@ -1430,24 +1642,7 @@ function ShoppingCartBillForm({}: Props) {
           );
         }
 
-        // Handle different gateway redirect methods
-        if (gateway === "mellat" && cartResponse.refId) {
-          // Mellat requires POST with RefId (similar to wallet topup flow)
-          const form = document.createElement("form");
-          form.method = "POST";
-          form.action = cartResponse.redirectUrl;
-          form.style.display = "none";
-          const input = document.createElement("input");
-          input.type = "hidden";
-          input.name = "RefId";
-          input.value = String(cartResponse.refId);
-          form.appendChild(input);
-          document.body.appendChild(form);
-          form.submit();
-        } else if (gateway === "snappay" || gateway === "samankish" || gateway === "zarinpal") {
-          // These gateways use GET redirect with token/authority in URL
-          window.location.href = cartResponse.redirectUrl!;
-        } else if (gateway === "wallet") {
+        if (gateway === "wallet") {
           trackAnalyticsEvent({
             category: "checkout",
             action: "payment_completed",
@@ -1460,6 +1655,24 @@ function ShoppingCartBillForm({}: Props) {
           clearCheckoutIdentity();
           setSubmitOrderStep(SubmitOrderStep.Success);
           router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
+        } else {
+          const redirectMethod =
+            cartResponse.redirectMethod ||
+            (["mellat", "samankish"].includes(gateway) ? "POST" : "GET");
+          const fallbackFields: Record<string, string> | undefined =
+            redirectMethod === "POST" && cartResponse.refId
+              ? gateway === "samankish"
+                ? { Token: String(cartResponse.refId) }
+                : { RefId: String(cartResponse.refId) }
+              : undefined;
+          if (!submitPaymentHandoff({
+            redirectUrl: cartResponse.redirectUrl,
+            redirectMethod,
+            formFields: cartResponse.formFields || fallbackFields,
+            refId: cartResponse.refId,
+          })) {
+            failPayment("اطلاعات انتقال به درگاه کامل نیست. لطفاً دوباره تلاش کنید.");
+          }
         }
       } else {
         trackAnalyticsEvent({
@@ -1613,7 +1826,6 @@ function ShoppingCartBillForm({}: Props) {
 
   const onSubmit = (data: FormData) => submitOrder(data);
 
-  const requiredAmountIrr = totalToman * 10;
   const submitOrderStep = useAtomValue(submitOrderStepAtom);
 
   useEffect(() => {
@@ -1758,6 +1970,19 @@ function ShoppingCartBillForm({}: Props) {
                 discountCode={discountCode}
                 previewLoading={discountPreviewLoading}
                 addressContext={shippingAddressContext}
+                walletToman={walletContribution.walletToman}
+                walletTender={
+                  <WalletContribution
+                    totalToman={totalToman}
+                    availableIrr={walletAvailableIrr}
+                    heldIrr={walletHeldIrr}
+                    holds={walletHolds}
+                    capabilities={paymentCapabilities}
+                    enabled={useWalletCredit}
+                    onEnabledChange={setUseWalletCredit}
+                    disabled={isSubmitting}
+                  />
+                }
               />
               {/*
                 Opening a window is offered only when none is open. One active
@@ -1811,8 +2036,10 @@ function ShoppingCartBillForm({}: Props) {
             snappEligible={snappEligible}
             snappTitle={snappTitle}
             snappDescription={snappDescription}
-            walletBalanceIrr={walletBalanceIrr}
-            requiredAmountIrr={requiredAmountIrr}
+            walletCoversTotal={walletContribution.coversTotal}
+            snappBlockedByWalletSplit={
+              snappaySplitUnsupported && paymentCapabilities?.splitEnabled === true
+            }
           />
           <Controller
             name="acceptTerms"

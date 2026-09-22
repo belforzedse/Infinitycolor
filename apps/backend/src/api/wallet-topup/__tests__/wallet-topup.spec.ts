@@ -21,7 +21,7 @@ describe("Wallet Topup Operations", () => {
       const samanService = {
         requestPayment: jest.fn().mockResolvedValue({
           success: true,
-          redirectUrl: "https://sep.shaparak.ir/OnlinePG/SendToken?token=XYZ",
+          redirectUrl: "https://sep.shaparak.ir/OnlinePG/OnlinePG",
           token: "TOKEN-123",
           resNum: "1234567890123",
         }),

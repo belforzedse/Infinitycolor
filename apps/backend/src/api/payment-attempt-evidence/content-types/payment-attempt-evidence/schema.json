@@ -1,0 +1,110 @@
+{
+  "kind": "collectionType",
+  "collectionName": "payment_attempt_evidence",
+  "info": {
+    "singularName": "payment-attempt-evidence",
+    "pluralName": "payment-attempt-evidences",
+    "displayName": "Payment Attempt Evidence",
+    "description": "Append-only record of every provider-evidence recovery decision. Rows are immutable at the database level and are the source of truth for breakers, readiness and terminality."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": false
+    },
+    "content-type-builder": {
+      "visible": false
+    }
+  },
+  "attributes": {
+    "attemptId": {
+      "type": "integer",
+      "required": true
+    },
+    "orderId": {
+      "type": "integer"
+    },
+    "kind": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "not_found_read",
+        "not_found_confirmed",
+        "failed_then_not_found",
+        "registered_aged",
+        "registered_reverted",
+        "local_ttl",
+        "local_ceiling",
+        "provider_revert",
+        "provider_cancel",
+        "late_success_observed",
+        "late_success_reverted",
+        "late_success_review",
+        "followup"
+      ]
+    },
+    "mode": {
+      "type": "enumeration",
+      "required": true,
+      "enum": ["off", "shadow", "enforce"]
+    },
+    "decision": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "observed",
+        "would_release",
+        "released",
+        "would_revert",
+        "reverted",
+        "refused_breaker_count",
+        "refused_breaker_value",
+        "refused_single_cap",
+        "refused_prerequisite",
+        "refused_unproven",
+        "review"
+      ]
+    },
+    "providerHost": {
+      "type": "string"
+    },
+    "clientIdFingerprint": {
+      "type": "string"
+    },
+    "tokenFingerprint": {
+      "type": "string"
+    },
+    "generationSeq": {
+      "type": "integer"
+    },
+    "httpStatus": {
+      "type": "integer"
+    },
+    "providerCode": {
+      "type": "integer"
+    },
+    "providerStatus": {
+      "type": "string"
+    },
+    "callbackState": {
+      "type": "string"
+    },
+    "tokenAgeMs": {
+      "type": "biginteger"
+    },
+    "walletAmountIrr": {
+      "type": "biginteger"
+    },
+    "gatewayAmountIrr": {
+      "type": "biginteger"
+    },
+    "observedAt": {
+      "type": "datetime"
+    },
+    "details": {
+      "type": "json"
+    }
+  }
+}

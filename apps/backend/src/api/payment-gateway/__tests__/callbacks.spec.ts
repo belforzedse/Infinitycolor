@@ -1015,7 +1015,11 @@ describe("verifyPaymentHandler", () => {
       {
         id: 903,
         Status: "Pending",
-        Amount: 25_000,
+        // contract_transactions.Amount is IRR; the contract's own Amount is
+        // toman. The fixture previously used the toman figure for both, which
+        // masked the fact that verification must use the amount the gateway was
+        // actually asked for — the gateway leg recorded on this row.
+        Amount: 250_000,
         contract: {
           id: 803,
           Amount: 25_000,

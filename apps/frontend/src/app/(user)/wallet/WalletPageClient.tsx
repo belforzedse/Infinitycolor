@@ -8,11 +8,15 @@ import TransactionsIcon from "@/components/User/Icons/TransactionsIcon";
 import UserContainer from "@/components/layout/UserContainer";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
 import { AlertCircleIcon, CheckIcon, InfoIcon } from "lucide-react";
-import WalletService from "@/services/wallet";
+import WalletService, {
+  splitWalletLedger,
+  type WalletTopupOptions,
+  type WalletTopupStatus,
+} from "@/services/wallet";
+import type { WalletLedgerUiRow } from "@/services/wallet/ledger";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
-
-const WALLET_CHARGE_DISABLED = true;
+import { isWalletTopupUiEnabled } from "@/config/walletTopup";
 
 function StatusBanner({
   variant,
@@ -43,26 +47,27 @@ function StatusBanner({
   );
 }
 
-function ChargingDisabledNotice() {
+function ChargingDisabledNotice({ reason }: { reason: WalletTopupOptions["disabledReason"] }) {
   return (
     <div
       id="wallet-charge-disabled-notice"
       className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 md:text-base"
     >
       <InfoIcon className="mt-0.5 h-5 w-5 flex-shrink-0" />
-      <span className="font-semibold">در حال حاضر امکان شارژ کیف پول وجود ندارد.</span>
+      <span className="font-semibold">
+        {reason === "no_gateway"
+          ? "درگاه پرداختی برای شارژ کیف پول در دسترس نیست."
+          : "در حال حاضر امکان شارژ کیف پول وجود ندارد."}
+      </span>
     </div>
   );
 }
 
-interface Transaction {
-  date: string;
-  amount: string;
-}
-
 export default function WalletPage() {
+  const topupUiEnabled = isWalletTopupUiEnabled();
   const [isTransactionsHistoryOpen, setIsTransactionsHistoryOpen] = useState(false);
-  const [depositList, setDepositList] = useState<Transaction[]>([]);
+  const [depositList, setDepositList] = useState<WalletLedgerUiRow[]>([]);
+  const [purchaseList, setPurchaseList] = useState<WalletLedgerUiRow[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
   const searchParams = useSearchParams();
@@ -70,8 +75,101 @@ export default function WalletPage() {
   const status = searchParams.get("status");
   const reason = searchParams.get("reason");
   const code = searchParams.get("code");
+  const topupReference = searchParams.get("topup");
+
+  const [topupOptions, setTopupOptions] = useState<WalletTopupOptions | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(topupUiEnabled);
+  const [trackedTopup, setTrackedTopup] = useState<string | null>(topupReference);
+  const [topupStatus, setTopupStatus] = useState<WalletTopupStatus | null>(null);
+  const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
+
+  // What the store will accept is server state, not a constant in the bundle.
+  useEffect(() => {
+    // This UI-only kill switch deliberately does not affect callback/status
+    // handling below. Existing payments can still finish while new ones cannot
+    // be started from the storefront.
+    if (!topupUiEnabled) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const options = await WalletService.getTopupOptions();
+        if (!cancelled) setTopupOptions(options);
+      } catch {
+        // Treated as "not offered right now" rather than an error page: the
+        // rest of the wallet still works.
+        if (!cancelled) setTopupOptions(null);
+      } finally {
+        if (!cancelled) setOptionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [topupUiEnabled]);
+
+  /**
+   * The query string the provider sent the customer back with is display only.
+   * The real outcome is read from the server, and polled while it is still
+   * being established — a bank can confirm after the browser has returned.
+   */
+  useEffect(() => {
+    if (!trackedTopup) return undefined;
+    let cancelled = false;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      attempts += 1;
+      try {
+        const current = await WalletService.getTopupStatus(trackedTopup);
+        if (cancelled) return;
+        setTopupStatus(current);
+        if (current?.status === "Success") {
+          // No optimistic credit: the balance is re-read from the server.
+          setBalanceRefreshKey((key) => key + 1);
+          return;
+        }
+        if (current && ["Failed", "Cancelled"].includes(current.status)) return;
+      } catch {
+        if (cancelled) return;
+      }
+      if (attempts < 12) timer = setTimeout(poll, 2_500);
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [trackedTopup]);
 
   const statusConfig = useMemo(() => {
+    // Server-confirmed state wins over whatever the redirect claimed.
+    if (topupStatus?.status === "Success") {
+      return {
+        variant: "success" as const,
+        title: "شارژ کیف پول با موفقیت انجام شد",
+        description: "موجودی شما به‌روزرسانی شد. می‌توانید از آن در خرید بعدی استفاده کنید.",
+      };
+    }
+    if (topupStatus && ["Pending", "Processing", "Unknown"].includes(topupStatus.status)) {
+      return {
+        variant: "error" as const,
+        title: "پرداخت در حال بررسی است",
+        description: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
+      };
+    }
+    if (topupStatus && ["Failed", "Cancelled"].includes(topupStatus.status)) {
+      return {
+        variant: "error" as const,
+        title: "پرداخت ناموفق بود",
+        description: "پرداخت انجام نشد. مبلغی از حساب شما کسر نشده است.",
+      };
+    }
+
     if (status === "success") {
       return {
         variant: "success" as const,
@@ -113,7 +211,7 @@ export default function WalletPage() {
     }
 
     return null;
-  }, [status, reason, code]);
+  }, [status, reason, code, topupStatus]);
 
   useEffect(() => {
     if (statusConfig) {
@@ -122,6 +220,7 @@ export default function WalletPage() {
         params.delete("status");
         params.delete("reason");
         params.delete("code");
+        params.delete("topup");
         router.replace(`/wallet${params.toString() ? `?${params}` : ""}`);
       }, 6000);
       return () => clearTimeout(cleanup);
@@ -138,37 +237,17 @@ export default function WalletPage() {
         setTransactionsLoading(true);
         setTransactionsError(null);
 
-        // First get wallet to get wallet ID
-        const walletResponse = await WalletService.getMyWallet();
-        if (!walletResponse.success || !walletResponse.data?.id) {
-          throw new Error("Wallet not found");
-        }
-
-        const walletId = walletResponse.data.id;
-
-        // Fetch transactions
-        const transactionsResponse = await WalletService.getWalletTransactions(walletId);
-        const transactionsData = transactionsResponse.data || [];
-
-        // Transform transactions to match Transaction interface (only deposits)
-        const deposits: Transaction[] = [];
-
-        transactionsData.forEach((tx) => {
-          // Only include "Add" type transactions (deposits)
-          if (tx.Type === "Add") {
-            const transaction: Transaction = {
-              date: tx.Date ? new Date(tx.Date).toISOString().split("T")[0] : "",
-              amount: tx.Amount ? (tx.Amount / 10).toLocaleString() : "0", // Convert IRR to toman
-            };
-            deposits.push(transaction);
-          }
-        });
-
+        const entries = await WalletService.getMyWalletTransactions();
+        const { deposits, purchases } = splitWalletLedger(entries);
         setDepositList(deposits);
+        setPurchaseList(purchases);
       } catch (err: unknown) {
         console.error("Failed to fetch transactions:", err);
-        setTransactionsError(getUserFacingErrorMessage(err, "خطا در دریافت تراکنش‌ها"));
+        setTransactionsError(
+          getUserFacingErrorMessage(err, "خطا در دریافت تراکنش‌ها. دوباره تلاش کنید."),
+        );
         setDepositList([]);
+        setPurchaseList([]);
       } finally {
         setTransactionsLoading(false);
       }
@@ -186,7 +265,9 @@ export default function WalletPage() {
           description={statusConfig.description}
         />
       ) : null}
-      {WALLET_CHARGE_DISABLED ? <ChargingDisabledNotice /> : null}
+      {!optionsLoading && !topupOptions?.enabled ? (
+        <ChargingDisabledNotice reason={topupOptions?.disabledReason ?? "disabled"} />
+      ) : null}
       <StorefrontAccountShell contentClassName="flex flex-col gap-6">
         <AccountQuickLinks />
 
@@ -224,19 +305,16 @@ export default function WalletPage() {
                 <span>{transactionsError}</span>
               </div>
             ) : (
-              <TransactionsList depositList={depositList} />
+              <TransactionsList depositList={depositList} purchaseList={purchaseList} />
             )
           ) : (
             <>
-              <WalletBalance
-                chargeDisabled={WALLET_CHARGE_DISABLED}
-                onIncrease={() =>
-                  document
-                    .querySelector<HTMLElement>("[data-wallet-topup]")
-                    ?.scrollIntoView({ behavior: "smooth", block: "center" })
-                }
+              <WalletBalance key={balanceRefreshKey} />
+              <IncreaseBalance
+                options={topupOptions}
+                loading={optionsLoading}
+                onTopupStarted={setTrackedTopup}
               />
-              <IncreaseBalance chargeDisabled={WALLET_CHARGE_DISABLED} />
             </>
           )}
         </div>

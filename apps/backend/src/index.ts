@@ -32,6 +32,11 @@ import {
 import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
 import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
 import { ensurePaymentAttemptDatabaseInvariants } from "./api/payment-attempt/services/payment-attempt-database";
+import { ensureWalletDatabaseInvariants } from "./api/local-user-wallet/services/wallet-database";
+import { refreshWalletReadiness } from "./api/local-user-wallet/services/wallet-readiness";
+import { ensurePaymentAttemptEvidenceInvariants } from "./api/payment-attempt-evidence/services/evidence-database";
+import { evaluateRecoveryReadiness } from "./api/payment-gateway/services/snappay-recovery-mode";
+import { createMetricsRegistry } from "./utils/metrics";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
   mapLegacyFaqCategories,
@@ -282,6 +287,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "wallet.history.read": {
     "api::local-user-wallet": { "local-user-wallet": ["adminGetUserWalletHistory"] },
+    "api::wallet-topup": { "wallet-topup": ["adminReviewTopups"] },
   },
   "wallet.adjust": {
     "api::local-user-wallet": { "local-user-wallet": ["adminAdjustWallet"] },
@@ -595,10 +601,15 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
         ],
       },
       "api::local-user-wallet": {
-        "local-user-wallet": ["getCurrentUserWallet"],
+        "local-user-wallet": ["getCurrentUserWallet", "getCurrentUserWalletTransactions"],
       },
       "api::local-user-wallet-transaction": {
         "local-user-wallet-transaction": READ_ACTIONS,
+      },
+      // Top-up status and history are owner-scoped inside the handlers; the
+      // provider callback stays public because a bank carries no session.
+      "api::wallet-topup": {
+        "wallet-topup": ["topupOptions", "chargeIntent", "myTopups", "myTopup"],
       },
       "api::payment-gateway": {
         "payment-gateway": ["snappEligible", "availableGateways"],
@@ -1345,6 +1356,13 @@ export default {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }) {
+    // Every `incrementMetric` call in the jobs and sweeps has been a no-op
+    // because nothing ever assigned `strapi.metrics`. Install the registry
+    // first, so counters recorded during the rest of bootstrap are kept.
+    if (!(strapi as any).metrics) {
+      (strapi as any).metrics = createMetricsRegistry();
+    }
+
     const snappayHardenedInitiationEnabled = isSnappayHardenedInitiationEnabled();
     if (snappayHardenedInitiationEnabled) {
       assertSnappayRuntimeConfig();
@@ -1370,6 +1388,22 @@ export default {
       // Mellat is always active (no feature flag), so its own payment-attempt
       // provider-reference invariant runs unconditionally alongside SnappPay's.
       await ensurePaymentAttemptDatabaseInvariants(strapi as any);
+      // Wallet money paths: Strapi never turned the schemas' `unique: true` into
+      // database uniqueness, so install it here and then verify it. Holds and
+      // top-ups stay switched off unless every prerequisite verifies, however
+      // the env flags are set.
+      await ensureWalletDatabaseInvariants(strapi as any);
+      const walletReadiness = await refreshWalletReadiness(strapi as any);
+      strapi.log.info(
+        `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
+      );
+      // Append-only evidence for every provider-evidence recovery decision.
+      // Installed before the readiness evaluation below, because the presence of
+      // the immutability trigger is itself an ENFORCE prerequisite: a mutable
+      // evidence table would make a release unprovable after the fact and let a
+      // circuit breaker be talked out of tripping.
+      await ensurePaymentAttemptEvidenceInvariants(strapi as any);
+      await evaluateRecoveryReadiness(strapi as any);
       await ensureCategoryEditorialDatabaseInvariant(strapi);
       const issueReportStorage = await ensureIssueReportStorage(strapi);
       if (issueReportStorage.repaired) {

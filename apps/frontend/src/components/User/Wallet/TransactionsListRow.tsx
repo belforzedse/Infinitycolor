@@ -10,11 +10,11 @@ dayjs.extend(jalaliday as any);
 
 interface TransactionsListRowProps {
   date: string;
-  amount: string;
+  amountToman: number;
   type: "debit" | "deposit";
 }
 
-const TransactionsListRow = ({ type, date, amount }: TransactionsListRowProps) => {
+const TransactionsListRow = ({ type, date, amountToman }: TransactionsListRowProps) => {
   const formatDate = (dateStr: string) => {
     const today = dayjs().format("YYYY/MM/DD");
     const inputDate = dayjs(dateStr).format("YYYY/MM/DD");
@@ -43,7 +43,7 @@ const TransactionsListRow = ({ type, date, amount }: TransactionsListRowProps) =
           isDeposit ? "text-blue-600" : "text-red-600",
         )}
       >
-        <span className="text-base text-nowrap">{priceFormatter(Number(amount))} تومان</span>
+        <span className="text-base text-nowrap">{priceFormatter(amountToman)} تومان</span>
         {isDeposit ? <PlusIcon /> : <MinusIcon />}
       </div>
     </div>

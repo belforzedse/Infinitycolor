@@ -24,6 +24,10 @@ import controllerFactory from "../controllers/wallet-topup";
 type TopupRow = {
   id: number;
   SaleOrderId: string;
+  Gateway?: string;
+  /** The handle a callback is correlated against; Mellat's RefId. */
+  ProviderReference?: string | null;
+  VerificationReference?: string | null;
   RefId: string | null;
   Amount: number;
   Status: "Pending" | "Processing" | "Unknown" | "Success" | "Failed" | "Cancelled";
@@ -38,6 +42,14 @@ function createWorld(topups: TopupRow[]) {
 
   const applyStatusCas = (sql: string, bindings: any[]) => {
     if (!/UPDATE wallet_topups/.test(sql)) return null;
+    if (/SET verification_reference = \?/.test(sql)) {
+      const row = topups.find((topup) => topup.id === Number(bindings[1]));
+      if (!row || row.ProviderReference || !["Pending", "Processing", "Unknown"].includes(row.Status)) {
+        return { rows: [] };
+      }
+      row.VerificationReference = String(bindings[0]);
+      return { rows: [{ id: row.id }] };
+    }
     if (/status = 'Failed'/.test(sql)) {
       const row = topups.find((topup) => topup.id === Number(bindings[2]));
       const allowed = bindings.slice(3).map(String);
@@ -52,6 +64,13 @@ function createWorld(topups: TopupRow[]) {
       row.Status = "Processing";
       row.SaleReferenceId = String(bindings[0]);
       row.NextReconcileAt = bindings[1];
+      return { rows: [{ id: row.id }] };
+    }
+    if (/status = 'Processing'/.test(sql)) {
+      const row = topups.find((topup) => topup.id === Number(bindings[1]));
+      if (!row || row.Status !== "Pending") return { rows: [] };
+      row.Status = "Processing";
+      row.NextReconcileAt = bindings[0];
       return { rows: [{ id: row.id }] };
     }
     if (/status = 'Unknown'/.test(sql)) {
@@ -71,6 +90,15 @@ function createWorld(topups: TopupRow[]) {
     settleTransaction: jest.fn().mockResolvedValue({ success: true }),
     requestPayment: jest.fn(),
   };
+  const saman = {
+    verifyTransaction: jest.fn().mockResolvedValue({
+      success: true,
+      resultCode: 0,
+      transactionDetail: { AffectiveAmount: 1_000_000 },
+    }),
+    reverseTransaction: jest.fn(),
+    requestPayment: jest.fn(),
+  };
 
   const strapi: any = {
     log: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() },
@@ -85,6 +113,7 @@ function createWorld(topups: TopupRow[]) {
     },
     service: jest.fn((uid: string) => {
       if (uid === "api::payment-gateway.mellat-v3") return mellat;
+      if (uid === "api::payment-gateway.saman-kish") return saman;
       return undefined;
     }),
     config: { get: jest.fn((_key: string, fallback?: string) => fallback) },
@@ -109,10 +138,21 @@ function createWorld(topups: TopupRow[]) {
                         amount: row.Amount,
                         status: row.Status,
                         sale_reference_id: row.SaleReferenceId ?? null,
+                        provider_reference: row.ProviderReference ?? null,
+                        gateway: row.Gateway ?? "Mellat",
                       },
                     ],
                   }
                 : { rows: [] };
+            }
+            // Wallet credits now resolve the row through the owner link with a
+            // FOR UPDATE read so first use is race-safe; the fake mirrors that.
+            if (/FROM local_user_wallets w/.test(sql)) {
+              return {
+                rows: [
+                  { id: wallet.id, balance: wallet.Balance, held_balance: wallet.HeldBalance ?? 0 },
+                ],
+              };
             }
             if (/UPDATE local_user_wallets/.test(sql)) {
               wallet.Balance += Number(bindings[0]);
@@ -143,9 +183,25 @@ function createWorld(topups: TopupRow[]) {
         }
         if (uid === "api::wallet-topup.wallet-topup") {
           return {
-            findOne: jest.fn(async ({ where }: any) =>
-              topups.find((topup) => topup.id === Number(where.id)) || null,
-            ),
+            findOne: jest.fn(async ({ where }: any) => {
+              if (where?.id !== undefined) {
+                return topups.find((topup) => topup.id === Number(where.id)) || null;
+              }
+              if (where?.SaleOrderId !== undefined) {
+                return (
+                  topups.find((topup) => topup.SaleOrderId === String(where.SaleOrderId)) || null
+                );
+              }
+              if (where?.ProviderReference !== undefined) {
+                return (
+                  topups.find(
+                    (topup) =>
+                      String(topup.ProviderReference ?? "") === String(where.ProviderReference),
+                  ) || null
+                );
+              }
+              return null;
+            }),
             update: jest.fn(async ({ where, data }: any) => {
               const row = topups.find((topup) => topup.id === Number(where.id));
               if (row) Object.assign(row, data);
@@ -159,7 +215,7 @@ function createWorld(topups: TopupRow[]) {
   };
 
   const controller = (controllerFactory as any)({ strapi });
-  return { strapi, controller, topups, wallet, walletTransactions, mellat };
+  return { strapi, controller, topups, wallet, walletTransactions, mellat, saman };
 }
 
 const callbackCtx = (body: Record<string, unknown>) => ({
@@ -169,13 +225,33 @@ const callbackCtx = (body: Record<string, unknown>) => ({
 
 const lastRedirect = (ctx: any) => ctx.redirect.mock.calls.at(-1)?.[0] ?? "";
 
-const pendingTopup = (overrides: Partial<TopupRow> = {}): TopupRow => ({
-  id: 100,
-  SaleOrderId: "1700000000100",
-  RefId: "MELLAT-REF-100",
+const pendingTopup = (overrides: Partial<TopupRow> = {}): TopupRow => {
+  const row: TopupRow = {
+    id: 100,
+    SaleOrderId: "1700000000100",
+    Gateway: "Mellat",
+    RefId: "MELLAT-REF-100",
+    Amount: 1_000_000,
+    Status: "Pending",
+    user: { id: 7 },
+    ...overrides,
+  };
+  // Mellat's RefId is both the token that opens the gateway and the handle a
+  // callback is correlated against, so chargeIntent persists it as both.
+  if (row.ProviderReference === undefined) row.ProviderReference = row.RefId;
+  return row;
+};
+
+const pendingSamanTopup = (overrides: Partial<TopupRow> = {}): TopupRow => ({
+  id: 300,
+  SaleOrderId: "1700000000300",
+  Gateway: "SamanKish",
+  ProviderReference: null,
+  VerificationReference: null,
+  RefId: "SEP-INITIATION-TOKEN",
   Amount: 1_000_000,
   Status: "Pending",
-  user: { id: 7 },
+  user: { id: 8 },
   ...overrides,
 });
 
@@ -221,7 +297,11 @@ describe("wallet top-up failure callback correlation", () => {
       /UPDATE wallet_topups/.test(sql),
     );
     expect(casCalls).toHaveLength(1);
-    expect(lastRedirect(ctx)).toContain("status=failure&code=17");
+    // The wallet page re-reads the real state from the server, so the query
+    // string only has to name the intent and why it is being shown.
+    expect(lastRedirect(ctx)).toContain("status=failure");
+    expect(lastRedirect(ctx)).toContain("topup=1700000000100");
+    expect(lastRedirect(ctx)).toContain("reason=declined");
   });
 
   it("is idempotent under a duplicate failure callback", async () => {
@@ -291,8 +371,10 @@ describe("wallet top-up success callback", () => {
     expect(wallet.Balance).toBe(1_000_000);
     expect(walletTransactions).toHaveLength(1);
     expect(walletTransactions[0]).toMatchObject({
+      // Ledger keys are scoped by gateway now that more than one provider can
+      // fund a wallet, so two providers cannot collide on a shared format.
+      ReferenceId: "wallet-topup-Mellat-BANK-REF-1",
       Amount: 1_000_000,
-      ReferenceId: "BANK-REF-1",
       Cause: "Wallet Topup",
     });
     expect(lastRedirect(ctx)).toContain("status=success");
@@ -377,6 +459,11 @@ describe("wallet top-up success callback", () => {
               }],
             };
           }
+          if (/FROM local_user_wallets w/.test(sql)) {
+            return {
+              rows: [{ id: world.wallet.id, balance: world.wallet.Balance, held_balance: 0 }],
+            };
+          }
           if (/UPDATE local_user_wallets/.test(sql)) {
             world.wallet.Balance += Number(bindings[0]);
             return { rows: [{ id: world.wallet.id, balance: world.wallet.Balance }] };
@@ -415,3 +502,60 @@ describe("wallet top-up success callback", () => {
     expect(lastRedirect(ctx)).toContain("status=pending");
   });
 });
+
+describe("Saman wallet callback hardening", () => {
+  it("does not mutate an intent from an unverified browser failure", async () => {
+    const { controller, topups, saman } = createWorld([pendingSamanTopup()]);
+
+    const ctx = callbackCtx({
+      State: "FAILED",
+      RefNum: "FORGED-FAILURE-REFNUM",
+      ResNum: "1700000000300",
+    });
+    await controller.paymentCallback(ctx);
+
+    expect(topupStatus(topups[0])).toBe("Pending");
+    expect(topups[0].VerificationReference).toBeNull();
+    expect(saman.verifyTransaction).not.toHaveBeenCalled();
+    expect(lastRedirect(ctx)).toContain("status=pending");
+  });
+
+  it("keeps a failed RefNum as an untrusted candidate instead of binding it", async () => {
+    const world = createWorld([pendingSamanTopup()]);
+    world.saman.verifyTransaction.mockResolvedValue({
+      success: false,
+      resultCode: -2,
+      resultDescription: "not found",
+    });
+
+    await world.controller.paymentCallback(callbackCtx({
+      State: "OK",
+      RefNum: "FORGED-REFNUM",
+      ResNum: "1700000000300",
+    }));
+
+    expect(world.topups[0].ProviderReference).toBeNull();
+    expect(world.topups[0].VerificationReference).toBe("FORGED-REFNUM");
+    expect(world.topups[0].Status).toBe("Unknown");
+    expect(world.wallet.Balance).toBe(0);
+  });
+
+  it("binds a verified RefNum in the same transaction that credits the wallet", async () => {
+    const world = createWorld([pendingSamanTopup()]);
+
+    await world.controller.paymentCallback(callbackCtx({
+      State: "OK",
+      RefNum: "VERIFIED-REFNUM",
+      ResNum: "1700000000300",
+    }));
+
+    expect(world.topups[0].ProviderReference).toBe("VERIFIED-REFNUM");
+    expect(world.topups[0].Status).toBe("Success");
+    expect(world.wallet.Balance).toBe(1_000_000);
+    expect(world.walletTransactions).toHaveLength(1);
+  });
+});
+
+function topupStatus(row: TopupRow) {
+  return row.Status;
+}

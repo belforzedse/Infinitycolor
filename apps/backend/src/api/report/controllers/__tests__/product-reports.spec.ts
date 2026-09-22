@@ -27,6 +27,18 @@ jest.mock("../../services/umami", () => ({
   getUmamiRealtimeReport: jest.fn(),
 }));
 
+const workbookCalls: any[] = [];
+jest.mock("../../../../utils/styledWorkbook", () => {
+  const actual = jest.requireActual("../../../../utils/styledWorkbook");
+  return {
+    ...actual,
+    buildStyledWorkbook: (opts: any) => {
+      workbookCalls.push(opts);
+      return actual.buildStyledWorkbook(opts);
+    },
+  };
+});
+
 jest.mock("../../services/product-analytics", () => {
   const actual = jest.requireActual("../../services/product-analytics");
   return { ...actual, resolveJoins: (...args: any[]) => resolveJoinsMock(...args) };
@@ -39,6 +51,17 @@ const STUB_JOINS = {
   contractToTx: "JOIN contract_transactions ct ON true",
   variationToProduct: "JOIN products p ON true",
   variationToStock: "LEFT JOIN product_stocks ps ON true",
+  variationToColor: {
+    join: "LEFT JOIN product_variation_colors pvc ON true",
+    titleExpr: "pvc.title",
+    codeExpr: "pvc.color_code",
+  },
+  variationToSize: { join: "LEFT JOIN product_variation_sizes pvs ON true", titleExpr: "pvs.title" },
+  variationToModel: {
+    join: "LEFT JOIN product_variation_models pvm ON true",
+    titleExpr: "pvm.title",
+  },
+  hasVariationAttributes: true,
   productToCategory: { join: "LEFT JOIN product_categories pc ON true", titleExpr: "pc.title" },
   orderToShipping: "LEFT JOIN shippings s ON true",
 };
@@ -75,6 +98,45 @@ const PERF_ROW = {
   orders_count: "3",
   current_stock: "2",
   reserved_stock: "1",
+  variant_color: "مشکی",
+  variant_color_code: "#000000",
+  variant_size: "L",
+  variant_model: null,
+  variant_other: "جنس: نخی",
+  product_total_stock: "40",
+  product_variation_count: "5",
+};
+
+const VARIATION_ROW = {
+  variation_id: 7,
+  sku: "SKU-1",
+  units: "4",
+  gross: "1000000",
+  discounts: "0",
+  refunds_irr: "0",
+  current_stock: "6",
+  reserved_stock: "0",
+  variant_color: "مشکی",
+  variant_color_code: "#000000",
+  variant_size: "L",
+  variant_model: null,
+  variant_other: "جنس: نخی",
+  variant_attrs: [{ name: "جنس", value: "نخی", colorCode: null, projection: "None" }],
+};
+const INVENTORY_ROW = {
+  variation_id: 7,
+  product_id: 3,
+  sku: "SKU-1",
+  product_title: "کفش",
+  current_stock: "6",
+  reserved_stock: "0",
+  units_sold: "4",
+  gross: "1000000",
+  variant_color: "مشکی",
+  variant_color_code: "#000000",
+  variant_size: "L",
+  variant_model: null,
+  variant_other: null,
 };
 
 function rawRouter(sql: string) {
@@ -122,6 +184,13 @@ function rawRouter(sql: string) {
     };
   }
   if (sql.includes("COUNT(*)::bigint AS total")) return { rows: [{ total: "1" }] };
+  // Specific branches first: the perf/export SQL also contains the literal
+  // "agg.product_variation_id" that the catch-all below keys on.
+  if (sql.includes("SELECT p.id, p.title, p.slug")) {
+    return { rows: [{ id: 3, title: "کفش", slug: "kafsh", product_type: "Variable", status: "Active", category_title: "کفش‌ها" }] };
+  }
+  if (sql.includes("LEFT JOIN agg a ON a.product_variation_id")) return { rows: [VARIATION_ROW] };
+  if (sql.includes("LEFT JOIN sales s ON s.pvid")) return { rows: [INVENTORY_ROW] };
   if (sql.includes("agg.product_variation_id")) return { rows: [PERF_ROW] };
   return { rows: [] };
 }
@@ -382,6 +451,89 @@ describe("product reporting endpoints", () => {
       expect(ctx.body.data[0].stockStatus).toBe("low");
     });
 
+    it("performance surfaces the variant identity and the product-level stock", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: {} });
+      await controller.productPerformance(ctx);
+
+      const row = ctx.body.data[0];
+      // The reported defect: this row is ONE variation, so currentStock is that
+      // variation's alone. The product total has to travel beside it.
+      expect(row.currentStock).toBe(2);
+      expect(row.productTotalStock).toBe(40);
+      expect(row.productVariationCount).toBe(5);
+      expect(row.variantColor).toBe("مشکی");
+      expect(row.variantSize).toBe("L");
+      expect(row.variantLabel).toBe("مشکی / L");
+      expect(row.variantOther).toBe("جنس: نخی");
+    });
+
+    it("adds the variant and stock-total CTEs without shifting any binding", async () => {
+      // knex numbers placeholders by textual position, so a stray `?` in either
+      // new CTE would silently re-point every filter parameter. Both the data and
+      // the count query are checked: they share one `core` string.
+      const controller = loadController();
+      const raw = (global as any).strapi.db.connection.raw as jest.Mock;
+
+      await controller.productPerformance(createCtx({ query: {} }));
+      const perfCalls = raw.mock.calls.filter(([sql]: [string]) =>
+        sql.includes("product_stock_totals AS ("),
+      );
+      expect(perfCalls.length).toBe(2);
+      for (const [sql, params] of perfCalls) {
+        expect(sql).toContain("variation_attributes AS (");
+        expect(params).toHaveLength(2);
+      }
+
+      raw.mockClear();
+      await controller.productPerformance(createCtx({ query: { q: "g01170" } }));
+      const [, filtered] = raw.mock.calls.find(([sql]: [string]) =>
+        sql.includes("product_stock_totals AS ("),
+      )!;
+      expect(filtered).toEqual([
+        expect.anything(),
+        expect.anything(),
+        "%g01170%",
+        "%g01170%",
+      ]);
+    });
+
+    it("keeps the detail query at three bindings after adding the attribute CTE", async () => {
+      const controller = loadController();
+      const raw = (global as any).strapi.db.connection.raw as jest.Mock;
+      raw.mockClear();
+
+      await controller.productDetail(createCtx({ query: { productId: "3" } }));
+      const [, params] = raw.mock.calls.find(([sql]: [string]) =>
+        sql.includes("LEFT JOIN agg a ON a.product_variation_id"),
+      )!;
+      // [start, end, productId] — the attribute CTE must add none of its own.
+      expect(params).toHaveLength(3);
+      expect(params[2]).toBe(3);
+    });
+
+    it("detail reports each variation's colour and size, not just its SKU", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: { productId: "3" } });
+      await controller.productDetail(ctx);
+
+      const variation = ctx.body.data.variations[0];
+      expect(variation.sku).toBe("SKU-1");
+      expect(variation.variantLabel).toBe("مشکی / L");
+      expect(variation.variantAttrs).toEqual([
+        { name: "جنس", value: "نخی", colorCode: null, projection: "None" },
+      ]);
+    });
+
+    it("inventory reports colour and size alongside the SKU", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: {} });
+      await controller.productInventory(ctx);
+
+      const row = [...ctx.body.data.fastMoving, ...ctx.body.data.lowStock][0];
+      expect(row.variantLabel).toBe("مشکی / L");
+    });
+
     it("performance clamps an oversized pageSize", async () => {
       const controller = loadController();
       const ctx = createCtx({ query: { pageSize: "99999" } });
@@ -402,6 +554,26 @@ describe("product reporting endpoints", () => {
       expect(Buffer.isBuffer(ctx.body)).toBe(true);
       // .xlsx is a ZIP archive → starts with the "PK" magic bytes.
       expect(ctx.body.slice(0, 2).toString("latin1")).toBe("PK");
+    });
+
+    it("keeps the export's header and data rows index-aligned", async () => {
+      // The headers and the row mapping are two hand-maintained arrays. This change
+      // inserts into both; a mismatch silently files every value under the wrong
+      // column, which no other assertion would catch.
+      workbookCalls.length = 0;
+      const controller = loadController();
+      await controller.productExport(createCtx({ query: {} }));
+
+      const { columns, rows } = workbookCalls[0];
+      expect(rows[0]).toHaveLength(columns.length);
+      expect(columns.map((c: any) => c.header)).toEqual(
+        expect.arrayContaining(["رنگ", "سایز", "مدل", "سایر ویژگی‌ها", "موجودی کل محصول"]),
+      );
+      // The old bare «موجودی» header is what made a variant's stock read as the
+      // product's; it must not survive anywhere in the sheet.
+      expect(columns.map((c: any) => c.header)).not.toContain("موجودی");
+      expect(rows[0][columns.findIndex((c: any) => c.header === "رنگ")]).toBe("مشکی");
+      expect(rows[0][columns.findIndex((c: any) => c.header === "موجودی کل محصول")]).toBe(40);
     });
 
     it("detail requires a productId", async () => {

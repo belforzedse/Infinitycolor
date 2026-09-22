@@ -465,4 +465,275 @@ describe("PaymentResultPageClient", () => {
       screen.queryByText("نتیجه پرداخت قابل دریافت نیست. اتصال خود را بررسی و دوباره تلاش کنید."),
     ).not.toBeInTheDocument();
   });
+
+  describe("reclaiming wallet credit held by an abandoned SnappPay checkout", () => {
+    const heldSnappay = (overrides: Record<string, unknown> = {}) =>
+      response({
+        paymentStatus: "Redirected",
+        paymentGateway: "SnappPay",
+        status: "Paying",
+        transactionId: "SNYPZQPHIA",
+        amountIrr: 12_000_000,
+        walletAmountIrr: 3_500_000,
+        gatewayAmountIrr: 8_500_000,
+        walletHoldStatus: "Active",
+        ...overrides,
+      });
+
+    const releaseButtonName = "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود";
+
+    it("hides the release button for gateways whose abandon call does nothing", async () => {
+      // The server answers `not_applicable` for every gateway but SnappPay, so
+      // a button here would silently fail.
+      getStatus.mockResolvedValue(
+        heldSnappay({ paymentGateway: "ZarinPal", transactionId: "ZP-1" }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.queryByRole("button", { name: releaseButtonName })).toBeNull();
+    });
+
+    it("holds the button back for two minutes after the credit is committed", async () => {
+      // A shopper redirected seconds ago is probably still paying; offering to
+      // cancel their payment right then invites them to cancel one they are
+      // about to complete.
+      getStatus.mockResolvedValue(
+        heldSnappay({ walletHeldAt: new Date(Date.now() - 30_000).toISOString() }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.queryByRole("button", { name: releaseButtonName })).toBeNull();
+    });
+
+    it("offers it again once the grace period has passed", async () => {
+      getStatus.mockResolvedValue(
+        heldSnappay({ walletHeldAt: new Date(Date.now() - 5 * 60_000).toISOString() }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.getByRole("button", { name: releaseButtonName })).toBeVisible();
+    });
+
+    it("hides it in the states where the shopper's claim cannot authorize anything", async () => {
+      getStatus.mockResolvedValue(heldSnappay({ walletHoldState: "reconciling" }));
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.queryByRole("button", { name: releaseButtonName })).toBeNull();
+    });
+
+    it("promises an automatic release without requiring any action", async () => {
+      getStatus.mockResolvedValue(
+        heldSnappay({ walletHoldBoundAt: new Date(Date.now() + 60 * 60_000).toISOString() }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      // The customer-visible contract of the whole recovery feature.
+      expect(screen.getByText(/به‌طور خودکار آزاد می‌شود/)).toBeVisible();
+      expect(screen.getByText(/نیازی به هیچ اقدامی نیست/)).toBeVisible();
+    });
+
+    it("offers the release and sends the shopper's claim once", async () => {
+      // The shopper opened SnappPay with a wallet split and came back without
+      // paying. Their credit is committed to a checkout only the provider can
+      // resolve, so the page has to let them say they did not pay.
+      getStatus.mockResolvedValue(heldSnappay());
+      reconcile.mockResolvedValue(heldSnappay({ walletReleaseRequested: true }));
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.getByText(/از کیف پول شما کنار گذاشته شده/)).toBeVisible();
+
+      const release = screen.getByRole("button", {
+        name: "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود",
+      });
+      fireEvent.click(release);
+
+      await waitFor(() =>
+        expect(reconcile).toHaveBeenCalledWith(42, {
+          skipGlobalLoader: true,
+          abandon: true,
+        }),
+      );
+      // The release is queued, not immediate, so the action is replaced by a
+      // confirmation rather than left clickable.
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", {
+            name: "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود",
+          }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(screen.getByText(/درخواست لغو ثبت شد/)).toBeVisible();
+    });
+
+    it("confirms the credit is spendable again once the hold is gone", async () => {
+      getStatus.mockResolvedValue(heldSnappay());
+      reconcile.mockResolvedValue(
+        heldSnappay({
+          paymentStatus: "Cancelled",
+          status: "Cancelled",
+          walletHoldStatus: "Released",
+          walletReleaseRequested: true,
+          canRetry: true,
+        }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      fireEvent.click(
+        screen.getByRole("button", { name: "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود" }),
+      );
+
+      expect(await screen.findByText(/اعتبار کیف پول شما آزاد شد/)).toBeVisible();
+    });
+
+    it("never offers to unwind a checkout whose credit is already spent", async () => {
+      // Captured means the payment landed and the wallet leg was debited. There
+      // is nothing held to give back, and the order is real.
+      getStatus.mockResolvedValue(
+        heldSnappay({
+          paymentStatus: "Succeeded",
+          status: "Started",
+          isPaid: true,
+          walletHoldStatus: "Captured",
+        }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByText("پرداخت با موفقیت ثبت شد")).toBeVisible();
+      expect(
+        screen.queryByRole("button", {
+          name: "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود",
+        }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("never offers it for a checkout that holds no wallet credit", async () => {
+      getStatus.mockResolvedValue(
+        response({
+          paymentStatus: "Redirected",
+          paymentGateway: "SnappPay",
+          status: "Paying",
+          walletHoldStatus: "None",
+        }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(
+        screen.queryByRole("button", {
+          name: "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود",
+        }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/از کیف پول شما کنار گذاشته شده/)).not.toBeInTheDocument();
+    });
+
+    it("does not promise a release the server refused to record", async () => {
+      // The shopper's own OK return reached the backend first, so the claim was
+      // dropped and no cancellation is coming. Telling them their credit is
+      // being released would be a lie, and the payment is still settling.
+      getStatus.mockResolvedValue(heldSnappay());
+      reconcile.mockResolvedValue(heldSnappay({ walletReleaseRequested: false }));
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      fireEvent.click(
+        screen.getByRole("button", { name: "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود" }),
+      );
+
+      expect(await screen.findByText(/این سفارش لغو نشد/)).toBeVisible();
+      expect(screen.queryByText(/درخواست لغو ثبت شد/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/اعتبار کیف پول شما آزاد شد/)).not.toBeInTheDocument();
+    });
+
+    it("keeps the claim off the quiet polls", async () => {
+      // The page reconciles on a timer. Those must stay plain status reads —
+      // only the shopper pressing the button is a statement about what they did.
+      getStatus.mockResolvedValue(heldSnappay());
+      reconcile.mockResolvedValue(heldSnappay());
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      await waitFor(() => expect(reconcile).toHaveBeenCalled());
+      for (const call of reconcile.mock.calls) {
+        expect(call[1]?.abandon).toBeUndefined();
+      }
+    });
+  });
+
+  describe("unresolved SnappPay credit, no wallet leg", () => {
+    const strandedSnappay = (overrides: Record<string, unknown> = {}) =>
+      response({
+        paymentStatus: "Unknown",
+        paymentGateway: "SnappPay",
+        status: "Paying",
+        ...overrides,
+      });
+
+    it("says the credit is reserved rather than charged", async () => {
+      getStatus.mockResolvedValue(strandedSnappay());
+      reconcile.mockResolvedValue(strandedSnappay());
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.getByText("پرداخت شما کامل نشد")).toBeVisible();
+      expect(
+        screen.getByText(/اعتبار اسنپ‌پی شما فقط رزرو شده و مبلغی از شما کسر نشده است/),
+      ).toBeVisible();
+      expect(screen.queryByText("نتیجه پرداخت هنوز مشخص نیست")).not.toBeInTheDocument();
+    });
+
+    it("leaves a still-completing Pending payment on the checking copy", async () => {
+      // Reconciliation rescues this cohort at roughly T+2m, so promising an
+      // hour-long credit lock here would be alarming and usually wrong.
+      const pending = strandedSnappay({ paymentStatus: "Pending" });
+      getStatus.mockResolvedValue(pending);
+      reconcile.mockResolvedValue(pending);
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.getByText("در حال بررسی نتیجه پرداخت")).toBeVisible();
+      expect(screen.queryByText("پرداخت شما کامل نشد")).not.toBeInTheDocument();
+    });
+
+    it("leaves the wallet-split case to its own copy and release action", async () => {
+      const held = strandedSnappay({ walletHoldStatus: "Active", walletAmountIrr: 500_000 });
+      getStatus.mockResolvedValue(held);
+      reconcile.mockResolvedValue(held);
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.queryByText("پرداخت شما کامل نشد")).not.toBeInTheDocument();
+    });
+
+    it("does not override a non-SnappPay gateway", async () => {
+      const mellat = strandedSnappay({ paymentGateway: "Mellat" });
+      getStatus.mockResolvedValue(mellat);
+      reconcile.mockResolvedValue(mellat);
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.getByText("نتیجه پرداخت هنوز مشخص نیست")).toBeVisible();
+    });
+  });
 });

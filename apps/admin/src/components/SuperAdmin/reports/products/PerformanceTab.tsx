@@ -17,6 +17,16 @@ import {
   type ProductReportFilters,
 } from "@/services/super-admin/reports/products";
 
+/** A variant attribute cell: truncated, with the full value on hover. */
+function VariantCell({ value, width = "max-w-[120px]" }: { value: string | null; width?: string }) {
+  if (!value) return <span className="text-neutral-300">—</span>;
+  return (
+    <span className={`block ${width} truncate text-neutral-700`} title={value}>
+      {value}
+    </span>
+  );
+}
+
 const STATUS_FA: Record<string, string> = {
   in: "موجود",
   low: "کم",
@@ -36,13 +46,22 @@ const SORT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "units:desc", label: "بیشترین تعداد" },
   { value: "orders:desc", label: "بیشترین سفارش" },
   { value: "refunds:desc", label: "بیشترین مرجوعی" },
-  { value: "stock:asc", label: "کمترین موجودی" },
+  { value: "stock:asc", label: "کمترین موجودی متغیر" },
+  { value: "productStock:asc", label: "کمترین موجودی کل محصول" },
   { value: "title:asc", label: "نام (الفبا)" },
 ];
 
+// Order here IS the column order (see the filter+map at the end of `columns`).
+// The variant columns sit next to the title because they identify the row, and
+// `productStock` sits next to `stock` because the whole point is to see a
+// variation's stock and its product's total side by side.
 const ALL_COLUMNS = [
   "image",
   "title",
+  "color",
+  "size",
+  "model",
+  "otherAttrs",
   "type",
   "category",
   "units",
@@ -53,11 +72,18 @@ const ALL_COLUMNS = [
   "orders",
   "avgPrice",
   "stock",
+  "productStock",
 ] as const;
 type ColKey = (typeof ALL_COLUMNS)[number];
 const COL_LABELS: Record<ColKey, string> = {
   image: "تصویر",
   title: "محصول",
+  // Not «متغیر»: the adjacent `type` column renders that exact word for
+  // Variable products, so it would read as the same thing.
+  color: "رنگ",
+  size: "سایز",
+  model: "مدل",
+  otherAttrs: "سایر ویژگی‌ها",
   type: "نوع",
   category: "دسته",
   units: "تعداد",
@@ -67,7 +93,8 @@ const COL_LABELS: Record<ColKey, string> = {
   refunds: "مرجوعی",
   orders: "سفارش",
   avgPrice: "قیمت میانگین",
-  stock: "موجودی",
+  stock: "موجودی متغیر",
+  productStock: "موجودی کل محصول",
 };
 
 export default function PerformanceTab({
@@ -137,6 +164,26 @@ export default function PerformanceTab({
           </button>
         ),
       },
+      color: {
+        id: "color",
+        header: COL_LABELS.color,
+        cell: ({ row }) => <VariantCell value={row.original.variantColor} />,
+      },
+      size: {
+        id: "size",
+        header: COL_LABELS.size,
+        cell: ({ row }) => <VariantCell value={row.original.variantSize} />,
+      },
+      model: {
+        id: "model",
+        header: COL_LABELS.model,
+        cell: ({ row }) => <VariantCell value={row.original.variantModel} />,
+      },
+      otherAttrs: {
+        id: "otherAttrs",
+        header: COL_LABELS.otherAttrs,
+        cell: ({ row }) => <VariantCell value={row.original.variantOther} width="max-w-[180px]" />,
+      },
       type: {
         id: "type",
         header: COL_LABELS.type,
@@ -198,6 +245,27 @@ export default function PerformanceTab({
             {STATUS_FA[row.original.stockStatus]}
           </span>
         ),
+      },
+      productStock: {
+        id: "productStock",
+        header: COL_LABELS.productStock,
+        // Deliberately unstyled by stockStatus: that status is derived from the
+        // VARIANT's count, so tinting the product total with it would repeat the
+        // very mix-up this column exists to fix.
+        cell: ({ row }) =>
+          row.original.productTotalStock === null ? (
+            "—"
+          ) : (
+            <span className="text-neutral-700">
+              {faNum(row.original.productTotalStock)}
+              {row.original.productVariationCount ? (
+                <span className="text-xs text-neutral-400">
+                  {" "}
+                  ({faNum(row.original.productVariationCount)} متغیر)
+                </span>
+              ) : null}
+            </span>
+          ),
       },
     };
     return ALL_COLUMNS.filter((c) => !hidden.has(c)).map((c) => defs[c]);

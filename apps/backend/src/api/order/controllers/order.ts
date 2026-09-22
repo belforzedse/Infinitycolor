@@ -13,6 +13,7 @@ import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
 import { adminCancelOrderHandler } from "./helpers/adminCancel";
 import { adminPaymentOperationHandler } from "./helpers/adminPaymentOperation";
 import { adminVoidBarcodeHandler } from "./helpers/adminVoidBarcode";
+import { adminWalletRecoveryHandler } from "./helpers/adminWalletRecovery";
 import { adminUpdateAddressHandler } from "./helpers/adminUpdateAddress";
 import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
@@ -25,6 +26,7 @@ import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/ad
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { adminTransitionOrderHandler } from "./helpers/adminTransition";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import { walletHoldStateFor } from "../../payment-attempt/services/payment-attempt-outcome";
 import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import {
@@ -484,6 +486,11 @@ export default factories.createCoreController(
       return adminPaymentOperationHandler(strapi as any, ctx);
     },
 
+    /** Read-only operator diagnostics for an order's wallet hold and recovery. */
+    async adminWalletRecovery(ctx) {
+      return adminWalletRecoveryHandler(strapi as any, ctx);
+    },
+
     async adminTransition(ctx) {
       return adminTransitionOrderHandler(strapi as any, ctx);
     },
@@ -494,6 +501,26 @@ export default factories.createCoreController(
 
     async decrementStockManual(ctx) {
       return decrementManualOrderStockHandler(strapi as any, ctx);
+    },
+
+    /**
+     * Latest moment a live hold can still be held.
+     *
+     * SnappPay attempts are bounded by the reservation deferral ceiling, which
+     * the expiry sweep enforces from the attempt's own age; every other gateway
+     * is bounded by the order's reservation expiry. Read from the environment
+     * at call time, exactly as the job does.
+     */
+    walletHoldBoundAt(attempt: any, order: any): string | undefined {
+      if (isSnappayGatewayValue(attempt?.Gateway || order?.PaymentGateway)) {
+        if (!attempt?.createdAt) return undefined;
+        const hours = Number(process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS || 1.5);
+        const ceilingMs = (Number.isFinite(hours) && hours > 0 ? hours : 1.5) * 60 * 60 * 1000;
+        return new Date(new Date(attempt.createdAt).getTime() + ceilingMs).toISOString();
+      }
+      return order?.ReservedUntil
+        ? new Date(order.ReservedUntil).toISOString()
+        : undefined;
     },
 
     async checkPaymentStatus(ctx) {
@@ -587,7 +614,23 @@ export default factories.createCoreController(
             shippingMethodTitle,
             transactionId,
             attemptId: attempt?.attemptId,
+            // `amountIrr` stays the order total. The two legs are reported
+            // alongside it so the result page can show what came from the
+            // wallet and what the bank carried.
             amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
+            // Whether this checkout still has the shopper's credit committed.
+            // "Active" is what makes the abandon action worth offering; once it
+            // is Released or Captured the money is no longer in limbo.
+            walletHoldStatus: attempt?.WalletHoldStatus || undefined,
+            ...(Number(attempt?.WalletAmount || 0) > 0
+              ? {
+                  walletAmountIrr: Number(attempt.WalletAmount),
+                  gatewayAmountIrr: Number(
+                    attempt.GatewayAmount ??
+                      Number(attempt.Amount || 0) - Number(attempt.WalletAmount),
+                  ),
+                }
+              : {}),
             canRetry,
             nextAction: isPaid ? "view_order" : canRetry ? "return_to_cart" : "recheck",
             failureCode:
@@ -597,6 +640,22 @@ export default factories.createCoreController(
               attempt?.failureMessage ||
               (isSnappay && !attempt ? "SnappPay payment requires reconciliation" : undefined),
             lastReconciledAt: attempt?.lastReconciledAt || undefined,
+            // How the hold reads to the shopper right now, and the latest
+            // moment it can still be held. The result page needs both to
+            // promise an automatic release honestly instead of implying one it
+            // cannot bound.
+            ...(attempt?.WalletHoldStatus === "Active"
+              ? {
+                  walletHoldState: walletHoldStateFor(attempt),
+                  walletHoldBoundAt: this.walletHoldBoundAt(attempt, order),
+                  // The result page holds the manual release button back for a
+                  // couple of minutes after the hold is taken, so a shopper who
+                  // is still mid-payment is not offered a way to cancel it.
+                  walletHeldAt: attempt.WalletHeldAt
+                    ? new Date(attempt.WalletHeldAt).toISOString()
+                    : undefined,
+                }
+              : {}),
             authoritative: !isSnappay || Boolean(attempt),
           },
         };
@@ -610,23 +669,64 @@ export default factories.createCoreController(
       }
     },
 
+    /**
+     * Re-read the provider for one of the caller's own orders.
+     *
+     * `abandon: true` additionally carries the shopper's statement that they did
+     * not pay — the signal that lets a SnappPay attempt stuck at `REGISTERED`
+     * be reverted, which is what hands a wallet split's held credit back. It is
+     * only a claim: the worker still reads `GET /status` first and honours the
+     * payment if SnappPay says it happened. Everything else about the request is
+     * unchanged, so the response is the same payment status as a plain poll.
+     */
     async reconcilePayment(ctx) {
       const orderId = Number(ctx.params?.id);
       const userId = await resolveCustomerTargetUserId(ctx, strapi as any);
       if (!userId) return;
       const order = await strapi.db.query("api::order.order").findOne({
         where: { id: orderId, user: { id: userId } },
-        fields: ["id", "PaymentGateway"],
+        fields: ["id", "Status", "PaymentGateway"],
       } as any);
       if (!order) {
         return ctx.forbidden("You do not have permission to access this order");
       }
+      const body = (ctx.request as any)?.body || {};
+      // A shopper can only abandon a checkout that is still trying to pay. An
+      // order already carrying goods is never unwound from the storefront.
+      const abandon =
+        (body?.abandon === true || body?.abandon === "true") &&
+        String(order.Status) === "Paying";
+      let walletReleaseRequested = false;
+      // Named so the storefront can tell "we queued your release" from "there
+      // is nothing this button can do here". Only SnappPay has a provider call
+      // behind the shopper's claim; a bank-gateway checkout is resolved by its
+      // callback or by the reservation timeout, and offering a button that
+      // silently does nothing is worse than not offering one.
+      let walletReleaseReason: "queued" | "already_resolved" | "not_applicable" =
+        "not_applicable";
       if (isSnappayGatewayValue(order.PaymentGateway)) {
-        await strapi
-          .service("api::payment-gateway.snappay-orchestrator")
-          .reconcileOrder(orderId, "customer_request");
+        const orchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
+        if (abandon) {
+          strapi.log.info("Customer abandoned a SnappPay checkout", { orderId, userId });
+          const outcome = await orchestrator.abandonOrder(
+            orderId,
+            "customer_abandoned_checkout",
+          );
+          walletReleaseRequested = outcome?.accepted === true;
+          walletReleaseReason = walletReleaseRequested ? "queued" : "already_resolved";
+        } else {
+          await orchestrator.reconcileOrder(orderId, "customer_request");
+        }
       }
-      return this.checkPaymentStatus(ctx);
+      const response = await this.checkPaymentStatus(ctx);
+      // Only ever reported for a claim that was actually recorded. A shopper
+      // whose own `OK` return already reached us is told nothing about a
+      // release, because none was queued and none is coming.
+      if (abandon && response?.data) {
+        response.data.walletReleaseRequested = walletReleaseRequested;
+        response.data.walletReleaseReason = walletReleaseReason;
+      }
+      return response;
     },
 
     async getActiveReserve(ctx) {

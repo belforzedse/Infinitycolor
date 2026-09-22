@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import AttributeChip from "./AttributeChip";
 
 type Props = {
   models: {
@@ -57,7 +58,7 @@ export default function PDPHeroInfoModel(props: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      <span className="text-xl text-foreground-primary">انتخاب مدل</span>
+      <span className="text-xl text-neutral-800">انتخاب مدل</span>
 
       <div
         className="flex flex-wrap gap-2"
@@ -68,44 +69,19 @@ export default function PDPHeroInfoModel(props: Props) {
           const isSelected = model.id === selectedModel;
           const isDisabled = actualDisabledModelIds.includes(model.id);
           return (
-            <button
-              type="button"
+            <AttributeChip
               key={model.id}
-              onClick={() => handleModelClick(model.id)}
-              data-testid="pdp-model-option"
-              data-model-id={model.id}
-              data-model-title={model.title}
-              className="btn-model"
-              style={
-                isDisabled
-                  ? {
-                      opacity: 0.5,
-                      textDecoration: "line-through",
-                      cursor: "not-allowed",
-                      padding: "4px 12px",
-                      borderRadius: 9999,
-                    }
-                  : isSelected
-                    ? {
-                        backgroundColor: "#0f172a",
-                        color: "#fff",
-                        padding: "4px 12px",
-                        borderRadius: 9999,
-                      }
-                    : {
-                        padding: "4px 12px",
-                        borderRadius: 9999,
-                        border: "1px solid #e2e8f0",
-                      }
-              }
+              title={model.title}
+              selected={isSelected}
               disabled={isDisabled}
-              aria-disabled={isDisabled}
-              aria-label={isDisabled ? `مدل ${model.title} ناموجود` : `انتخاب مدل ${model.title}`}
-              aria-pressed={isSelected ? "true" : "false"}
-              title={isDisabled ? "ناموجود" : model.title}
-            >
-              {model.title}
-            </button>
+              onClick={() => handleModelClick(model.id)}
+              ariaLabel={isDisabled ? `مدل ${model.title} ناموجود` : `انتخاب مدل ${model.title}`}
+              dataProps={{
+                "data-testid": "pdp-model-option",
+                "data-model-id": model.id,
+                "data-model-title": model.title,
+              }}
+            />
           );
         })}
       </div>

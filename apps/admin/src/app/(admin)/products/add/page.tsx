@@ -50,6 +50,7 @@ export default function AddProductsPage() {
     minute: defaultScheduleParts.minute,
   });
   const [saving, setSaving] = useState(false);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
 
   // Redirect editors away from product pages
   useEditorRedirect();
@@ -65,8 +66,19 @@ export default function AddProductsPage() {
     fetchAllCategories();
   }, [fetchAllCategories]);
 
+  useEffect(() => {
+    if (productData.product_main_category) {
+      setCategoryError(null);
+    }
+  }, [productData.product_main_category]);
+
   const handleCreateProduct = async (publicationAction?: ProductPublicationAction) => {
     if (saving) return;
+    if (!productData.product_main_category) {
+      setCategoryError("انتخاب دسته‌بندی اصلی الزامی است");
+      toast.error("لطفاً دسته‌بندی اصلی محصول را انتخاب کنید");
+      return;
+    }
     setSaving(true);
     let createdProductId: number | null = null;
     try {
@@ -133,7 +145,7 @@ export default function AddProductsPage() {
     <div className="flex w-full grid-cols-3 flex-col gap-4 pb-28 lg:grid">
       <div className="order-2 flex flex-col gap-4 lg:order-1">
         <IndexPhotoUploader />
-        <SetDetails />
+        <SetDetails categoryError={categoryError} />
         {scheduleOpen ? (
           <section dir="rtl" className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
             <h3 className="text-sm font-semibold text-slate-900">زمان‌بندی انتشار</h3>

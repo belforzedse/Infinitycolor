@@ -5,6 +5,7 @@ import {
   findFirstActiveGeneralDiscount,
 } from "./discounts";
 import { computeTotals } from "./financials";
+import type { PaymentAllocation } from "./payment-allocation";
 
 export type CheckoutQuoteInput = {
   cart?: any;
@@ -13,6 +14,13 @@ export type CheckoutQuoteInput = {
   discountCode?: string | null;
   gateway?: string | null;
   reserveGroupId?: string | null;
+  /**
+   * Resolves how the total is split between wallet credit and the gateway.
+   *
+   * Passed as a callback because the split depends on the total this function
+   * computes, while the hash must cover the split. One pass, no re-quote.
+   */
+  resolveAllocation?: (totalToman: number) => PaymentAllocation;
 };
 
 export type CheckoutQuote = {
@@ -31,6 +39,7 @@ export type CheckoutQuote = {
     quantity: number;
     unitPrice: number;
   }>;
+  paymentAllocation?: PaymentAllocation;
 };
 
 const normalizeGateway = (value: unknown) =>
@@ -105,6 +114,10 @@ export async function createCheckoutQuote(
 
   discountAmount = Math.min(subtotal, Math.max(0, Math.round(discountAmount)));
   const financialSummary = computeTotals(subtotal, discountAmount, shipping);
+  const paymentAllocation = input.resolveAllocation
+    ? input.resolveAllocation(financialSummary.total)
+    : undefined;
+  const walletAmount = Math.max(0, Math.round(Number(paymentAllocation?.walletToman || 0)));
   const canonicalQuote = {
     version: 1,
     userId: Number(userId),
@@ -117,6 +130,12 @@ export async function createCheckoutQuote(
     gateway: normalizeGateway(input.gateway),
     reserveGroupId: String(input.reserveGroupId || "").trim() || null,
     total: financialSummary.total,
+    // Only present when wallet credit is actually being tendered. A checkout
+    // with no wallet leg must hash exactly as it did before split payment
+    // existed, or every shopper mid-checkout across a deploy would be told
+    // their quote changed and every live attempt's stored hash would stop
+    // matching.
+    ...(walletAmount > 0 ? { walletAmount } : {}),
   };
   const quoteHash = `sha256:${createHash("sha256")
     .update(JSON.stringify(canonicalQuote))
@@ -128,5 +147,6 @@ export async function createCheckoutQuote(
     discountCode,
     appliedGeneralDiscountId,
     lineItems,
+    ...(paymentAllocation ? { paymentAllocation } : {}),
   };
 }

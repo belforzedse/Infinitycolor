@@ -61,7 +61,32 @@ export interface ProductTrends {
 
 export type StockStatus = "in" | "low" | "out" | "unknown";
 
-export interface ProductPerformanceRow {
+/** One attribute of a variation, e.g. { name: "جنس", value: "نخی" }. */
+export interface VariantAttribute {
+  name: string | null;
+  value: string | null;
+  colorCode: string | null;
+  projection: "None" | "Color" | "Size" | "Model";
+}
+
+/**
+ * What distinguishes one variation of a product from another.
+ *
+ * Reports are variant-grained, and a bare SKU code is not readable — staff could
+ * not tell two rows of the same product apart. `variantOther` carries the custom
+ * attributes that have no dedicated column.
+ */
+export interface VariantIdentity {
+  variantColor: string | null;
+  variantColorCode: string | null;
+  variantSize: string | null;
+  variantModel: string | null;
+  variantOther: string | null;
+  /** `رنگ / سایز / مدل`, blanks dropped; null when the variation has no attributes. */
+  variantLabel: string | null;
+}
+
+export interface ProductPerformanceRow extends VariantIdentity {
   productVariationId: number | null;
   productId: number | null;
   productTitle: string;
@@ -75,10 +100,14 @@ export interface ProductPerformanceRow {
   net: number;
   ordersCount: number;
   avgPrice: number;
+  /** THIS variation's stock — not the product's. See `productTotalStock`. */
   currentStock: number | null;
   reservedStock: number | null;
   stockStatus: StockStatus;
   imageUrl?: string | null;
+  /** Stock summed across every variation of the product. Null if it has none. */
+  productTotalStock: number | null;
+  productVariationCount: number | null;
 }
 
 export interface ProductPerformanceResult {
@@ -148,7 +177,8 @@ export interface ProductReportFilters {
   stockStatus?: "in" | "low" | "out" | "";
 }
 
-export interface VariationDetailRow {
+export interface VariationDetailRow extends VariantIdentity {
+  variantAttrs: VariantAttribute[];
   variationId: number;
   sku: string;
   units: number;
@@ -184,7 +214,7 @@ export interface ProductDetail {
   trend: Array<{ bucket: string; gross: number; units: number }>;
 }
 
-export interface InventoryRow {
+export interface InventoryRow extends VariantIdentity {
   variationId: number;
   productId: number;
   sku: string;

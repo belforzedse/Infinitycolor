@@ -33,7 +33,58 @@ export interface CheckoutQuoteRequest {
   reserveShipping?: boolean;
   /** Attach this order to an existing window; shipping is then charged at 0. */
   reserveGroupId?: string;
+  /**
+   * How much of the total to pay from wallet credit, in toman. Wallet credit is
+   * a tender, not a discount: the total is unchanged and the gateway is asked
+   * for `total - walletAmountToman`. Omit or send 0 for an ordinary checkout.
+   */
+  walletAmountToman?: number;
+  /**
+   * The customer's own earlier checkout attempt that this request replaces.
+   * Only that named attempt's wallet hold may be reused, and only when it is
+   * still `Created`. Never used to touch any other checkout.
+   */
+  supersedeAttemptId?: string;
 }
+
+/**
+ * What the server will accept for this checkout. Always present on a quote, so
+ * the storefront never has to infer a feature flag from a missing field.
+ */
+export interface PaymentCapabilities {
+  walletEnabled: boolean;
+  splitEnabled: boolean;
+  splitDisabledReason: "disabled" | "unsupported_gateway" | null;
+  splitGateways: CheckoutGatewayCode[];
+  gatewayMinimumsToman: Record<string, number>;
+}
+
+/** The agreed `total = wallet + gateway` split for one checkout. */
+export interface PaymentAllocation {
+  totalToman: number;
+  walletToman: number;
+  gatewayToman: number;
+  walletBalanceToman: number;
+  walletHeldToman: number;
+  walletAvailableToman: number;
+  walletReusableToman: number;
+  /** The gateway the client must submit; `wallet` when credit covers the total. */
+  requiredGateway: CheckoutGatewayCode;
+}
+
+/** Wallet-specific checkout failures the storefront maps to Persian copy. */
+export type WalletCheckoutErrorCode =
+  | "WALLET_AMOUNT_INVALID"
+  | "WALLET_INSUFFICIENT_AVAILABLE"
+  | "WALLET_FUNDS_HELD_BY_PENDING_PAYMENT"
+  | "WALLET_COVERS_TOTAL"
+  | "WALLET_RESIDUAL_BELOW_GATEWAY_MINIMUM"
+  | "WALLET_SPLIT_DISABLED"
+  | "WALLET_SPLIT_UNSUPPORTED_GATEWAY"
+  | "WALLET_DISABLED"
+  | "WALLET_UNAVAILABLE"
+  | "WALLET_HOLD_NOT_ACTIVE"
+  | "ORDER_HAS_ACTIVE_WALLET_HOLD";
 
 /** Lifecycle of a combined-shipping group. Owned by the backend. */
 export type ReserveGroupState =
@@ -100,6 +151,8 @@ export interface CheckoutQuoteResponse {
   gatewayAvailable?: boolean;
   gatewayNotice?: string;
   gatewayErrorCode?: string;
+  paymentAllocation?: PaymentAllocation;
+  paymentCapabilities?: PaymentCapabilities;
 }
 
 export interface FinalizeCartRequest extends CheckoutQuoteRequest {
@@ -115,6 +168,8 @@ export interface FinalizeCartResponse {
   contractId?: number;
   redirectUrl?: string;
   refId?: string;
+  redirectMethod?: "GET" | "POST";
+  formFields?: Record<string, string>;
   financialSummary?: FinancialSummary;
   requestId?: string;
   attemptId?: string;
@@ -124,6 +179,7 @@ export interface FinalizeCartResponse {
   reserveExpiresAt?: string;
   /** True when this order joined an existing window rather than opening one. */
   reserveAttached?: boolean;
+  paymentAllocation?: PaymentAllocation;
 }
 
 export interface OrderPaymentStatusResponse {
@@ -138,6 +194,47 @@ export interface OrderPaymentStatusResponse {
   paymentStatus?: PaymentAttemptStatus;
   attemptId?: string;
   amountIrr?: number;
+  /** Wallet leg of a split payment, in IRR. Absent for an ordinary checkout. */
+  walletAmountIrr?: number;
+  /** What the gateway was asked to charge, in IRR. Equals `amountIrr` when no wallet was used. */
+  gatewayAmountIrr?: number;
+  /**
+   * Lifecycle of this checkout's wallet credit. `Active` means the money is
+   * still committed to this payment and cannot be spent anywhere else, which is
+   * the only state where offering to abandon the checkout makes sense.
+   */
+  walletHoldStatus?: "None" | "DirectDebit" | "Active" | "Captured" | "Released";
+  /**
+   * How a live hold reads right now.
+   *
+   * `reclaimable` is the only state where the shopper's own claim can move
+   * anything: their statement that they did not pay is consulted only for a
+   * token the provider still reports as uncommitted. Everywhere else the
+   * release is the worker's job and offering a button would promise something
+   * the server would refuse.
+   */
+  walletHoldState?: "reconciling" | "awaiting_provider" | "reclaimable" | "releasing";
+  /** When the credit was committed, ISO. Used to hold the manual button back. */
+  walletHeldAt?: string;
+  /**
+   * Latest moment this hold can still be held: the SnappPay reservation
+   * ceiling, or the order's reservation expiry for a bank gateway. Lets the
+   * page promise an automatic release *and* say by when.
+   */
+  walletHoldBoundAt?: string;
+  /**
+   * Only present on a reconcile sent with `abandon: true`. `false` means the
+   * claim was refused — the attempt is already resolved, or the shopper's own
+   * successful return reached us first and outranks it — so no release is
+   * coming and the page must not promise one.
+   */
+  walletReleaseRequested?: boolean;
+  /**
+   * Why `walletReleaseRequested` is what it is. `not_applicable` means this
+   * gateway has no provider call behind the claim, so the button is not offered
+   * at all rather than offered and silently ignored.
+   */
+  walletReleaseReason?: "queued" | "already_resolved" | "not_applicable";
   canRetry?: boolean;
   nextAction?: "view_order" | "return_to_cart" | "recheck";
   failureCode?: string;

@@ -49,6 +49,42 @@
       "required": true,
       "min": "0"
     },
+    "WalletAmount": {
+      "type": "biginteger",
+      "min": "0"
+    },
+    "GatewayAmount": {
+      "type": "biginteger",
+      "min": "0"
+    },
+    "WalletHoldStatus": {
+      "type": "enumeration",
+      "enum": [
+        "None",
+        "DirectDebit",
+        "Active",
+        "Captured",
+        "Released"
+      ]
+    },
+    "WalletHeldAt": {
+      "type": "datetime"
+    },
+    "WalletCapturedAt": {
+      "type": "datetime"
+    },
+    "WalletReleasedAt": {
+      "type": "datetime"
+    },
+    "WalletReleaseReason": {
+      "type": "string"
+    },
+    "WalletLedgerReferenceId": {
+      "type": "string"
+    },
+    "SupersedesAttemptId": {
+      "type": "string"
+    },
     "providerReference": {
       "type": "string"
     },

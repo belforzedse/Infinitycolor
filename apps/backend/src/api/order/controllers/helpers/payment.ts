@@ -17,6 +17,14 @@ import {
   GatewayLocalSettlementError,
 } from "./gatewaySettlement";
 import { snappayCallbackHandler } from "./snappayCallback";
+import {
+  hashSnappayCallbackNonce,
+  isValidSnappayCallbackNonce,
+} from "../../../payment-gateway/services/snappay-security";
+import {
+  gatewayExpectedAmountIrr,
+  readPaymentAttemptLegs,
+} from "../../../payment-attempt/services/payment-legs";
 const getFrontendBaseUrl = () =>
   (process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "https://infinitycolor.co").replace(
     /\/$/,
@@ -249,6 +257,39 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
   }
 }
 
+/**
+ * Resolves the order behind a SnappPay return that carried only the nonce.
+ *
+ * `callbackNonceHash` is a plain SHA-256 of the nonce, so this is a direct
+ * lookup rather than a scan. Returns null when nothing matches — an unknown or
+ * replayed nonce must fall through to the uncorrelated path, never guess an
+ * order.
+ */
+async function findSnappayOrderIdByCallbackNonce(
+  strapi: Strapi,
+  nonce: string,
+): Promise<number | null> {
+  try {
+    const attempt: any = await strapi.db
+      .query("api::payment-attempt.payment-attempt")
+      .findOne({
+        where: {
+          Gateway: "snappay",
+          callbackNonceHash: hashSnappayCallbackNonce(nonce),
+        },
+        populate: { order: true },
+        orderBy: { createdAt: "desc" },
+      } as any);
+    const orderId = Number(attempt?.order?.id);
+    return Number.isFinite(orderId) && orderId > 0 ? orderId : null;
+  } catch (error: any) {
+    strapi.log.error("Failed to correlate SnappPay callback nonce", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+    return null;
+  }
+}
+
 async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
   // Mellat returns: ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId
   const { ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId } = (ctx.request as any).body || {};
@@ -340,6 +381,46 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
         samanResNumInput !== undefined,
     );
     if (!hasProviderIdentifyingFields) {
+      // SnappPay returns a sizeable share of shoppers to the merchant with a
+      // bare GET carrying only the per-attempt nonce and none of the documented
+      // POST fields (transactionId/state/amount). That is not a result we may
+      // act on — the workbook requires POST — but the nonce identifies the
+      // attempt exactly, and the customer is sitting on the result page right
+      // now. Dropping it as "uncorrelated" sent them to /payment/result with no
+      // orderId, so the page had nothing to poll and showed a dead generic
+      // failure while the attempt stayed unresolved for the rest of the
+      // provider's window. Correlate it, kick an immediate reconcile, and hand
+      // the page the order id. The provider state still comes only from
+      // GET /status — this request is never treated as a payment result.
+      const snappayNonce = String(q.nonce ?? "").trim();
+      if (isValidSnappayCallbackNonce(snappayNonce)) {
+        const correlatedOrderId = await findSnappayOrderIdByCallbackNonce(
+          strapi,
+          snappayNonce,
+        );
+        if (correlatedOrderId) {
+          strapi.log.warn("SnappPay return carried no result fields; reconciling by nonce", {
+            method: String((ctx.request as any).method || ctx.method || ""),
+            orderId: correlatedOrderId,
+          });
+          try {
+            await strapi
+              .service("api::payment-gateway.snappay-orchestrator")
+              .reconcileOrder(correlatedOrderId, "return_without_result");
+          } catch (error: any) {
+            strapi.log.error("Failed to reconcile SnappPay return correlated by nonce", {
+              orderId: correlatedOrderId,
+              error: String(error?.message || error).slice(0, 300),
+            });
+          }
+          return ctx.redirect(
+            buildPaymentResultRedirectUrl("issue", {
+              orderId: correlatedOrderId,
+              code: "return_without_result",
+            }),
+          );
+        }
+      }
       strapi.log.info("Payment callback had no provider identifying fields; ignoring", {
         method: String((ctx.request as any).method || ctx.method || ""),
       });
@@ -467,11 +548,16 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
         );
       }
 
+      // ZarinPal verifies against the amount it was asked for. That is the
+      // gateway leg: the Pending contract transaction was created with exactly
+      // that figure at initiation, so it is the authoritative source here.
+      // Falling back to the contract total would fail verification for every
+      // split payment.
       const amountToman = Math.round(
         Number(
-          orderEntity?.contract?.Amount ??
-            contractTransaction?.contract?.Amount ??
-            Number(contractTransaction.Amount || 0) / 10,
+          Number(contractTransaction.Amount || 0) > 0
+            ? Number(contractTransaction.Amount) / 10
+            : (orderEntity?.contract?.Amount ?? contractTransaction?.contract?.Amount ?? 0),
         ),
       );
 
@@ -979,8 +1065,10 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
       const detail = verifyResult.transactionDetail || verifyResult.TransactionDetail || {};
       const affectiveAmountRaw = detail?.AffectiveAmount ?? detail?.OrginalAmount;
       const affectiveAmountIrr = Number(affectiveAmountRaw);
-      const expectedAmountIrr =
-        attempt?.Amount != null ? Number(attempt.Amount) : contractAmountIrr;
+      // The bank was asked for the gateway leg, which is the whole total unless
+      // the customer paid part of it from their wallet. Comparing against the
+      // total would reverse every split payment as an amount mismatch.
+      const expectedAmountIrr = gatewayExpectedAmountIrr(attempt, contractAmountIrr);
 
       // Amount check: this, together with the ResNum anchor above and a
       // genuine provider verify success, is what actually closes Finding A
@@ -1075,7 +1163,7 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
             external_id: refNum,
           },
           contractTransactionData: {
-            Amount: affectiveAmountIrr || contractAmountIrr,
+            Amount: affectiveAmountIrr || expectedAmountIrr,
             TrackId: refNum,
             external_id: resNumRaw || contractTransaction?.external_id || refNum,
             external_source: "SamanKish",
@@ -1548,7 +1636,12 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
               external_id: String(SaleReferenceId ?? RefId ?? ""),
             },
             contractTransactionData: {
-              Amount: Math.round(Number(settlementContract?.Amount || 0)) * 10,
+              // The gateway leg: what Mellat actually settled. With no wallet
+              // tender this is the contract total, exactly as before.
+              Amount: gatewayExpectedAmountIrr(
+                attempt,
+                Math.round(Number(settlementContract?.Amount || 0)) * 10,
+              ),
               TrackId: String(RefId ?? SaleReferenceId ?? ""),
               external_id: String(SaleReferenceId ?? RefId ?? ""),
               external_source: "Mellat",

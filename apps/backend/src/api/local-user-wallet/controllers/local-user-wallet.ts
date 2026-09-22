@@ -12,12 +12,60 @@ import { writeAuditEvent } from "../../../audit/writer";
 import { getAuditContext } from "../../../utils/audit-context";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { requireCapability } from "../../../utils/adminAuthorization";
+import {
+  listActiveHoldsForUser,
+  readWalletAvailability,
+  type ActiveWalletHold,
+} from "../services/wallet-holds";
+import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
+
+/**
+ * Nudges reconciliation for the SnappPay holds the shopper is looking at.
+ *
+ * Fire-and-forget by construction: the response must not wait on a queue, and a
+ * failed nudge is invisible because the worker's own ladder still runs. This is
+ * what makes the wallet page self-healing — a customer who opens it after an
+ * abandoned checkout moves their own recovery forward just by looking.
+ */
+function pullReconcileForHolds(strapi: any, holds: ActiveWalletHold[]): void {
+  const pullable = holds.filter(
+    (hold) =>
+      isSnappayGatewayValue(hold.gateway) &&
+      (hold.state === "reconciling" || hold.state === "reclaimable"),
+  );
+  if (pullable.length === 0) return;
+  const orchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
+  if (typeof orchestrator?.pullForHold !== "function") return;
+  for (const hold of pullable.slice(0, 3)) {
+    void Promise.resolve(orchestrator.pullForHold(hold.paymentAttemptId)).catch(() => undefined);
+  }
+}
 
 const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const WALLET_TRANSACTION_UID =
   "api::local-user-wallet-transaction.local-user-wallet-transaction";
 
+const LEDGER_SELECT = [
+  "id",
+  "Amount",
+  "Type",
+  "Date",
+  "Cause",
+  "Note",
+  "ReferenceId",
+  "createdAt",
+] as const;
+
 const rialToToman = (irr: number) => Math.round(Number(irr || 0) / 10);
+
+const parseLedgerPage = (query: { page?: unknown; pageSize?: unknown } | undefined) => {
+  const page = Math.max(1, Number.parseInt(String(query?.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(
+    100,
+    Math.max(1, Number.parseInt(String(query?.pageSize ?? "25"), 10) || 25),
+  );
+  return { page, pageSize };
+};
 
 /** Read a user's current wallet balance (IRR) without creating a wallet. */
 async function readBalanceIrr(strapi: any, userId: number): Promise<number> {
@@ -49,15 +97,55 @@ export default factories.createCoreController(
             success: true,
             data: {
               balance: 0,
+              heldBalance: 0,
+              availableBalance: 0,
+              reusableBalance: 0,
             },
           });
+        }
+
+        // The checkout may name an earlier attempt of this customer's whose
+        // hold it is about to replace. That money is theirs to spend again, so
+        // report it — otherwise a shopper whose own abandoned attempt holds the
+        // whole balance is locked out of their credit until the reservation
+        // expires. Ownership is re-checked against the attempt itself.
+        const reusableAttemptId = String(
+          (ctx.query as any)?.reusableAttemptId || "",
+        ).trim();
+
+        // Posted balance is not the same as spendable balance once a live
+        // checkout has committed part of it. Reporting only the total would
+        // have the storefront offer money the server is going to refuse.
+        const availability = await readWalletAvailability(strapi, Number(pluginUserId), {
+          reusableAttemptId: reusableAttemptId || null,
+        });
+        // A degraded read returns zeros, and so does one that cannot see the
+        // row the ORM just resolved. Either way, keep showing the balance we
+        // did read but report nothing as spendable: the checkout allocation
+        // runs the same query, so it would refuse this money anyway.
+        const trustworthy = !availability.degraded && availability.walletId !== null;
+
+        // Held money is the customer's money, temporarily committed to a
+        // checkout. Reporting only a shrunken balance is why it "looks gone":
+        // the storefront needs to be able to say how much is held, for which
+        // order, and by when it comes back on its own.
+        const holds =
+          trustworthy && availability.heldIrr > 0
+            ? await listActiveHoldsForUser(strapi, Number(pluginUserId))
+            : [];
+        if (holds.length > 0) {
+          pullReconcileForHolds(strapi, holds);
         }
 
         return ctx.send({
           success: true,
           data: {
             id: wallet.id,
-            balance: wallet.Balance,
+            balance: trustworthy ? availability.balanceIrr : Number(wallet.Balance ?? 0),
+            heldBalance: trustworthy ? availability.heldIrr : 0,
+            availableBalance: trustworthy ? availability.availableIrr : 0,
+            reusableBalance: trustworthy ? availability.reusableIrr : 0,
+            holds,
             lastTransactionDate: wallet.LastTransactionDate,
             description: wallet.Description,
           },
@@ -66,6 +154,60 @@ export default factories.createCoreController(
         strapi.log.error(error);
         return ctx.internalServerError(
           "An error occurred while fetching the wallet"
+        );
+      }
+    },
+
+    /**
+     * Owner ledger as flat rows. Content-API `find` wraps Type/Amount/Date in
+     * `attributes`, which the storefront then treats as missing and shows empty.
+     */
+    async getCurrentUserWalletTransactions(ctx) {
+      try {
+        const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!pluginUserId) return;
+
+        const { page, pageSize } = parseLedgerPage(
+          ctx.query as { page?: unknown; pageSize?: unknown },
+        );
+        const wallet = await strapi.db.query(WALLET_UID).findOne({
+          where: { user: Number(pluginUserId) },
+          select: ["id"],
+        });
+        if (!wallet) {
+          return ctx.send({
+            data: [],
+            meta: { pagination: { page, pageSize, pageCount: 0, total: 0 } },
+          });
+        }
+
+        const where = { user_wallet: wallet.id };
+        const [transactions, total] = await Promise.all([
+          strapi.db.query(WALLET_TRANSACTION_UID).findMany({
+            where,
+            select: [...LEDGER_SELECT],
+            orderBy: [{ Date: "desc" }, { id: "desc" }],
+            limit: pageSize,
+            offset: (page - 1) * pageSize,
+          }),
+          strapi.db.query(WALLET_TRANSACTION_UID).count({ where }),
+        ]);
+
+        return ctx.send({
+          data: transactions,
+          meta: {
+            pagination: {
+              page,
+              pageSize,
+              pageCount: total === 0 ? 0 : Math.ceil(total / pageSize),
+              total,
+            },
+          },
+        });
+      } catch (error) {
+        strapi.log.error(error);
+        return ctx.internalServerError(
+          "An error occurred while fetching wallet transactions"
         );
       }
     },
@@ -90,10 +232,29 @@ export default factories.createCoreController(
           });
         }
 
-        const balanceIrr = await readBalanceIrr(strapi, userId);
+        // Operators adjusting a balance need to see what a live checkout has
+        // already committed, or a debit that looks affordable gets refused.
+        const availability = await readWalletAvailability(strapi, userId);
+        const trustworthy = !availability.degraded && availability.walletId !== null;
+        const balanceIrr = trustworthy
+          ? availability.balanceIrr
+          : await readBalanceIrr(strapi, userId);
+        // Nulls, not zeros, when the hold read failed: zero held would tell the
+        // operator the whole balance is theirs to move, which is the one wrong
+        // answer. The card hides the breakdown and the server still refuses any
+        // adjustment that would cut into a hold.
+        const heldIrr = trustworthy ? availability.heldIrr : null;
+        const availableIrr = heldIrr === null ? null : Math.max(0, balanceIrr - heldIrr);
         return ctx.send({
           success: true,
-          data: { balanceIrr, balanceToman: rialToToman(balanceIrr) },
+          data: {
+            balanceIrr,
+            balanceToman: rialToToman(balanceIrr),
+            heldIrr,
+            heldToman: heldIrr === null ? null : rialToToman(heldIrr),
+            availableIrr,
+            availableToman: availableIrr === null ? null : rialToToman(availableIrr),
+          },
         });
       } catch (error) {
         strapi.log.error("adminGetUserWallet failed", error);
@@ -287,12 +448,18 @@ export default factories.createCoreController(
 
         const toIrr = adjustment.afterBalance;
         const toToman = rialToToman(toIrr);
+        const heldIrr = adjustment.heldBalance;
+        const availableIrr = Math.max(0, toIrr - heldIrr);
 
         return ctx.send({
           success: true,
           data: {
             balanceIrr: toIrr,
             balanceToman: toToman,
+            heldIrr,
+            heldToman: rialToToman(heldIrr),
+            availableIrr,
+            availableToman: rialToToman(availableIrr),
             changed: adjustment.changed,
           },
         });

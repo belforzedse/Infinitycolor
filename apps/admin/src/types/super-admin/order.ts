@@ -1,5 +1,6 @@
 import type { ProductCoverImage } from "@/types/Product";
 import type { VariantAttribute } from "@/utils/orderAttributes";
+import type { OrderPaymentLeg } from "@/utils/paymentLegs";
 
 export type AnipoBarcodeState =
   | "Pending"
@@ -48,6 +49,12 @@ export interface SuperAdminOrderDetail {
   recipientPhone?: string;
   postalCode?: string;
   paymentGateway?: string;
+  /**
+   * Every method that funded this order, with its own amount in IRR. More than
+   * one entry means a split payment (typically wallet + gateway), which
+   * `paymentGateway` alone cannot represent.
+   */
+  paymentLegs?: OrderPaymentLeg[];
   transactionId?: string;
   paymentToken?: string | null;
   createdAt: Date;

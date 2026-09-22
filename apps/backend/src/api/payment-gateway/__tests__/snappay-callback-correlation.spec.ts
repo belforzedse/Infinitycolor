@@ -1,6 +1,7 @@
 import { enqueueSnappayOperation } from "../../../queue/snappay";
 import {
   acceptSnappayCallback,
+  requestSnappayCustomerAbandon,
   requestSnappayReconciliation,
 } from "../services/snappay-orchestrator";
 import {
@@ -18,6 +19,8 @@ const mockedEnqueue = enqueueSnappayOperation as jest.MockedFunction<
 
 function createHarness(input?: {
   amount?: number;
+  walletAmount?: number;
+  gatewayAmount?: number;
   callbackNonceHash?: string | null;
   legacy?: boolean;
   providerReference?: string;
@@ -30,6 +33,7 @@ function createHarness(input?: {
     retryCount: number;
     nextRunAt: Date | null;
     OperationType?: string;
+    metadata?: Record<string, unknown>;
   };
 }) {
   const attempt = {
@@ -38,6 +42,8 @@ function createHarness(input?: {
     Status: "Redirected",
     Gateway: "snappay",
     Amount: input?.amount ?? 1_200_000,
+    WalletAmount: input?.walletAmount,
+    GatewayAmount: input?.gatewayAmount,
     providerReference: input?.providerReference ?? "ABC1234567",
     callbackNonceHash: input?.callbackNonceHash,
     providerStatus: input?.providerStatus,
@@ -65,15 +71,17 @@ function createHarness(input?: {
   }));
   const queries: Record<string, any> = {
     "api::payment-attempt.payment-attempt": {
-      findOne: jest.fn().mockImplementation(async ({ where }: { where?: Record<string, unknown> }) => {
-        if (where?.providerReference && where.providerReference !== attempt.providerReference) {
-          return null;
-        }
-        if (where?.id && Number(where.id) !== attempt.id) {
-          return null;
-        }
-        return attempt;
-      }),
+      findOne: jest
+        .fn()
+        .mockImplementation(async ({ where }: { where?: Record<string, unknown> }) => {
+          if (where?.providerReference && where.providerReference !== attempt.providerReference) {
+            return null;
+          }
+          if (where?.id && Number(where.id) !== attempt.id) {
+            return null;
+          }
+          return attempt;
+        }),
       update: attemptUpdate,
     },
     "api::payment-operation.payment-operation": {
@@ -137,9 +145,7 @@ describe("acceptSnappayCallback correlation", () => {
       nonce,
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({ accepted: true, orderId: 22 }),
-    );
+    expect(result).toEqual(expect.objectContaining({ accepted: true, orderId: 22 }));
     expect(attemptUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 11, Status: { $ne: "Succeeded" } },
@@ -162,6 +168,36 @@ describe("acceptSnappayCallback correlation", () => {
       }),
     );
     expect(mockedEnqueue).toHaveBeenCalledWith(55, 0, 0);
+  });
+
+  it("correlates a mixed callback against the SnappPay leg, not the full order", async () => {
+    const nonce = generateSnappayCallbackNonce();
+    const { strapi, attemptUpdate } = createHarness({
+      amount: 1_200_000,
+      walletAmount: 350_000,
+      gatewayAmount: 850_000,
+      callbackNonceHash: hashSnappayCallbackNonce(nonce),
+    });
+
+    const accepted = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 850_000,
+      nonce,
+    });
+    expect(accepted.accepted).toBe(true);
+    expect(attemptUpdate).toHaveBeenCalled();
+
+    const rejected = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 1_200_000,
+      nonce,
+    });
+    expect(rejected).toMatchObject({
+      accepted: false,
+      errorCode: "SNAPPAY_CALLBACK_MISMATCH",
+    });
   });
 
   it.each([
@@ -238,9 +274,7 @@ describe("acceptSnappayCallback correlation", () => {
 
     expect(result.accepted).toBe(true);
     expect(attemptUpdate).not.toHaveBeenCalled();
-    expect(raw.mock.calls.some(([sql]: [string]) => sql.includes("previousGeneration"))).toBe(
-      true,
-    );
+    expect(raw.mock.calls.some(([sql]: [string]) => sql.includes("previousGeneration"))).toBe(true);
     expect(operationCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -385,5 +419,112 @@ describe("requestSnappayReconciliation pull-forward", () => {
 
     expect(operationCreate).not.toHaveBeenCalled();
     expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The shopper's "I did not pay" claim, at the door.
+ *
+ * The state machine ignores the claim once an `OK` callback is on the operation,
+ * but the claim must also be refused *visibly*: both triggers tell the shopper
+ * whether a release is coming, and a paying customer must not be told one is.
+ */
+describe("requestSnappayCustomerAbandon", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.FRONTEND_BASE_URL = "https://storefront.test.invalid";
+  });
+
+  it("records the claim for an attempt with no successful return", async () => {
+    const { strapi, operationCreate } = createHarness();
+
+    await expect(requestSnappayCustomerAbandon(strapi, 22)).resolves.toEqual(
+      expect.objectContaining({ accepted: true }),
+    );
+    expect(operationCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          idempotencyKey: "reconcile:11",
+          metadata: expect.objectContaining({ customerAbandoned: true }),
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    ["providerStatus CALLBACK_OK", { providerStatus: "CALLBACK_OK" }],
+    ["nextAction verify", { nextAction: "verify" }],
+  ])("drops the claim behind the shopper's own OK return (%s)", async (_label, overrides) => {
+    // Mirrors the predicate `acceptSnappayCallback` uses to discard a FAILED
+    // callback over established success.
+    const { strapi, operationCreate } = createHarness(overrides);
+
+    await expect(requestSnappayCustomerAbandon(strapi, 22)).resolves.toEqual(
+      expect.objectContaining({ accepted: false }),
+    );
+    const metadata = operationCreate.mock.calls[0][0].data.metadata;
+    expect(metadata).not.toHaveProperty("customerAbandoned");
+    // The reconcile itself is still queued — the shopper's poll must keep the
+    // settlement moving even though the cancellation was refused.
+    expect(operationCreate).toHaveBeenCalled();
+  });
+
+  it("drops the claim behind an OK callback the worker has already polled past", async () => {
+    // `updateProviderObservation` overwrites `CALLBACK_OK` with the first
+    // non-UNKNOWN status read, so one worker pass leaves the attempt reading
+    // plain PENDING while the operation still carries the callback. The
+    // metadata is what `decideSnappayRecovery` consults, so it is what decides
+    // here too — otherwise the shopper is told a release is coming that the
+    // state machine will refuse.
+    const { strapi, raw } = createHarness({
+      providerStatus: "PENDING",
+      nextAction: "reconcile",
+      existingOperation: {
+        id: 55,
+        Status: "Queued",
+        retryCount: 1,
+        nextRunAt: new Date(Date.now() + 5 * 60 * 1000),
+        metadata: { callbackState: "OK" },
+      },
+    });
+
+    await expect(requestSnappayCustomerAbandon(strapi, 22)).resolves.toEqual(
+      expect.objectContaining({ accepted: false }),
+    );
+    for (const [, bindings] of raw.mock.calls) {
+      expect(JSON.stringify(bindings ?? [])).not.toContain("customerAbandoned");
+    }
+  });
+
+  it("reports nothing recorded for an already resolved attempt", async () => {
+    const { strapi, operationCreate } = createHarness();
+    strapi.db.query("api::payment-attempt.payment-attempt").findOne.mockResolvedValue({
+      id: 11,
+      Status: "Succeeded",
+      Gateway: "snappay",
+      order: { id: 22 },
+    });
+
+    await expect(requestSnappayCustomerAbandon(strapi, 22)).resolves.toEqual(
+      expect.objectContaining({ accepted: false }),
+    );
+    expect(operationCreate).not.toHaveBeenCalled();
+  });
+
+  it("merges the claim onto a reconcile that is already queued", async () => {
+    // The result page's own poll creates this row first, so the claim almost
+    // always arrives as an annotation rather than a fresh operation.
+    const { strapi, raw } = createHarness({
+      existingOperation: { id: 55, Status: "Processing", retryCount: 1, nextRunAt: null },
+    });
+
+    await expect(requestSnappayCustomerAbandon(strapi, 22)).resolves.toEqual(
+      expect.objectContaining({ accepted: true }),
+    );
+    const annotate = raw.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("status IN ('Queued', 'Processing')"),
+    );
+    expect(annotate).toBeDefined();
+    expect(JSON.stringify(annotate[1])).toContain("customerAbandoned");
   });
 });

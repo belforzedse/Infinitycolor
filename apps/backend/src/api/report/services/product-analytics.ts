@@ -181,6 +181,7 @@ export const PERFORMANCE_SORT_COLUMNS: Record<string, string> = {
   orders: "orders_count",
   avgPrice: "avg_price",
   stock: "current_stock",
+  productStock: "product_total_stock",
   title: "product_title",
 };
 
@@ -272,6 +273,14 @@ export interface RawPerformanceRow {
   orders_count: string | number | null;
   current_stock: string | number | null;
   reserved_stock: string | number | null;
+  variant_color: string | null;
+  variant_color_code: string | null;
+  variant_size: string | null;
+  variant_model: string | null;
+  variant_other: string | null;
+  /** Product-level stock, summed over EVERY variation — see {@link productStockTotalsCte}. */
+  product_total_stock: string | number | null;
+  product_variation_count: string | number | null;
 }
 
 export interface ProductPerformanceRow {
@@ -292,6 +301,47 @@ export interface ProductPerformanceRow {
   reservedStock: number | null;
   stockStatus: StockStatus | "unknown";
   imageUrl?: string | null;
+  variantColor: string | null;
+  variantColorCode: string | null;
+  variantSize: string | null;
+  variantModel: string | null;
+  /** Custom (non-projected) attributes, pre-joined as «نام: مقدار، نام: مقدار». */
+  variantOther: string | null;
+  /** `variantColor / variantSize / variantModel`, blanks dropped; null when all are empty. */
+  variantLabel: string | null;
+  /**
+   * Stock across ALL of this product's variations. `currentStock` above is only
+   * THIS variation's — the report is variant-grained. Null when the row has no
+   * surviving variation (and therefore no product) to total.
+   */
+  productTotalStock: number | null;
+  productVariationCount: number | null;
+}
+
+/**
+ * Human-readable variant identity, e.g. «مشکی / L».
+ *
+ * Lives here rather than in the admin because the xlsx export builds the same
+ * string server-side; computing it in the UI would mean writing it twice in two
+ * languages and letting the two drift.
+ */
+export function variantLabel(parts: {
+  color?: string | null;
+  size?: string | null;
+  model?: string | null;
+}): string | null {
+  const joined = [parts.color, parts.size, parts.model]
+    .map((part) => (typeof part === "string" ? part.trim() : ""))
+    .filter(Boolean)
+    .join(" / ");
+  return joined || null;
+}
+
+/** Null-preserving text read — an absent relation must render "—", never "". */
+function variantText(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
 }
 
 export function serializeProductRow(
@@ -305,6 +355,10 @@ export function serializeProductRow(
   const net = Math.max(0, Math.round(gross - discounts - refunds));
   const hasStock = row.current_stock !== null && row.current_stock !== undefined;
   const currentStock = hasStock ? Number(row.current_stock) || 0 : null;
+  const { variantAttrs: _unused, ...variant } = serializeVariantIdentity(row);
+  // A row whose variation was deleted has no product, so it has no product total.
+  // 0 would read as "out of stock"; null renders "—".
+  const hasTotal = row.product_total_stock !== null && row.product_total_stock !== undefined;
   return {
     productVariationId: row.product_variation_id ?? null,
     productId: row.product_id ?? null,
@@ -322,6 +376,9 @@ export function serializeProductRow(
     currentStock,
     reservedStock: hasStock ? Number(row.reserved_stock) || 0 : null,
     stockStatus: currentStock === null ? "unknown" : classifyStock(currentStock, threshold),
+    ...variant,
+    productTotalStock: hasTotal ? Number(row.product_total_stock) || 0 : null,
+    productVariationCount: hasTotal ? Number(row.product_variation_count) || 0 : null,
   };
 }
 
@@ -341,6 +398,15 @@ interface LinkTable {
   table: string;
   cols: Set<string>;
 }
+
+/**
+ * The generic variation-attribute chain, hard-coded because it is a two-hop join
+ * that {@link resolveRelation} cannot express. Presence is still probed at runtime
+ * (see `hasVariationAttributes`) so a drifted schema degrades instead of 500ing.
+ * Names verified against `scripts/repair-woocommerce-variation-attributes.js`.
+ */
+const VARIATION_TERM_LINK_TABLE = "product_variations_selected_attribute_terms_links";
+const TERM_ATTRIBUTE_LINK_TABLE = "product_attribute_terms_product_attribute_links";
 
 let cachedLinks: Promise<LinkTable[]> | null = null;
 
@@ -391,6 +457,32 @@ export interface ResolvedJoins {
   variationToProduct: string;
   /** product_variations pv -> product_stocks ps (LEFT) */
   variationToStock: string;
+  /**
+   * product_variations pv -> product_variation_colors pvc (LEFT), plus the title
+   * and swatch expressions.
+   *
+   * These three attribute relations are unidirectional oneToOne owned by the
+   * variation, so Strapi stores them in a link table ONLY — `product_variations`
+   * carries no FK column and `resolveRelation`'s direct-FK fallback cannot fire.
+   * A missing link table therefore degrades to `{ join: "", titleExpr: "NULL::text" }`
+   * (the {@link ResolvedJoins.productToCategory} pattern): the report loses its
+   * colour dimension rather than failing.
+   *
+   * These are the LEGACY PROJECTION of the generic attribute model — the same
+   * values also reach a variation through `selected_attribute_terms` (see
+   * {@link variationAttributesCte}). Neither axis is fully populated, so display
+   * values coalesce this one over the generic one.
+   */
+  variationToColor: { join: string; titleExpr: string; codeExpr: string };
+  /** product_variations pv -> product_variation_sizes pvs (LEFT) */
+  variationToSize: { join: string; titleExpr: string };
+  /** product_variations pv -> product_variation_models pvm (LEFT) */
+  variationToModel: { join: string; titleExpr: string };
+  /**
+   * Whether the generic variation-attribute link tables are present, which is the
+   * precondition for {@link variationAttributesCte} emitting anything.
+   */
+  hasVariationAttributes: boolean;
   /**
    * products p -> the product's MAIN product_categories pc (LEFT), plus the title
    * expression. This is the product's *label* category — the single name shown on a
@@ -674,6 +766,72 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       variationToStock = "";
     }
 
+    // Variation attribute projections. The FK candidate is spelled in full on
+    // purpose: `pickColumn` falls back to `endsWith`, so a short form like
+    // "color_id" could latch onto an unrelated column.
+    let variationToColor = { join: "", titleExpr: "NULL::text", codeExpr: "NULL::text" };
+    try {
+      const join = await resolveRelation(knex, {
+        ownerIdCol: "product_variation_id",
+        targetIdCol: "product_variation_color_id",
+        ownerAlias: "pv",
+        targetTable: "product_variation_colors",
+        targetAlias: "pvc",
+        directFkTable: "product_variations",
+        directFkCandidates: ["product_variation_color_id"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+      variationToColor = { join, titleExpr: "pvc.title", codeExpr: "pvc.color_code" };
+    } catch {
+      variationToColor = { join: "", titleExpr: "NULL::text", codeExpr: "NULL::text" };
+    }
+
+    let variationToSize = { join: "", titleExpr: "NULL::text" };
+    try {
+      const join = await resolveRelation(knex, {
+        ownerIdCol: "product_variation_id",
+        targetIdCol: "product_variation_size_id",
+        ownerAlias: "pv",
+        targetTable: "product_variation_sizes",
+        targetAlias: "pvs",
+        directFkTable: "product_variations",
+        directFkCandidates: ["product_variation_size_id"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+      variationToSize = { join, titleExpr: "pvs.title" };
+    } catch {
+      variationToSize = { join: "", titleExpr: "NULL::text" };
+    }
+
+    let variationToModel = { join: "", titleExpr: "NULL::text" };
+    try {
+      const join = await resolveRelation(knex, {
+        ownerIdCol: "product_variation_id",
+        targetIdCol: "product_variation_model_id",
+        ownerAlias: "pv",
+        targetTable: "product_variation_models",
+        targetAlias: "pvm",
+        directFkTable: "product_variations",
+        directFkCandidates: ["product_variation_model_id"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+      variationToModel = { join, titleExpr: "pvm.title" };
+    } catch {
+      variationToModel = { join: "", titleExpr: "NULL::text" };
+    }
+
+    // The generic attribute join is two hops plus a GROUP BY, which does not fit
+    // resolveRelation's single owner/target column pair. Probe the same cached
+    // link-table listing instead, so a drifted schema still degrades to "".
+    const linkTables = await getLinkTables(knex);
+    const hasVariationAttributes = [
+      VARIATION_TERM_LINK_TABLE,
+      TERM_ATTRIBUTE_LINK_TABLE,
+    ].every((name) => linkTables.some((link) => link.table === name));
+
     let productToCategory = { join: "", titleExpr: "NULL::text" };
     try {
       const join = await resolveRelation(knex, {
@@ -823,6 +981,10 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       contractToTx,
       variationToProduct,
       variationToStock,
+      variationToColor,
+      variationToSize,
+      variationToModel,
+      hasVariationAttributes,
       productToCategory,
       categoryMembershipTables,
       categoryParentLink,
@@ -1390,6 +1552,225 @@ export function aggCte(): string {
 }
 
 /**
+ * One row per variation carrying its FULL identity: colour, size, model, and every
+ * custom attribute.
+ *
+ * A variation describes itself through two disjoint mechanisms, and reading only
+ * one drops half its identity:
+ *
+ * - Three dedicated oneToOne relations (see {@link ResolvedJoins.variationToColor}),
+ *   whose ids point at `product_variation_colors` / `_sizes` / `_models`.
+ * - `selected_attribute_terms`, whose ids point at `product_attribute_terms`.
+ *
+ * `buildVariationCombinations` in `product/services/variation-combinations.ts`
+ * routes each axis to exactly ONE of the two, and `signatureFromVariation` — the
+ * canonical identity of a variation — unions both with no dedupe. So per variation
+ * the two sets never overlap, which is what makes the COALESCE below safe.
+ * `product_attributes.legacy_projection` is a presentation hint, not a second copy:
+ * the importer's repair script only ever assigns generic terms whose projection is
+ * 'None'. The projected branches are defensive, and nothing is ever hidden because
+ * `attrs` carries every term unfiltered.
+ *
+ * `DISTINCT ON (pv.id)` is the load-bearing safety property: it guarantees exactly
+ * one row per variation whatever the link tables contain, so the single outer join
+ * onto this CTE cannot multiply rows — and `countSql`'s total and the pagination
+ * are therefore provably unaffected by this feature.
+ *
+ * Declares NO bindings. With `scope: "agg"` it restricts itself to variations that
+ * actually sold (`productPerformance` issues its SQL twice per request, so the
+ * narrower scan is worth it) and must be declared AFTER `agg`. With `scope: "all"`
+ * it covers every variation, which the detail and inventory queries need because
+ * they list variations that never sold; both already scan `product_variations`
+ * wholesale.
+ */
+export function variationAttributesCte(
+  joins: ResolvedJoins,
+  scope: "agg" | "all" = "agg",
+): string {
+  const color = joins.variationToColor.titleExpr;
+  const scopeJoin = scope === "agg" ? "JOIN agg ON agg.product_variation_id = pv.id" : "";
+  return `
+    variation_attributes AS (
+      SELECT DISTINCT ON (pv.id)
+        pv.id AS pvid,
+        COALESCE(${color}, ga.gen_color) AS variant_color,
+        -- CASE, not COALESCE: a legacy colour with no swatch must not borrow a
+        -- different attribute's colour code.
+        CASE WHEN ${color} IS NOT NULL THEN ${joins.variationToColor.codeExpr}
+             ELSE ga.gen_color_code END AS variant_color_code,
+        COALESCE(${joins.variationToSize.titleExpr}, ga.gen_size)   AS variant_size,
+        COALESCE(${joins.variationToModel.titleExpr}, ga.gen_model) AS variant_model,
+        ga.other_attrs AS variant_other,
+        COALESCE(ga.attrs, '[]'::jsonb) AS variant_attrs
+      FROM product_variations pv
+      ${scopeJoin}
+      ${joins.variationToColor.join}
+      ${joins.variationToSize.join}
+      ${joins.variationToModel.join}
+      LEFT JOIN (${genericAttributesSelect(joins)}) ga ON ga.pvid = pv.id
+      ORDER BY pv.id
+    )
+  `;
+}
+
+/**
+ * The generic-attribute aggregate feeding {@link variationAttributesCte}.
+ *
+ * Custom attributes (جنس, طرح, …) are folded into one «نام: مقدار» string because
+ * the xlsx export needs a fixed column count; `attrs` keeps the structured list for
+ * the drawer. Degrades to an empty set — still correctly typed — when the generic
+ * link tables are absent, so a database lagging that migration keeps the colour and
+ * size it already has.
+ */
+function genericAttributesSelect(joins: ResolvedJoins): string {
+  const EMPTY = `
+        SELECT NULL::int AS pvid, NULL::text AS gen_color, NULL::text AS gen_color_code,
+               NULL::text AS gen_size, NULL::text AS gen_model,
+               NULL::text AS other_attrs, NULL::jsonb AS attrs
+        WHERE false`;
+  if (!joins.hasVariationAttributes) return EMPTY;
+  // Both positions default to 0, so the title tiebreakers carry the ordering for
+  // most catalogues — do not drop them.
+  const termOrder = "COALESCE(pa.position, 0), COALESCE(pat.position, 0), pat.id";
+  const projected = (column: string, projection: string) =>
+    `(ARRAY_AGG(${column} ORDER BY ${termOrder})
+            FILTER (WHERE pa.legacy_projection = '${projection}'))[1]`;
+  return `
+        SELECT
+          vl.product_variation_id AS pvid,
+          ${projected("pat.title", "Color")} AS gen_color,
+          ${projected("pat.color_code", "Color")} AS gen_color_code,
+          ${projected("pat.title", "Size")}  AS gen_size,
+          ${projected("pat.title", "Model")} AS gen_model,
+          string_agg(
+            CASE WHEN pa.title IS NULL OR btrim(pa.title) = '' THEN pat.title
+                 ELSE pa.title || ': ' || pat.title END,
+            '، ' ORDER BY ${termOrder}
+          ) FILTER (WHERE COALESCE(pa.legacy_projection, 'None') = 'None') AS other_attrs,
+          jsonb_agg(
+            jsonb_build_object(
+              'name', pa.title, 'value', pat.title,
+              'colorCode', pat.color_code,
+              'projection', COALESCE(pa.legacy_projection, 'None')
+            ) ORDER BY ${termOrder}
+          ) AS attrs
+        FROM ${VARIATION_TERM_LINK_TABLE} vl
+        JOIN product_attribute_terms pat ON pat.id = vl.product_attribute_term_id
+        LEFT JOIN ${TERM_ATTRIBUTE_LINK_TABLE} patal
+               ON patal.product_attribute_term_id = pat.id
+        LEFT JOIN product_attributes pa ON pa.id = patal.product_attribute_id
+        GROUP BY vl.product_variation_id`;
+}
+
+/**
+ * The variant-identity SELECT columns, shared by every variant-grained query.
+ * Requires a {@link variationAttributesCte} join aliased `va` to be in scope.
+ *
+ * `withAttrs` adds the raw jsonb attribute array. Only the drawer renders it; the
+ * table and its 10k-row export would carry the payload for nothing.
+ */
+export function variantColumnsSelect(withAttrs = false): string {
+  return `
+      va.variant_color,
+      va.variant_color_code,
+      va.variant_size,
+      va.variant_model,
+      va.variant_other${withAttrs ? ",\n      va.variant_attrs" : ""}`;
+}
+
+/**
+ * Join to {@link variationAttributesCte}. `idExpr` is the variation id to key on,
+ * which differs per call site (`agg.product_variation_id` vs `pv.id`). One join,
+ * and the CTE is 1:1, so this can never multiply rows.
+ */
+export function variantJoins(idExpr: string): string {
+  return `LEFT JOIN variation_attributes va ON va.pvid = ${idExpr}`;
+}
+
+/**
+ * Shape the variant columns of any raw row into the API payload (pure).
+ * Mirrors what {@link serializeProductRow} does for the performance table.
+ */
+export function serializeVariantIdentity(row: {
+  variant_color?: string | null;
+  variant_color_code?: string | null;
+  variant_size?: string | null;
+  variant_model?: string | null;
+  variant_other?: string | null;
+  variant_attrs?: unknown;
+}) {
+  const variantColor = variantText(row.variant_color);
+  const variantSize = variantText(row.variant_size);
+  const variantModel = variantText(row.variant_model);
+  return {
+    variantColor,
+    variantColorCode: variantText(row.variant_color_code),
+    variantSize,
+    variantModel,
+    variantOther: variantText(row.variant_other),
+    variantLabel: variantLabel({ color: variantColor, size: variantSize, model: variantModel }),
+    variantAttrs: Array.isArray(row.variant_attrs) ? row.variant_attrs : [],
+  };
+}
+
+/**
+ * Total stock across EVERY variation of each product that appears in `agg`.
+ *
+ * The performance table is variant-grained, so its `ps.count` is ONE variant's
+ * stock — operators read it as the product's, and searching a product code showed
+ * 6 where the product held ~40. This supplies the product-level figure so both can
+ * be shown side by side, correctly labelled.
+ *
+ * MUST stay identical to `productDetail`'s `totals.currentStock` for the same
+ * product: same inner product join, same LEFT stock join, no IsPublished /
+ * removed_at filter, nulls counted as 0. A third number for the same question is
+ * the very bug this fixes.
+ *
+ * Declares NO bindings, and MUST be declared after `agg`. Scoped to `agg`'s
+ * products because `productPerformance` runs this SQL twice per request and the
+ * count query never reads the result.
+ */
+export function productStockTotalsCte(joins: ResolvedJoins): string {
+  return `
+    sold_products AS (
+      SELECT DISTINCT p.id AS product_id
+      FROM agg
+      JOIN product_variations pv ON pv.id = agg.product_variation_id
+      ${joins.variationToProduct}
+    ),
+    product_stock_totals AS (
+      SELECT
+        p.id AS product_id,
+        SUM(COALESCE(ps.count, 0))::bigint          AS total_stock,
+        SUM(COALESCE(ps.reserved_count, 0))::bigint AS total_reserved,
+        COUNT(pv.id)::bigint                        AS variation_count
+      FROM product_variations pv
+      ${joins.variationToProduct}
+      ${joins.variationToStock}
+      JOIN sold_products sp ON sp.product_id = p.id
+      GROUP BY p.id
+    )
+  `;
+}
+
+/**
+ * The full `WITH` list behind the product performance table and its xlsx export.
+ *
+ * Order is load-bearing: `variation_attributes` and `product_stock_totals` both
+ * reference `agg`. Only `paid_orders` declares bindings, so callers keep passing
+ * `[start, end, ...filters]` positionally.
+ */
+export function performanceCtes(joins: ResolvedJoins): string {
+  return [
+    paidOrdersCte(joins),
+    itemizedCte(joins),
+    aggCte(),
+    variationAttributesCte(joins),
+    productStockTotalsCte(joins),
+  ].join(", ");
+}
+
+/**
  * The enrichment SELECT that joins `agg` to current product / category / stock
  * data. Returns the SELECT + FROM/JOINs (no WHERE / ORDER / LIMIT) so callers can
  * append filters and paging. Columns line up with {@link RawPerformanceRow}.
@@ -1420,12 +1801,17 @@ export function performanceCoreSelect(joins: ResolvedJoins): string {
       (agg.refunds_irr / 10.0) AS refunds,
       CASE WHEN agg.units > 0 THEN agg.gross / agg.units ELSE 0 END AS avg_price,
       ps.count AS current_stock,
-      ps.reserved_count AS reserved_stock
+      ps.reserved_count AS reserved_stock,
+      ${variantColumnsSelect()},
+      pst.total_stock     AS product_total_stock,
+      pst.variation_count AS product_variation_count
     FROM agg
     LEFT JOIN product_variations pv ON pv.id = agg.product_variation_id
     ${variationToProductLeft}
     ${joins.variationToStock}
     ${joins.productToCategory.join}
+    ${variantJoins("agg.product_variation_id")}
+    LEFT JOIN product_stock_totals pst ON pst.product_id = p.id
   `;
 }
 

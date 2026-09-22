@@ -63,6 +63,19 @@ type Props = {
   discountCode?: string;
   /** True while the discount/total is being recomputed on the server. */
   previewLoading?: boolean;
+  /**
+   * The wallet tender card, rendered between the delivery section and the
+   * totals. It belongs here rather than beside the bank gateways because
+   * ticking it changes the figures directly below it, and a shopper should see
+   * that happen without scrolling.
+   */
+  walletTender?: React.ReactNode;
+  /**
+   * Credit the ticked wallet will cover, in toman, as the checkout has already
+   * resolved it. Passed in rather than recomputed so the figure below the totals
+   * and the figure inside the wallet card can never disagree.
+   */
+  walletToman?: number;
 };
 
 function ShoppingCartBillDeliveryForm({
@@ -73,6 +86,8 @@ function ShoppingCartBillDeliveryForm({
   discountPreview,
   discountCode,
   previewLoading,
+  walletTender,
+  walletToman = 0,
 }: Props) {
   const {
     totalPrice,
@@ -97,6 +112,14 @@ function ShoppingCartBillDeliveryForm({
   const finalTotal =
     discountPreview?.summary?.total ??
     Math.max(0, subtotal - discountAmount + taxAmount + effectiveShipping);
+  /**
+   * The wallet is spent against this order, so it belongs in the totals as a
+   * deduction: "قابل پرداخت" is what the bank gateway will actually charge, not
+   * the order total. Clamped to the total so a stale credit figure can never
+   * show a negative amount due.
+   */
+  const walletApplied = Math.min(Math.max(0, Math.round(walletToman)), finalTotal);
+  const payableTotal = Math.max(0, finalTotal - walletApplied);
   const addressContextKey = useMemo(() => buildAddressContextKey(addressContext), [addressContext]);
   const cartSignature = useMemo(
     () => buildCartSignature(cartItems, totalItems, totalPrice),
@@ -192,6 +215,8 @@ function ShoppingCartBillDeliveryForm({
         <ShoppingCartBillDeliveryTime />
       </DisclosureItem> */}
 
+      {walletTender}
+
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-sm text-neutral-600 lg:text-base">جمع جزء</span>
@@ -230,6 +255,15 @@ function ShoppingCartBillDeliveryForm({
           </span>
         </div>
 
+        {walletApplied > 0 && (
+          <div className="flex items-center justify-between" data-testid="checkout-wallet-deduction">
+            <span className="text-sm text-neutral-600 lg:text-base">پرداخت از کیف پول</span>
+            <span className="text-sm text-green-600 lg:text-base">
+              -{walletApplied.toLocaleString()} تومان
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between pt-2">
           <span className="text-lg text-neutral-800 lg:text-xl">قابل پرداخت</span>
           {previewLoading ? (
@@ -241,8 +275,8 @@ function ShoppingCartBillDeliveryForm({
               در حال محاسبه...
             </span>
           ) : (
-            <span className="text-2xl text-infinity-primary">
-              {finalTotal.toLocaleString()} تومان
+            <span className="text-2xl text-infinity-primary" data-testid="checkout-payable-total">
+              {payableTotal.toLocaleString()} تومان
             </span>
           )}
         </div>

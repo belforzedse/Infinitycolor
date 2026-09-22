@@ -37,6 +37,9 @@ export default function WalletAdjustCard({
   allowAdjust = true,
 }: Props) {
   const [balanceToman, setBalanceToman] = useState<number | null>(null);
+  // What a live checkout of this customer's has already committed. An operator
+  // who cannot see it will read a refused debit as a bug.
+  const [heldToman, setHeldToman] = useState<number>(0);
   const [loadingBalance, setLoadingBalance] = useState(true);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [mode, setMode] = useState<WalletAdjustMode>("credit");
@@ -56,6 +59,7 @@ export default function WalletAdjustCard({
         ]);
         if (!cancelled && res?.success && res.data) {
           setBalanceToman(res.data.balanceToman);
+          setHeldToman(Number(res.data.heldToman ?? 0));
         }
         if (!cancelled) setTransactions(history?.data ?? []);
       } catch (err) {
@@ -75,6 +79,8 @@ export default function WalletAdjustCard({
   const reasonValid = reason.trim().length > 0;
   const canSubmit = amountValid && reasonValid && !submitting;
 
+  const availableToman = Math.max(0, (balanceToman ?? 0) - heldToman);
+
   // Preview the resulting balance for the confirmation dialog.
   const projectedToman = (() => {
     if (balanceToman == null || !amountValid) return null;
@@ -83,6 +89,10 @@ export default function WalletAdjustCard({
     return amountNum; // set
   })();
   const projectedNegative = projectedToman != null && projectedToman < 0;
+  // The server refuses any balance that would fall below what is held, so say
+  // so here rather than letting the operator submit into a rejection.
+  const projectedBelowHeld =
+    projectedToman != null && !projectedNegative && heldToman > 0 && projectedToman < heldToman;
 
   const handleApply = async () => {
     if (!canSubmit || !allowAdjust) return;
@@ -95,6 +105,7 @@ export default function WalletAdjustCard({
       });
       if (res?.success && res.data) {
         setBalanceToman(res.data.balanceToman);
+        setHeldToman(Number(res.data.heldToman ?? 0));
         setAmount("");
         setReason("");
         setShowConfirm(false);
@@ -132,21 +143,40 @@ export default function WalletAdjustCard({
         )}
       </div>
 
-      <div className="mb-6 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-        <span className="text-sm text-neutral-600">موجودی فعلی</span>
-        <span className="text-lg font-bold text-neutral-900">
-          {loadingBalance
-            ? "..."
-            : priceFormatter(balanceToman ?? 0, " تومان")}
-        </span>
+      <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-neutral-600">موجودی فعلی</span>
+          <span className="text-lg font-bold text-neutral-900" data-testid="wallet-balance">
+            {loadingBalance ? "..." : priceFormatter(balanceToman ?? 0, " تومان")}
+          </span>
+        </div>
+        {!loadingBalance && heldToman > 0 ? (
+          <>
+            <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2">
+              <span className="text-sm text-neutral-600">رزرو شده برای پرداخت در جریان</span>
+              <span className="text-sm font-medium text-amber-700" data-testid="wallet-held">
+                {priceFormatter(heldToman, " تومان")}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-sm text-neutral-600">قابل استفاده</span>
+              <span className="text-sm font-medium text-neutral-900" data-testid="wallet-available">
+                {priceFormatter(availableToman, " تومان")}
+              </span>
+            </div>
+          </>
+        ) : null}
       </div>
 
       {allowAdjust ? (
         <>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="md:col-span-1">
-          <label className="mb-1 block text-sm text-neutral-600">نوع تغییر</label>
+          <label htmlFor="wallet-adjust-mode" className="mb-1 block text-sm text-neutral-600">
+            نوع تغییر
+          </label>
           <select
+            id="wallet-adjust-mode"
             className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
             value={mode}
             onChange={(e) => setMode(e.target.value as WalletAdjustMode)}
@@ -161,10 +191,11 @@ export default function WalletAdjustCard({
         </div>
 
         <div className="md:col-span-2">
-          <label className="mb-1 block text-sm text-neutral-600">
+          <label htmlFor="wallet-adjust-amount" className="mb-1 block text-sm text-neutral-600">
             مبلغ (تومان)
           </label>
           <input
+            id="wallet-adjust-amount"
             type="number"
             min={1}
             step={1}
@@ -178,10 +209,11 @@ export default function WalletAdjustCard({
         </div>
 
         <div className="md:col-span-3">
-          <label className="mb-1 block text-sm text-neutral-600">
+          <label htmlFor="wallet-adjust-reason" className="mb-1 block text-sm text-neutral-600">
             دلیل تغییر <span className="text-red-500">*</span>
           </label>
           <textarea
+            id="wallet-adjust-reason"
             rows={2}
             placeholder="مثلاً عودت وجه سفارش ۱۲۳۴۵"
             className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
@@ -306,7 +338,9 @@ export default function WalletAdjustCard({
                         موجودی پس از تغییر:{" "}
                         <span
                           className={`font-semibold ${
-                            projectedNegative ? "text-red-600" : "text-green-700"
+                            projectedNegative || projectedBelowHeld
+                              ? "text-red-600"
+                              : "text-green-700"
                           }`}
                         >
                           {priceFormatter(projectedToman, " تومان")}
@@ -318,6 +352,12 @@ export default function WalletAdjustCard({
                         موجودی نمی‌تواند منفی شود؛ این درخواست رد خواهد شد.
                       </p>
                     )}
+                    {projectedBelowHeld && (
+                      <p className="text-xs text-red-600" data-testid="wallet-below-held">
+                        موجودی نمی‌تواند کمتر از مبلغ رزرو شده ({priceFormatter(heldToman, " تومان")})
+                        شود؛ این درخواست رد خواهد شد.
+                      </p>
+                    )}
                     <p className="text-xs text-neutral-500">دلیل: {reason.trim()}</p>
                   </div>
                   <div className="flex items-center justify-start gap-3">
@@ -325,7 +365,7 @@ export default function WalletAdjustCard({
                       type="button"
                       className="rounded-xl bg-actions-primary px-5 py-2.5 text-white hover:brightness-110 disabled:opacity-50"
                       onClick={handleApply}
-                      disabled={submitting || projectedNegative}
+                      disabled={submitting || projectedNegative || projectedBelowHeld}
                     >
                       {submitting ? "در حال اعمال..." : "تأیید و اعمال"}
                     </button>

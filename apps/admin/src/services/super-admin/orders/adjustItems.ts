@@ -101,11 +101,17 @@ export const previewAdjustItems = async (
 export const adjustItems = async (
   orderId: number,
   items: ItemAdjustment[],
-  reason?: string
+  reason?: string,
+  /**
+   * Names this operator submission so a retry after a timeout is recognised as
+   * the same adjustment rather than refunded a second time. The server binds
+   * the refund's ledger reference to it.
+   */
+  adjustmentId?: string
 ): Promise<AdjustResult> => {
   const response = await apiClient.post(
     `/orders/${orderId}/admin/adjust-items`,
-    { items, reason }
+    { items, reason, adjustmentId }
   );
   return (response as any).data;
 };

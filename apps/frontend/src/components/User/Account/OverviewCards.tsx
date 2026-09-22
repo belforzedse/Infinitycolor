@@ -78,7 +78,12 @@ export default function OverviewCards({ data, loading, error, onRetry }: Overvie
       id: "wallet-balance",
       label: "موجودی کیف پول",
       value: `${faNum(Math.floor(data.wallet.balance / 10))} تومان`,
-      helper: data.wallet.balance > 0 ? "برای پرداخت‌های سریع آماده‌اید" : "برای خرید راحت‌تر کیف پول را شارژ کنید",
+      helper:
+        data.wallet.held > 0
+          ? `${faNum(Math.floor(data.wallet.held / 10))} تومان درگیر یک پرداخت ناتمام است و خودکار آزاد می‌شود`
+          : data.wallet.balance > 0
+            ? "برای پرداخت‌های سریع آماده‌اید"
+            : "برای خرید راحت‌تر کیف پول را شارژ کنید",
     },
     {
       id: "favorites",

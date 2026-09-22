@@ -36,7 +36,13 @@ const variationWithStock = (count: number, reservedCount = 0) => ({
   product_stock: { id: 700, Count: count, reservedCount },
 });
 
-function createCartWorld() {
+function createCartWorld(options: { payingOrders?: any[] } = {}) {
+  // `checkCartStockOp` asks whether this shopper already has a live checkout
+  // holding stock, because a hold's own units must be credited back to them
+  // rather than read as "sold out". Most cases here have no such checkout, but
+  // the lookup still happens and is fail-closed: an unanswerable one makes the
+  // whole stock check report RESERVATION_LOOKUP_FAILED and touch nothing.
+  const payingOrders: any[] = options.payingOrders ?? [];
   const carts: CartRow[] = [
     { id: 10, user: { id: USER_A }, Status: "Pending" },
     { id: 20, user: { id: USER_B }, Status: "Pending" },
@@ -87,6 +93,24 @@ function createCartWorld() {
       }),
     },
     db: {
+      // The live-hold lookup re-reads the reservation in raw SQL before it
+      // trusts the populated order, so the world has to answer that too.
+      connection: {
+        raw: jest.fn(async (sql: string, bindings: any[] = []) => {
+          if (/FROM\s+orders/i.test(sql)) {
+            const orderId = Number(bindings[0]);
+            const held = payingOrders.some(
+              (order) =>
+                Number(order.id) === orderId &&
+                order.Status === "Paying" &&
+                order.ReservationStatus === "Reserved" &&
+                new Date(order.ReservedUntil).getTime() >= Date.now(),
+            );
+            return { rows: held ? [{ id: orderId }] : [] };
+          }
+          throw new Error(`unexpected raw sql: ${sql}`);
+        }),
+      },
       query: jest.fn((uid: string) => {
         if (uid === "api::cart-item.cart-item") {
           return {
@@ -109,6 +133,18 @@ function createCartWorld() {
         if (uid === "api::payment-attempt.payment-attempt") {
           return { findOne: jest.fn().mockResolvedValue(null) };
         }
+        if (uid === "api::order.order") {
+          return {
+            findMany: jest.fn(async ({ where }: any) =>
+              payingOrders.filter(
+                (order) => Number(order?.user?.id) === Number(where?.user?.id),
+              ),
+            ),
+            findOne: jest.fn(async ({ where }: any) =>
+              payingOrders.find((order) => Number(order.id) === Number(where?.id)) ?? null,
+            ),
+          };
+        }
         throw new Error(`unexpected query uid: ${uid}`);
       }),
     },
@@ -129,7 +165,7 @@ function createCartWorld() {
     }),
   };
 
-  return { strapi, items, deleted, updated };
+  return { strapi, items, deleted, updated, payingOrders };
 }
 
 const actAs = (userId: number, overrides: Partial<any> = {}) =>
@@ -389,6 +425,48 @@ describe("cart ownership", () => {
       expect(deleted).toEqual([]);
       expect(updated).toEqual([]);
       expect(items.some((item) => item.id === 202)).toBe(true);
+    });
+
+    it("credits a live checkout's own held units instead of reading them as sold out", async () => {
+      const { strapi, items, deleted } = createCartWorld({
+        payingOrders: [
+          {
+            id: 55,
+            user: { id: USER_A },
+            Status: "Paying",
+            ReservationStatus: "Reserved",
+            ReservedUntil: new Date(Date.now() + 600_000),
+            order_items: [{ Count: 1, product_variation: { product_stock: { id: 700 } } }],
+          },
+        ],
+      });
+      // The last unit is reserved — by this shopper's own checkout.
+      items[0].product_variation = variationWithStock(1, 1);
+
+      const result = await checkCartStockOp(strapi, USER_A);
+
+      expect(result.valid).toBe(true);
+      expect(deleted).toEqual([]);
+      expect(items.some((item) => item.id === 101)).toBe(true);
+    });
+
+    it("touches nothing when it cannot tell whether a checkout is holding stock", async () => {
+      const { strapi, items, deleted, updated } = createCartWorld();
+      // The hold lookup cannot be answered. Stripping lines on that basis would
+      // delete the shopper's own reserved cart, so the check refuses instead.
+      (strapi.db.query as jest.Mock).mockImplementation((uid: string) => {
+        if (uid === "api::order.order") throw new Error("order lookup unavailable");
+        return { findOne: jest.fn().mockResolvedValue(null) };
+      });
+      items[0].product_variation = variationWithStock(1, 1);
+
+      const result = await checkCartStockOp(strapi, USER_A);
+
+      expect(result.valid).toBe(false);
+      expect(result.reservationOutcome).toBe("unavailable");
+      expect(deleted).toEqual([]);
+      expect(updated).toEqual([]);
+      expect(items.some((item) => item.id === 101)).toBe(true);
     });
 
     it("rejects targeting another user via check-stock", async () => {

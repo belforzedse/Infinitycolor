@@ -133,7 +133,14 @@ function Section({
                   <span className="block max-w-[260px] truncate text-neutral-700">
                     {r.productTitle}
                   </span>
-                  <span className="block font-mono text-xs text-neutral-400">{r.sku}</span>
+                  <span className="block font-mono text-xs text-neutral-400">
+                    {r.sku}
+                    {r.variantLabel ? (
+                      // Every row here is one variation, so the SKU alone leaves
+                      // several rows of the same product indistinguishable.
+                      <span className="font-sans text-neutral-500"> · {r.variantLabel}</span>
+                    ) : null}
+                  </span>
                 </td>
                 <td className="px-2 py-2 font-medium text-neutral-800">{metricValue(r)}</td>
               </tr>

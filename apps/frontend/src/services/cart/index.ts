@@ -1,6 +1,13 @@
 import { getUserCart } from "./base";
 import { addItemToCart, updateCartItem, removeCartItem, finalizeCart, mergeGuestCart } from "./mutations";
-import { checkCartStock, getAvailableGateways, getCheckoutQuote, getSnappEligible, getShippingPreview } from "./queries";
+import {
+  checkCartStock,
+  getAvailableGateways,
+  getCheckoutPaymentOptions,
+  getCheckoutQuote,
+  getSnappEligible,
+  getShippingPreview,
+} from "./queries";
 import { applyDiscount } from "./discount";
 import type {
   CartResponse,
@@ -88,6 +95,7 @@ export {
   removeCartItem,
   checkCartStock,
   getAvailableGateways,
+  getCheckoutPaymentOptions,
   getCheckoutQuote,
   finalizeCart,
   getSnappEligible,
@@ -104,6 +112,7 @@ const CartService = {
   removeCartItem,
   checkCartStock,
   getAvailableGateways,
+  getCheckoutPaymentOptions,
   getCheckoutQuote,
   finalizeCart,
   getSnappEligible,

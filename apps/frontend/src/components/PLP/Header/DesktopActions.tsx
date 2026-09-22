@@ -1,6 +1,8 @@
+"use client";
+
 import React from "react";
 import ShoppingCartIcon from "@/components/PLP/Icons/ShoppingCartIcon";
-import WalletIcon from "@/components/PLP/Icons/WalletIcon";
+import WalletHeaderBalance from "@/components/PLP/Header/WalletHeaderBalance";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
 import AccountAccessMenu from "@/components/PLP/Header/AccountAccessMenu";
 import { useCart } from "@/contexts/CartContext";
@@ -34,13 +36,7 @@ const PLPDesktopHeaderActions = ({}: Props) => {
 
       <div className="h-[20.5px] w-px bg-slate-200" aria-hidden />
 
-      <a
-        href="/wallet"
-        aria-label="کیف پول"
-        className="pressable text-slate-400 transition-all duration-200 hover:scale-105 hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-95"
-      >
-        <WalletIcon className="h-6 w-6" />
-      </a>
+      <WalletHeaderBalance className="pressable text-slate-400 transition-all duration-200 hover:scale-105 hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-95" />
 
       <div className="h-[20.5px] w-px bg-slate-200" aria-hidden />
 

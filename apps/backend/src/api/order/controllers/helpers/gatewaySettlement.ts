@@ -5,6 +5,7 @@ import {
   confirmReservePaymentForOrder,
 } from "../../../reserve-group/lib/reserve-group";
 import { claimPaymentAttemptForSettlement } from "../../../payment-attempt/services/payment-attempt";
+import { captureWalletLegForSettlement } from "../../../local-user-wallet/services/wallet-holds";
 
 export class GatewayLocalSettlementError extends Error {
   constructor(
@@ -94,6 +95,30 @@ export async function finalizeGatewaySettlement(
         consumed.expired ? "RESERVATION_EXPIRED" : "RESERVATION_NOT_CONSUMED",
         `Order ${input.orderId} reservation could not be consumed`,
       );
+    }
+
+    // The wallet leg of a split payment, spent in the same transaction as the
+    // provider leg. Last in the lock order, after stock. A hold that is no
+    // longer active means the customer's credit went back to them (expiry,
+    // cancellation) while the bank was charging: rejecting here rolls this
+    // transaction back and hands the caller its existing reversal path, rather
+    // than settling an order that is only half paid.
+    if (input.paymentAttemptId) {
+      const walletLeg = await captureWalletLegForSettlement(
+        strapi,
+        {
+          paymentAttemptId: input.paymentAttemptId,
+          orderId: input.orderId,
+          contractId: input.contractId,
+        },
+        trx,
+      );
+      if (walletLeg.outcome === "not_active") {
+        throw new GatewayLocalSettlementError(
+          "WALLET_HOLD_NOT_ACTIVE",
+          `Order ${input.orderId} wallet hold is ${String(walletLeg.status)}`,
+        );
+      }
     }
 
     await strapi.db.query("api::order.order").update({

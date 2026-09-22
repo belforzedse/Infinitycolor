@@ -1,3 +1,4 @@
+import type { PaymentCapabilities } from "@repo/api/commerce";
 import { apiClient } from "../index";
 import type {
   CartStockCheckResponse,
@@ -27,6 +28,7 @@ interface AvailableGatewaysResponse {
     code?: string;
     title?: string;
   }>;
+  paymentCapabilities?: PaymentCapabilities;
 }
 
 type ReservationLookupFailedError = {
@@ -125,26 +127,52 @@ export const getShippingPreview = async (
   }
 };
 
+const parseGatewayCodes = (payload: AvailableGatewaysResponse | undefined) =>
+  (payload?.gateways || [])
+    .map((item) => String(item?.code || "").toLowerCase())
+    .filter(
+      (code): code is CheckoutGatewayCode =>
+        code === "samankish" ||
+        code === "mellat" ||
+        code === "snappay" ||
+        code === "wallet" ||
+        code === "zarinpal",
+    );
+
 export const getAvailableGateways = async (): Promise<CheckoutGatewayCode[]> => {
   try {
     const response = await apiClient.get<AvailableGatewaysResponse>("/payment-gateway/available", {
       timeout: CHECKOUT_REQUEST_TIMEOUT_MS,
       retries: CHECKOUT_MAX_RETRIES,
     });
-    const payload = unwrap<AvailableGatewaysResponse>(response);
-    const gatewayCodes = (payload?.gateways || [])
-      .map((item) => String(item?.code || "").toLowerCase())
-      .filter(
-        (code): code is CheckoutGatewayCode =>
-          code === "samankish" ||
-          code === "mellat" ||
-          code === "snappay" ||
-          code === "wallet" ||
-          code === "zarinpal",
-      );
-
-    return gatewayCodes;
+    return parseGatewayCodes(unwrap<AvailableGatewaysResponse>(response));
   } catch {
     return [];
+  }
+};
+
+/**
+ * The gateways *and* what the store will accept alongside them.
+ *
+ * Capabilities travel with the gateway list because both answer the same
+ * question — what may this checkout offer — and the UI must never infer a
+ * server feature flag from an absent field.
+ */
+export const getCheckoutPaymentOptions = async (): Promise<{
+  gateways: CheckoutGatewayCode[];
+  paymentCapabilities: PaymentCapabilities | null;
+}> => {
+  try {
+    const response = await apiClient.get<AvailableGatewaysResponse>("/payment-gateway/available", {
+      timeout: CHECKOUT_REQUEST_TIMEOUT_MS,
+      retries: CHECKOUT_MAX_RETRIES,
+    });
+    const payload = unwrap<AvailableGatewaysResponse>(response);
+    return {
+      gateways: parseGatewayCodes(payload),
+      paymentCapabilities: payload?.paymentCapabilities ?? null,
+    };
+  } catch {
+    return { gateways: [], paymentCapabilities: null };
   }
 };

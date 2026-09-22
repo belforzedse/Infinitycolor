@@ -11,6 +11,7 @@ import {
 } from "../api/cart/services/lib/stock";
 import { runRawSql } from "./transactionExecutor";
 import { releaseOrderDiscountClaim } from "../api/cart/services/lib/discount-claim";
+import { releaseWalletHoldsForOrder } from "../api/local-user-wallet/services/wallet-holds";
 
 type ReservationTransition = "Released" | "Expired" | "Consumed";
 
@@ -211,6 +212,17 @@ export async function releaseOrderReservation(
     userId?: number | string;
     requireOrderStatus?: "Paying";
     expiresBefore?: Date;
+    /**
+     * Overrides the wallet hold's release reason.
+     *
+     * By default a hold released here is stamped `reservation_{reason}`, which
+     * says only that a stock reservation ended. When the release was caused by
+     * named provider evidence — a confirmed NOT_FOUND, an aged registered token
+     * we reverted — the caller passes that name instead, so the hold records
+     * *why* the money came back for the rest of its life. It never changes what
+     * is released or whether it is released.
+     */
+    walletReleaseReason?: string;
   }
 ): Promise<ReleaseOrderReservationResult> {
   if (!trx) {
@@ -239,29 +251,48 @@ export async function releaseOrderReservation(
     // repeating it — or racing another failure path — decrements at most once.
     await releaseOrderDiscountClaim(strapi, orderId, trx);
 
-    if (!transitioned) return { outcome: "skipped" };
+    if (transitioned) {
+      const order = await loadOrderItemsWithStocks(strapi, orderId, trx);
+      const items = order?.order_items || [];
 
-    const order = await loadOrderItemsWithStocks(strapi, orderId, trx);
-    const items = order?.order_items || [];
+      for (const it of items) {
+        const stockId = it?.product_variation?.product_stock?.id;
+        const qty = Number(it?.Count || 0);
+        if (!stockId || qty <= 0) continue;
 
-    for (const it of items) {
-      const stockId = it?.product_variation?.product_stock?.id;
-      const qty = Number(it?.Count || 0);
-      if (!stockId || qty <= 0) continue;
-
-      const result = await releaseReservedStockAtomic(
-        strapi,
-        Number(stockId),
-        qty,
-        trx,
-        context
-      );
-      if (!result.success) {
-        throw new Error(result.error || "release_reserved_failed");
+        const result = await releaseReservedStockAtomic(
+          strapi,
+          Number(stockId),
+          qty,
+          trx,
+          context
+        );
+        if (!result.success) {
+          throw new Error(result.error || "release_reserved_failed");
+        }
       }
     }
 
-    return { outcome: "released" };
+    // Wallet credit committed to this checkout goes back to spendable at the same
+    // moment its stock does, with the same CAS discipline and the same refusal to
+    // touch a settled order. Binding the hold's lifetime to the reservation is what
+    // removes the need for any independent hold sweeper — there is no state where
+    // the reservation is gone but the money is still held.
+    //
+    // It must come *after* the stock loop, not before it. The global lock order is
+    // orders -> payment_attempts -> product_stocks -> wallet, and a settlement for
+    // another order of the same customer holds the stock row while reaching for the
+    // same wallet row. Taking the wallet first here closes that cycle and Postgres
+    // aborts one side with a deadlock — see wallet-lock-order.int.spec.ts, which
+    // reproduces it deterministically. Still unconditional: the two holds can be out
+    // of step, and a CAS'd release repeats safely.
+    await releaseWalletHoldsForOrder(
+      strapi,
+      { orderId, reason: context?.walletReleaseReason || `reservation_${reason}` },
+      trx
+    );
+
+    return transitioned ? { outcome: "released" } : { outcome: "skipped" };
   } catch (e: any) {
     strapi.log.error("releaseOrderReservation failed", {
       orderId,

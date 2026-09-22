@@ -277,6 +277,117 @@ export async function getWalletBalance(
   return Number(payload.data?.balance ?? 0);
 }
 
+/**
+ * The full wallet picture, not just the posted balance.
+ *
+ * Available is what the shopper can actually spend: money committed to a live
+ * checkout of theirs is held and is not offered. Asserting on `balance` alone
+ * would pass while the storefront advertised held credit as spendable.
+ */
+export async function getWalletAvailability(
+  request: APIRequestContext,
+  role: E2EAuthRole = "customer",
+) {
+  const response = await apiGet(request, role, "/local-user-wallet/me");
+  await expectApiOk(response, `read ${role} wallet availability`);
+  const payload = (await response.json()) as {
+    success?: boolean;
+    data?: {
+      balance?: number | string;
+      heldBalance?: number | string;
+      availableBalance?: number | string;
+      reusableBalance?: number | string;
+      holds?: Array<{
+        attemptId: string;
+        paymentAttemptId: number;
+        orderId: number | null;
+        gateway: string;
+        amountIrr: number;
+        state: string;
+        boundAt: string | null;
+      }>;
+    };
+  };
+  expect(payload.success, `${role} wallet response should be successful`).toBe(true);
+  const balanceIrr = Number(payload.data?.balance ?? 0);
+  const heldIrr = Number(payload.data?.heldBalance ?? 0);
+  return {
+    balanceIrr,
+    heldIrr,
+    availableIrr: Number(payload.data?.availableBalance ?? Math.max(0, balanceIrr - heldIrr)),
+    reusableIrr: Number(payload.data?.reusableBalance ?? 0),
+    // Live holds behind `heldIrr`. The storefront needs them to say when the
+    // money comes back; the tests use them to assert it actually does.
+    holds: payload.data?.holds ?? [],
+  };
+}
+
+/** What the store will accept for a top-up right now. Answered even when off. */
+export async function getTopupOptions(
+  request: APIRequestContext,
+  role: E2EAuthRole = "customer",
+) {
+  const response = await apiGet(request, role, "/wallet/topup-options");
+  await expectApiOk(response, "read wallet top-up options");
+  const payload = (await response.json()) as {
+    data?: {
+      enabled?: boolean;
+      gateways?: Array<{ code: string; title: string }>;
+      minToman?: number;
+      maxToman?: number;
+    };
+  };
+  return payload.data ?? {};
+}
+
+/** One customer-visible top-up, by the reference the store minted for it. */
+export async function getTopupStatus(
+  request: APIRequestContext,
+  saleOrderId: string,
+  role: E2EAuthRole = "customer",
+) {
+  const response = await apiGet(
+    request,
+    role,
+    `/wallet/topups/${encodeURIComponent(saleOrderId)}`,
+  );
+  await expectApiOk(response, `read top-up ${saleOrderId}`);
+  const payload = (await response.json()) as {
+    data?: { topup?: Record<string, unknown> } & Record<string, unknown>;
+  };
+  return (payload.data?.topup ?? payload.data ?? {}) as {
+    status?: string;
+    amountToman?: number;
+    gateway?: string;
+    reference?: string | null;
+  };
+}
+
+/**
+ * Every wallet ledger row for this customer, newest first.
+ *
+ * Counting rows is how "credited exactly once" is asserted: a balance that
+ * happens to be right can still have been reached by two credits and a debit.
+ */
+export async function getWalletTransactions(
+  request: APIRequestContext,
+  role: E2EAuthRole = "customer",
+) {
+  const response = await apiGet(
+    request,
+    role,
+    "/local-user-wallet-transactions?sort[0]=id:desc&pagination[pageSize]=100",
+  );
+  await expectApiOk(response, `read ${role} wallet ledger`);
+  const payload = (await response.json()) as {
+    data?: Array<{ id?: number; attributes?: Record<string, unknown> } & Record<string, unknown>>;
+  };
+  return (payload.data ?? []).map((row) => ({
+    id: Number(row.id),
+    ...(row.attributes ?? row),
+  })) as Array<{ id: number; Type?: string; Amount?: number | string; ReferenceId?: string }>;
+}
+
 export async function getCustomerOrderDetail(
   request: APIRequestContext,
   orderId: number,

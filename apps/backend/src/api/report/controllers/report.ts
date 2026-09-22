@@ -1805,8 +1805,9 @@ const reportController = {
       else if (stockStatus === "in") where.push(`ps.count > ${threshold}`);
 
       const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      // Only paidOrdersCte declares bindings, so `params` stays [start, end, ...filters].
       const core = `
-        WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)}, ${PA.aggCte()}
+        WITH ${PA.performanceCtes(joins)}
         ${PA.performanceCoreSelect(joins)}
         ${whereSql}
       `;
@@ -1882,7 +1883,7 @@ const reportController = {
       // Hard cap to protect memory; the visible report is paginated separately.
       const EXPORT_CAP = 10000;
       const sql = `
-        WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)}, ${PA.aggCte()}
+        WITH ${PA.performanceCtes(joins)}
         ${PA.performanceCoreSelect(joins)}
         ${whereSql}
         ORDER BY ${sort.column} ${sort.direction} NULLS LAST
@@ -1891,9 +1892,16 @@ const reportController = {
       const res = await knex.raw(sql, params);
       const rows = rowsOf(res).map((r: any) => PA.serializeProductRow(r, threshold));
 
+      // Every row here is ONE VARIATION, so the variant columns are what make two
+      // rows of the same product tellable apart, and «موجودی» is that variation's
+      // alone. Keep this list index-aligned with `dataRows` below.
       const columns: WorkbookColumn[] = [
         { header: "نام محصول" },
         { header: "SKU" },
+        { header: "رنگ" },
+        { header: "سایز" },
+        { header: "مدل" },
+        { header: "سایر ویژگی‌ها" },
         { header: "نوع" },
         { header: "دسته" },
         { header: "تعداد فروش", numeric: true },
@@ -1903,8 +1911,10 @@ const reportController = {
         { header: "خالص فروش (تومان)", numeric: true },
         { header: "سفارش‌ها", numeric: true },
         { header: "قیمت میانگین (تومان)", numeric: true },
-        { header: "موجودی", numeric: true },
+        { header: "موجودی متغیر", numeric: true },
         { header: "وضعیت موجودی" },
+        { header: "موجودی کل محصول", numeric: true },
+        { header: "تعداد متغیرها", numeric: true },
       ];
       const statusFa: Record<string, string> = {
         in: "موجود",
@@ -1915,6 +1925,10 @@ const reportController = {
       const dataRows = rows.map((r) => [
         r.productTitle,
         r.productSKU,
+        r.variantColor ?? "",
+        r.variantSize ?? "",
+        r.variantModel ?? "",
+        r.variantOther ?? "",
         r.productType ?? "",
         r.category ?? "",
         r.units,
@@ -1926,6 +1940,8 @@ const reportController = {
         r.avgPrice,
         r.currentStock ?? "",
         statusFa[r.stockStatus] ?? "",
+        r.productTotalStock ?? "",
+        r.productVariationCount ?? "",
       ]);
 
       const buffer = await buildStyledWorkbook({
@@ -1970,8 +1986,11 @@ const reportController = {
       }
 
       // All variations of the product, with current stock and window sales.
+      // The attribute CTE is "all"-scoped here: this list includes variations that
+      // never sold, which an `agg`-scoped CTE would leave unlabelled.
       const variationsSql = `
-        WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)}, ${PA.aggCte()}
+        WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)}, ${PA.aggCte()},
+             ${PA.variationAttributesCte(joins, "all")}
         SELECT
           pv.id AS variation_id,
           pv.sku,
@@ -1980,10 +1999,12 @@ const reportController = {
           COALESCE(a.discounts, 0)::numeric AS discounts,
           COALESCE(a.refunds_irr, 0)::numeric AS refunds_irr,
           ps.count AS current_stock,
-          ps.reserved_count AS reserved_stock
+          ps.reserved_count AS reserved_stock,
+          ${PA.variantColumnsSelect(true)}
         FROM product_variations pv
         ${joins.variationToProduct}
         ${joins.variationToStock}
+        ${PA.variantJoins("pv.id")}
         LEFT JOIN agg a ON a.product_variation_id = pv.id
         WHERE p.id = ?
         ORDER BY units DESC, pv.id ASC
@@ -2005,6 +2026,7 @@ const reportController = {
           currentStock: stock,
           reservedStock: r.reserved_stock === null ? null : Number(r.reserved_stock) || 0,
           stockStatus: stock === null ? "unknown" : PA.classifyStock(stock, threshold),
+          ...PA.serializeVariantIdentity(r),
         };
       });
 
@@ -2097,7 +2119,8 @@ const reportController = {
           ${joins.oiToVariation.join}
           JOIN paid_orders po ON po.order_id = o.id
           GROUP BY ${joins.oiToVariation.idExpr}
-        )
+        ),
+        ${PA.variationAttributesCte(joins, "all")}
         SELECT
           pv.id AS variation_id,
           pv.sku,
@@ -2106,10 +2129,12 @@ const reportController = {
           COALESCE(ps.count, 0)::bigint AS current_stock,
           COALESCE(ps.reserved_count, 0)::bigint AS reserved_stock,
           COALESCE(s.units, 0)::bigint AS units_sold,
-          COALESCE(s.gross, 0)::numeric AS gross
+          COALESCE(s.gross, 0)::numeric AS gross,
+          ${PA.variantColumnsSelect()}
         FROM product_variations pv
         ${joins.variationToProduct}
         ${joins.variationToStock}
+        ${PA.variantJoins("pv.id")}
         LEFT JOIN sales s ON s.pvid = pv.id
         WHERE p.removed_at IS NULL AND p.status = 'Active'
       `;
@@ -2128,6 +2153,7 @@ const reportController = {
           gross: Math.round(Number(r.gross) || 0),
           daysOfCover: PA.daysOfCover(stock, units, days),
           stockStatus: PA.classifyStock(stock, threshold),
+          ...PA.serializeVariantIdentity(r),
         };
       });
 

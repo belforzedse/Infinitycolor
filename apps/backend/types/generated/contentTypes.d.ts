@@ -1162,7 +1162,7 @@ export interface ApiIssueReportIssueReport extends Schema.CollectionType {
     createdBy: Attribute.Relation<"api::issue-report.issue-report", "oneToOne", "admin::user"> &
       Attribute.Private;
     description: Attribute.Text & Attribute.Required;
-    issueName: Attribute.String &
+    issueName: Attribute.Text &
       Attribute.Required &
       Attribute.SetMinMaxLength<{
         maxLength: 500;
@@ -1185,7 +1185,7 @@ export interface ApiIssueReportIssueReport extends Schema.CollectionType {
       Attribute.SetMinMaxLength<{
         maxLength: 64;
       }>;
-    sourcePath: Attribute.String &
+    sourcePath: Attribute.Text &
       Attribute.SetMinMaxLength<{
         maxLength: 2048;
       }>;
@@ -1196,7 +1196,7 @@ export interface ApiIssueReportIssueReport extends Schema.CollectionType {
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<"api::issue-report.issue-report", "oneToOne", "admin::user"> &
       Attribute.Private;
-    userAgent: Attribute.String &
+    userAgent: Attribute.Text &
       Attribute.Private &
       Attribute.SetMinMaxLength<{
         maxLength: 4096;
@@ -1493,6 +1493,15 @@ export interface ApiLocalUserWalletLocalUserWallet extends Schema.CollectionType
     > &
       Attribute.Private;
     Description: Attribute.Text;
+    HeldBalance: Attribute.BigInteger &
+      Attribute.Required &
+      Attribute.SetMinMax<
+        {
+          min: "0";
+        },
+        string
+      > &
+      Attribute.DefaultTo<"0">;
     LastTransactionDate: Attribute.DateTime;
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<
@@ -2185,6 +2194,13 @@ export interface ApiPaymentAttemptPaymentAttempt extends Schema.CollectionType {
     failureCode: Attribute.String;
     failureMessage: Attribute.Text;
     Gateway: Attribute.String & Attribute.Required;
+    GatewayAmount: Attribute.BigInteger &
+      Attribute.SetMinMax<
+        {
+          min: "0";
+        },
+        string
+      >;
     lastReconciledAt: Attribute.DateTime;
     leaseUntil: Attribute.DateTime;
     leaseVersion: Attribute.Integer & Attribute.DefaultTo<0>;
@@ -2209,6 +2225,7 @@ export interface ApiPaymentAttemptPaymentAttempt extends Schema.CollectionType {
     > &
       Attribute.Required &
       Attribute.DefaultTo<"Created">;
+    SupersedesAttemptId: Attribute.String;
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<
       "api::payment-attempt.payment-attempt",
@@ -2221,6 +2238,21 @@ export interface ApiPaymentAttemptPaymentAttempt extends Schema.CollectionType {
       "manyToOne",
       "plugin::users-permissions.user"
     >;
+    WalletAmount: Attribute.BigInteger &
+      Attribute.SetMinMax<
+        {
+          min: "0";
+        },
+        string
+      >;
+    WalletCapturedAt: Attribute.DateTime;
+    WalletHeldAt: Attribute.DateTime;
+    WalletHoldStatus: Attribute.Enumeration<
+      ["None", "DirectDebit", "Active", "Captured", "Released"]
+    >;
+    WalletLedgerReferenceId: Attribute.String;
+    WalletReleasedAt: Attribute.DateTime;
+    WalletReleaseReason: Attribute.String;
   };
 }
 
@@ -4188,10 +4220,16 @@ export interface ApiWalletTopupWalletTopup extends Schema.CollectionType {
     createdBy: Attribute.Relation<"api::wallet-topup.wallet-topup", "oneToOne", "admin::user"> &
       Attribute.Private;
     Date: Attribute.DateTime;
+    ExpiresAt: Attribute.DateTime;
+    Gateway: Attribute.Enumeration<["Mellat", "SamanKish", "ZarinPal"]> &
+      Attribute.DefaultTo<"Mellat">;
+    IdempotencyKey: Attribute.String;
     LastProviderCode: Attribute.Integer;
     LastProviderError: Attribute.Text;
+    LedgerReferenceId: Attribute.String;
     NextReconcileAt: Attribute.DateTime;
     Note: Attribute.Text;
+    ProviderReference: Attribute.String;
     ReconcileAttempts: Attribute.Integer &
       Attribute.SetMinMax<
         {

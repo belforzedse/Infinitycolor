@@ -1,3 +1,5 @@
+import { gatewayExpectedAmountIrr } from "../../payment-attempt/services/payment-legs";
+
 /**
  * Durable SnappPay payment-generation identity.
  *
@@ -19,6 +21,18 @@ export type SnappayGenerationRecord = {
   /** Raw token kept so a late callback can still verify the retired generation. */
   paymentToken?: string;
   terminalEvidence?: SnappayTerminalEvidence;
+  /**
+   * SnappPay environment this token was minted against.
+   *
+   * A 404/1007 status answer carries no body to correlate, so the only way to
+   * know the token being declared missing is the one *we* issued — and issued
+   * against the environment we are now asking — is to have recorded that at
+   * mint time. Without it, a base-URL or client-id change would make every
+   * pre-existing token read as "not found" and, once NOT_FOUND release is
+   * enforcing, cancel live orders.
+   */
+  providerHost?: string;
+  clientIdFingerprint?: string;
 };
 
 export type SnappayPendingDispatch = {
@@ -71,6 +85,10 @@ function parseGenerationRecord(value: unknown): SnappayGenerationRecord | undefi
   if (paymentToken) parsed.paymentToken = paymentToken;
   const terminalEvidence = asTerminalEvidence(record.terminalEvidence);
   if (terminalEvidence) parsed.terminalEvidence = terminalEvidence;
+  const providerHost = asNonEmpty(record.providerHost);
+  if (providerHost) parsed.providerHost = providerHost;
+  const clientIdFingerprint = asNonEmpty(record.clientIdFingerprint);
+  if (clientIdFingerprint) parsed.clientIdFingerprint = clientIdFingerprint;
   return parsed;
 }
 
@@ -133,12 +151,49 @@ export function snappayDispatchWasAttempted(
   return Boolean(asNonEmpty(trackId));
 }
 
-export function snappayProviderGenerationIsTerminal(attempt: {
-  providerStatus?: unknown;
-  providerResponse?: unknown;
-}): boolean {
-  const status = String(attempt.providerStatus || "").trim().toUpperCase();
+/**
+ * Evidence kinds that prove the *provider* has nothing live left for this
+ * token.
+ *
+ * Deliberately excludes every local decision — `not_found_confirmed`,
+ * `local_ttl`, `local_ceiling`, `registered_aged`. Those say Infinity ended the
+ * checkout; they say nothing about what SnappPay is still holding, and treating
+ * them as terminal is exactly how a late payment would be silently dropped.
+ */
+export const SNAPPAY_PROVIDER_RESOLVED_EVIDENCE_KINDS = [
+  "provider_revert",
+  "provider_cancel",
+  "late_success_reverted",
+  "registered_reverted",
+] as const;
+
+export function snappayProviderGenerationIsTerminal(
+  attempt: {
+    providerStatus?: unknown;
+    providerResponse?: unknown;
+  },
+  /**
+   * Append-only evidence rows for the attempt, when the caller has them.
+   *
+   * The JSON marker below is a cache, not the record: the observation writer
+   * merges shallowly and guards only `status <> 'Succeeded'`, and a generation
+   * rotation replaces the whole `generation` object including
+   * `terminalEvidence`. A durable answer comes from the evidence table.
+   */
+  evidence?: Array<{ kind?: unknown; decision?: unknown }>,
+): boolean {
+  const status = String(attempt.providerStatus || "")
+    .trim()
+    .toUpperCase();
   if (status === "REVERT" || status === "CANCEL") return true;
+  if (Array.isArray(evidence)) {
+    const resolved = evidence.some((row) =>
+      (SNAPPAY_PROVIDER_RESOLVED_EVIDENCE_KINDS as readonly string[]).includes(
+        String(row?.kind || ""),
+      ),
+    );
+    if (resolved) return true;
+  }
   const state = readSnappayGenerationState(attempt.providerResponse);
   return Boolean(state.generation?.terminalEvidence);
 }
@@ -151,10 +206,11 @@ export function snappayProviderPaymentIsUnresolved(
     providerReference?: unknown;
   },
   trackId?: unknown,
+  evidence?: Array<{ kind?: unknown; decision?: unknown }>,
 ): boolean {
   if (String(attempt.Status || "") === "Succeeded") return false;
   if (!snappayDispatchWasAttempted(attempt, trackId)) return false;
-  return !snappayProviderGenerationIsTerminal(attempt);
+  return !snappayProviderGenerationIsTerminal(attempt, evidence);
 }
 
 export function nextSnappayGenerationSeq(currentSeq: number): number {
@@ -247,7 +303,9 @@ export function seedSnappayGenerationFromLegacyAttempt(input: {
   if (fingerprint) generation.paymentTokenFingerprint = fingerprint;
   const paymentToken = asNonEmpty(input.paymentToken);
   if (paymentToken) generation.paymentToken = paymentToken;
-  const status = String(input.providerStatus || "").trim().toUpperCase();
+  const status = String(input.providerStatus || "")
+    .trim()
+    .toUpperCase();
   if (status === "REVERT" || status === "CANCEL") {
     generation.terminalEvidence = status;
   }
@@ -261,9 +319,7 @@ export function withSnappayPendingDispatch(
 ): Record<string, unknown> {
   const previous = asRecord(providerResponse) || {};
   const state = readSnappayGenerationState(previous);
-  const previousGeneration = state.generation
-    ? { ...state.generation }
-    : state.previousGeneration;
+  const previousGeneration = state.generation ? { ...state.generation } : state.previousGeneration;
   return {
     ...previous,
     ...extra,
@@ -282,6 +338,8 @@ export function withIssuedSnappayToken(
     callbackNonceHash: string;
     paymentTokenFingerprint: string;
     paymentToken: string;
+    providerHost?: string;
+    clientIdFingerprint?: string;
   },
 ): Record<string, unknown> {
   const previous = asRecord(providerResponse) || {};
@@ -293,6 +351,8 @@ export function withIssuedSnappayToken(
     callbackNonceHash: input.callbackNonceHash,
     paymentTokenFingerprint: input.paymentTokenFingerprint,
     paymentToken: input.paymentToken,
+    ...(input.providerHost ? { providerHost: input.providerHost } : {}),
+    ...(input.clientIdFingerprint ? { clientIdFingerprint: input.clientIdFingerprint } : {}),
   };
   const rest = { ...previous };
   delete rest.pendingDispatch;
@@ -325,6 +385,8 @@ export function withSnappayTerminalEvidence(
 export function statusMatchesActiveSnappayGeneration(
   attempt: {
     Amount?: unknown;
+    WalletAmount?: unknown;
+    GatewayAmount?: unknown;
     providerReference?: unknown;
     providerResponse?: unknown;
   },
@@ -338,7 +400,7 @@ export function statusMatchesActiveSnappayGeneration(
     }
   }
   const statusAmount = Number(status.amount);
-  const attemptAmount = Number(attempt.Amount);
+  const attemptAmount = gatewayExpectedAmountIrr(attempt);
   if (Number.isFinite(statusAmount) && statusAmount > 0 && Number.isFinite(attemptAmount)) {
     if (statusAmount !== attemptAmount) {
       return { ok: false, reason: "amount" };
@@ -419,25 +481,23 @@ function tomanToRial(value: unknown): number {
  * matching current TrackId and exact stored URL can support a legacy resume
  * when no competing dispatch exists.
  */
-export function snappayStoredPaymentPageResume(
-  input: {
-    paymentToken: string;
-    urlToken: string;
-    /** Durable TrackId. URL recovery alone is not legacy identity proof. */
-    storedTrackId?: unknown;
-    redirectUrl: unknown;
-    orderStatus: unknown;
-    reservationStatus: unknown;
-    attemptStatus: unknown;
-    attemptAmount: unknown;
-    contractAmountToman?: unknown;
-    quoteTotalToman?: unknown;
-    providerReference?: unknown;
-    providerResponse?: unknown;
-    tokenFingerprint?: string;
-    hasValidatedCallback: boolean;
-  },
-): { ok: boolean; reason?: string } {
+export function snappayStoredPaymentPageResume(input: {
+  paymentToken: string;
+  urlToken: string;
+  /** Durable TrackId. URL recovery alone is not legacy identity proof. */
+  storedTrackId?: unknown;
+  redirectUrl: unknown;
+  orderStatus: unknown;
+  reservationStatus: unknown;
+  attemptStatus: unknown;
+  attemptAmount: unknown;
+  contractAmountToman?: unknown;
+  quoteTotalToman?: unknown;
+  providerReference?: unknown;
+  providerResponse?: unknown;
+  tokenFingerprint?: string;
+  hasValidatedCallback: boolean;
+}): { ok: boolean; reason?: string } {
   if (input.hasValidatedCallback) return { ok: false, reason: "callback-recovery" };
   const attemptStatus = String(input.attemptStatus || "");
   if (["Succeeded", "Cancelled", "Expired"].includes(attemptStatus)) {

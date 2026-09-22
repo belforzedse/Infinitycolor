@@ -17,7 +17,14 @@ const mockedConsume = consumeOrderReservation as jest.MockedFunction<
 >;
 
 function createStrapi(attemptStatus = "Created") {
-  const trx = { marker: "test-transaction", raw: jest.fn().mockResolvedValue({ rows: [{ id: 70 }] }) };
+  const rawCalls: string[] = [];
+  const trx = {
+    marker: "test-transaction",
+    raw: jest.fn(async (sql: string) => {
+      rawCalls.push(String(sql));
+      return { rows: [{ id: 70 }] };
+    }),
+  };
   const queries: Record<string, any> = {
     "api::payment-attempt.payment-attempt": {
       findOne: jest.fn().mockResolvedValue({
@@ -54,7 +61,7 @@ function createStrapi(attemptStatus = "Created") {
       transaction: jest.fn(async (callback: any) => callback({ trx })),
     },
   } as any;
-  return { strapi, queries, trx };
+  return { strapi, queries, trx, rawCalls };
 }
 
 describe("settleOrderWithWallet", () => {
@@ -161,10 +168,33 @@ describe("settleOrderWithWallet", () => {
       discountToman: 0,
     })).rejects.toThrow("WALLET_DEBIT_FAILED:Insufficient balance");
 
-    expect(mockedConsume).not.toHaveBeenCalled();
+    // Stock is now consumed before the wallet is touched, so that the global
+    // lock order (orders -> payment_attempts -> product_stocks -> wallet) holds.
+    // The consume ran inside the transaction that then rolled back, so nothing
+    // durable was written — which is what the remaining assertions check.
+    expect(mockedConsume).toHaveBeenCalledTimes(1);
     expect(queries["api::local-user-wallet-transaction.local-user-wallet-transaction"].create)
       .not.toHaveBeenCalled();
     expect(queries["api::order.order"].update).not.toHaveBeenCalled();
     expect(queries["api::payment-attempt.payment-attempt"].update).not.toHaveBeenCalled();
+  });
+
+  it("takes the order lock before the attempt lock and the wallet last", async () => {
+    const { strapi, rawCalls } = createStrapi();
+
+    await settleOrderWithWallet(strapi, {
+      userId: 3,
+      orderId: 40,
+      contractId: 50,
+      paymentAttemptId: 70,
+      attemptId: "attempt-40",
+      totalToman: 120_000,
+      discountToman: 0,
+    });
+
+    const locks = rawCalls
+      .filter((sql) => /FOR UPDATE/i.test(sql))
+      .map((sql) => (/FROM orders/i.test(sql) ? "orders" : "payment_attempts"));
+    expect(locks.slice(0, 2)).toEqual(["orders", "payment_attempts"]);
   });
 });

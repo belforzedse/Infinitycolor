@@ -349,4 +349,75 @@ describe("SnappPay operation processing guards", () => {
       }),
     );
   });
+
+  it("reverts a REGISTERED token once the shopper says they abandoned it", async () => {
+    // The wallet-hold reclaim path. A SnappPay hold can never be released on
+    // the checkout path, so `requestSnappayCustomerAbandon` stamps the shopper's
+    // claim on this operation and the worker acts on it — but only after reading
+    // the provider, and only for a token SnappPay still reports as uncommitted.
+    const { strapi } = createHarness({ metadata: { customerAbandoned: true } });
+    const revert = jest.fn().mockResolvedValue({
+      successful: false,
+      diagnostic: { endpoint: "revert", httpStatus: 500, providerCode: 0 },
+    });
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: true,
+        response: { status: "REGISTERED" },
+        diagnostic: { endpoint: "status", httpStatus: 200, providerCode: 0 },
+      }),
+      revert,
+    } as any);
+
+    const result = await processSnappayOperation(strapi, 88);
+
+    expect(result).toEqual(expect.objectContaining({ action: "REVERT" }));
+    expect(revert).toHaveBeenCalledWith("provider-payment-token");
+  });
+
+  it("only reconciles the same REGISTERED token without the claim", async () => {
+    // The regression guard for the rule the claim relaxes: age alone is never
+    // proof the shopper will not pay, so nothing is reverted on its own.
+    const { strapi } = createHarness();
+    const revert = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: true,
+        response: { status: "REGISTERED" },
+        diagnostic: { endpoint: "status", httpStatus: 200, providerCode: 0 },
+      }),
+      revert,
+    } as any);
+
+    const result = await processSnappayOperation(strapi, 88);
+
+    expect(result).toEqual(expect.objectContaining({ action: "RECONCILE" }));
+    expect(revert).not.toHaveBeenCalled();
+  });
+
+  it("settles rather than reverts when the provider says the shopper did pay", async () => {
+    // A shopper who pays and then clicks "I didn't pay" keeps their order. The
+    // claim describes their browser, never SnappPay's books.
+    const { strapi } = createHarness({ metadata: { customerAbandoned: true } });
+    const revert = jest.fn();
+    const settle = jest.fn().mockResolvedValue({
+      successful: false,
+      diagnostic: { endpoint: "settle", httpStatus: 500, providerCode: 0 },
+    });
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: true,
+        response: { status: "VERIFY" },
+        diagnostic: { endpoint: "status", httpStatus: 200, providerCode: 0 },
+      }),
+      settle,
+      revert,
+    } as any);
+
+    const result = await processSnappayOperation(strapi, 88);
+
+    expect(result).toEqual(expect.objectContaining({ action: "SETTLE" }));
+    expect(settle).toHaveBeenCalledWith("provider-payment-token");
+    expect(revert).not.toHaveBeenCalled();
+  });
 });

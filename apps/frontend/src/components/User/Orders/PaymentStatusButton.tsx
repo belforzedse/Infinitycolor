@@ -42,7 +42,10 @@ export default function PaymentStatusButton({ orderId, className = "" }: Payment
   };
 
   return (
-    <div className="hidden md:block relative">
+    // Mobile shoppers need this most: checking a payment's status is exactly
+    // what someone does after an abandoned checkout, and hiding the control
+    // below `md` left them with no way to reach it from the orders list.
+    <div className="relative">
       <button
         onClick={checkStatus}
         disabled={loading}

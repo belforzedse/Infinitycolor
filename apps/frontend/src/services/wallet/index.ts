@@ -1,11 +1,50 @@
 import { apiClient } from "../index";
 import { CHECKOUT_MAX_RETRIES, CHECKOUT_REQUEST_TIMEOUT_MS } from "@/constants/api";
+import { toWalletLedgerEntries, type WalletLedgerEntry } from "./ledger";
+
+export type { WalletLedgerEntry } from "./ledger";
+export { splitWalletLedger, toWalletLedgerEntries } from "./ledger";
 
 export interface ChargeIntentResponse {
   success: boolean;
   redirectUrl?: string;
   refId?: string;
   saleOrderId?: string;
+  gateway?: string;
+  /** Mellat and Saman use provider-specific form POSTs; ZarinPal uses GET. */
+  redirectMethod?: "GET" | "POST";
+  formFields?: Record<string, string>;
+  reused?: boolean;
+  topupStatus?: WalletTopupStatus["status"];
+  nextAction?: "redirect" | "poll" | "complete" | "retry";
+  errorCode?: string;
+  message?: string;
+}
+
+/**
+ * One live wallet hold, as the storefront talks about it.
+ *
+ * `boundAt` is the latest moment the money can still be held — the SnappPay
+ * reservation ceiling, or the order's reservation expiry for a bank gateway.
+ * It exists so the page can promise an automatic release *and say by when*,
+ * which is the difference between reassurance and a vague hope.
+ */
+export interface WalletHold {
+  attemptId: string;
+  paymentAttemptId: number;
+  orderId: number | null;
+  gateway: string;
+  amountIrr: number;
+  heldAt: string | null;
+  /**
+   * `reconciling`  — we are asking the provider.
+   * `awaiting_provider` — waiting on the shopper or the gateway's callback.
+   * `reclaimable`  — the shopper can shortcut this with the abandon button.
+   * `releasing`    — resolved; the money is on its way back.
+   */
+  state: "reconciling" | "awaiting_provider" | "reclaimable" | "releasing";
+  nextCheckAt: string | null;
+  boundAt: string | null;
 }
 
 export interface WalletMeResponse {
@@ -13,36 +52,125 @@ export interface WalletMeResponse {
   data?: {
     id?: number | null;
     balance: number; // IRR
+    /** Committed to a live checkout and not spendable yet. */
+    heldBalance?: number;
+    /** balance - heldBalance, in IRR. */
+    availableBalance?: number;
+    /** Live holds behind `heldBalance`, newest first. */
+    holds?: WalletHold[];
+    /**
+     * Of `heldBalance`, the part held by the named earlier attempt of this
+     * customer's — reclaimable by superseding it, so spendable on this
+     * checkout even though it is currently held.
+     */
+    reusableBalance?: number;
     lastTransactionDate?: string;
     description?: string;
   };
 }
 
-export const getMyWallet = async (): Promise<WalletMeResponse> => {
-  const res = await apiClient.get<WalletMeResponse>("/local-user-wallet/me", {
+export interface WalletTopupOptions {
+  enabled: boolean;
+  disabledReason: "disabled" | "no_gateway" | null;
+  gateways: Array<{ code: string; title: string }>;
+  minToman: number;
+  maxToman: number;
+  presetsToman: number[];
+  maxPending: number;
+}
+
+export interface WalletTopupStatus {
+  saleOrderId: string;
+  status: "Pending" | "Processing" | "Unknown" | "Success" | "Failed" | "Cancelled";
+  gateway: string;
+  amountToman: number;
+  amountIrr: number;
+  createdAt?: string | null;
+  expiresAt?: string | null;
+  reference?: string | null;
+}
+
+export const getMyWallet = async (
+  /** An earlier attempt of this customer's whose hold this checkout replaces. */
+  reusableAttemptId?: string,
+): Promise<WalletMeResponse> => {
+  const query = reusableAttemptId
+    ? `?reusableAttemptId=${encodeURIComponent(reusableAttemptId)}`
+    : "";
+  const res = await apiClient.get<WalletMeResponse>(`/local-user-wallet/me${query}`, {
     timeout: CHECKOUT_REQUEST_TIMEOUT_MS,
     retries: CHECKOUT_MAX_RETRIES,
   });
   return res as any;
 };
 
-export const startTopup = async (
-  amountIrr: number,
-): Promise<{
-  success: boolean;
-  redirectUrl?: string;
-  refId?: string;
-  saleOrderId?: string;
-}> => {
-  const res = await apiClient.post<ChargeIntentResponse>("/wallet/charge-intent", {
-    amount: amountIrr,
-  });
+/** What the store will accept right now. Answered even when top-ups are off. */
+export const getTopupOptions = async (): Promise<WalletTopupOptions> => {
+  const res = await apiClient.get<{ data?: WalletTopupOptions }>("/wallet/topup-options");
+  const data = (res as any)?.data;
   return {
-    success: !!res?.data?.success,
-    redirectUrl: res?.data?.redirectUrl,
-    refId: res?.data?.refId,
-    saleOrderId: res?.data?.saleOrderId,
-  } as any;
+    enabled: Boolean(data?.enabled),
+    disabledReason: data?.disabledReason ?? null,
+    gateways: Array.isArray(data?.gateways) ? data.gateways : [],
+    minToman: Number(data?.minToman || 0),
+    maxToman: Number(data?.maxToman || 0),
+    presetsToman: Array.isArray(data?.presetsToman) ? data.presetsToman : [],
+    maxPending: Number(data?.maxPending || 0),
+  };
+};
+
+/**
+ * Opens a payment session.
+ *
+ * `idempotencyKey` is what makes a double submit — a second tap, a retried
+ * request after a dropped response — return the original intent instead of
+ * opening a second payment.
+ */
+export const startTopup = async (params: {
+  amountToman: number;
+  gateway?: string;
+  idempotencyKey?: string;
+}): Promise<ChargeIntentResponse> => {
+  const res = await apiClient.post<{ data?: ChargeIntentResponse }>(
+    "/wallet/charge-intent",
+    {
+      amountToman: params.amountToman,
+      ...(params.gateway ? { gateway: params.gateway } : {}),
+      ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+    },
+  );
+  const data = (res as any)?.data;
+  return {
+    success: Boolean(data?.success),
+    redirectUrl: data?.redirectUrl,
+    refId: data?.refId,
+    saleOrderId: data?.saleOrderId,
+    gateway: data?.gateway,
+    redirectMethod: data?.redirectMethod,
+    formFields: data?.formFields,
+    reused: data?.reused,
+    topupStatus: data?.topupStatus,
+    nextAction: data?.nextAction,
+    errorCode: data?.errorCode,
+    message: data?.message,
+  };
+};
+
+/** Owner-scoped status, so the page never has to trust its own query string. */
+export const getTopupStatus = async (
+  saleOrderId: string,
+): Promise<WalletTopupStatus | null> => {
+  const res = await apiClient.get<{ data?: { topup?: WalletTopupStatus } }>(
+    `/wallet/topups/${encodeURIComponent(saleOrderId)}`,
+  );
+  return (res as any)?.data?.topup ?? null;
+};
+
+export const getMyTopups = async (): Promise<WalletTopupStatus[]> => {
+  const res = await apiClient.get<{ data?: { topups?: WalletTopupStatus[] } }>(
+    "/wallet/topups",
+  );
+  return (res as any)?.data?.topups ?? [];
 };
 
 export interface WalletTransaction {
@@ -68,11 +196,30 @@ export interface WalletTransactionsResponse {
   };
 }
 
-export const getWalletTransactions = async (walletId: number): Promise<WalletTransactionsResponse> => {
-  const res = await apiClient.get<WalletTransactionsResponse>(
-    `/local-user-wallet-transactions?filters[user_wallet][id][$eq]=${walletId}&sort[0]=Date:desc&pagination[pageSize]=100`
+const toLegacyWalletTransactions = (entries: WalletLedgerEntry[]): WalletTransaction[] =>
+  entries.map((entry) => ({
+    id: entry.id,
+    Amount: entry.amountIrr,
+    Type: entry.type,
+    Date: entry.date,
+    Cause: entry.cause,
+    ReferenceId: entry.referenceId,
+    Note: entry.note,
+  }));
+
+/** Owner-scoped flat ledger. Does not depend on a wallet id the page already has. */
+export const getMyWalletTransactions = async (): Promise<WalletLedgerEntry[]> => {
+  const page = await apiClient.get<unknown[]>(
+    "/local-user-wallet/me/transactions?page=1&pageSize=100",
   );
-  return res as any;
+  return toWalletLedgerEntries(page.data);
+};
+
+export const getWalletTransactions = async (
+  _walletId?: number,
+): Promise<WalletTransactionsResponse> => {
+  const entries = await getMyWalletTransactions();
+  return { data: toLegacyWalletTransactions(entries) };
 };
 
 export interface AdminWalletResponse {
@@ -110,7 +257,11 @@ export const adminAdjustWallet = async (
 
 const WalletService = {
   getMyWallet,
+  getTopupOptions,
   startTopup,
+  getTopupStatus,
+  getMyTopups,
+  getMyWalletTransactions,
   getWalletTransactions,
   adminGetUserWallet,
   adminAdjustWallet,

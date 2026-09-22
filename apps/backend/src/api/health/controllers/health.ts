@@ -1,4 +1,5 @@
 import { RedisClient } from "../../../index";
+import { metricsSnapshot } from "../../../utils/metrics";
 
 type HealthCheckStatus = "ok" | "fail";
 
@@ -72,6 +73,10 @@ export default {
           configured: Boolean(process.env.REDIS_URL),
         },
       },
+      // In-process counters since the last restart. Operational only: nothing
+      // decides anything from them, and anything a decision depends on lives in
+      // `payment_attempt_evidence`.
+      metrics: metricsSnapshot(strapi),
     };
   },
 };

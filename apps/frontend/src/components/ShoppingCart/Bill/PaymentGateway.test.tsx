@@ -24,7 +24,9 @@ describe("ShoppingCartBillPaymentGateway", () => {
     expect(screen.getByTestId("payment-gateway-mellat")).toBeInTheDocument();
     expect(screen.getByTestId("payment-gateway-snappay")).toBeInTheDocument();
     expect(screen.getByTestId("payment-gateway-zarinpal")).toBeInTheDocument();
-    expect(screen.getByTestId("payment-gateway-wallet")).toBeInTheDocument();
+    // The wallet is a tender the shopper ticks above the gateways, not a bank
+    // to pick between. Offering it here made them look mutually exclusive.
+    expect(screen.queryByTestId("payment-gateway-wallet")).not.toBeInTheDocument();
   });
 
   it("hides excluded gateways", () => {
@@ -37,7 +39,7 @@ describe("ShoppingCartBillPaymentGateway", () => {
     );
 
     expect(screen.getByTestId("payment-gateway-samankish")).toBeInTheDocument();
-    expect(screen.getByTestId("payment-gateway-wallet")).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-gateway-wallet")).not.toBeInTheDocument();
     expect(screen.queryByTestId("payment-gateway-mellat")).not.toBeInTheDocument();
     expect(screen.queryByTestId("payment-gateway-snappay")).not.toBeInTheDocument();
     expect(screen.queryByTestId("payment-gateway-zarinpal")).not.toBeInTheDocument();
@@ -54,6 +56,41 @@ describe("ShoppingCartBillPaymentGateway", () => {
     );
 
     expect(screen.queryByTestId("payment-gateway-snappay")).not.toBeInTheDocument();
+  });
+
+  it("says why SnappPay is gone when a wallet split excludes it", () => {
+    // Hiding the card on its own reads as a glitch. The shopper has to be told
+    // the wallet tick is what removed it, since unticking brings it back.
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="samankish"
+        onChange={onChange}
+        availableGateways={["samankish", "snappay"]}
+        snappEligible={false}
+        snappBlockedByWalletSplit
+      />,
+    );
+
+    expect(screen.queryByTestId("payment-gateway-snappay")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("payment-gateway-snappay-wallet-blocked"),
+    ).toBeInTheDocument();
+  });
+
+  it("stays silent about SnappPay when the store never offered it", () => {
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="samankish"
+        onChange={onChange}
+        availableGateways={["samankish"]}
+        snappEligible={false}
+        snappBlockedByWalletSplit
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("payment-gateway-snappay-wallet-blocked"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders SnappPay disabled before eligibility is known", () => {
@@ -151,39 +188,21 @@ describe("ShoppingCartBillPaymentGateway", () => {
     );
   });
 
-  it("does not select wallet when balance is insufficient", async () => {
-    const user = userEvent.setup();
+  it("offers no bank at all once credit covers the whole order", () => {
     render(
       <ShoppingCartBillPaymentGateway
         selected="samankish"
         onChange={onChange}
-        availableGateways={["samankish", "wallet"]}
-        walletBalanceIrr={5_000}
-        requiredAmountIrr={10_000}
+        availableGateways={["samankish", "mellat", "zarinpal"]}
+        walletCoversTotal
       />,
     );
 
-    const wallet = screen.getByTestId("payment-gateway-wallet");
-    expect(wallet).toHaveAttribute("data-disabled", "true");
-
-    await user.click(wallet);
-
-    expect(onChange).not.toHaveBeenCalled();
-  });
-
-  it("marks an affordable selected wallet option", () => {
-    render(
-      <ShoppingCartBillPaymentGateway
-        selected="wallet"
-        onChange={onChange}
-        availableGateways={["wallet"]}
-        walletBalanceIrr={50_000}
-        requiredAmountIrr={10_000}
-      />,
-    );
-
-    const wallet = screen.getByTestId("payment-gateway-wallet");
-    expect(wallet).toHaveAttribute("data-disabled", "false");
-    expect(wallet).toHaveAttribute("data-selected", "true");
+    // Nothing is left for a bank to carry, so a choice here would have no
+    // effect. The shopper is told why rather than shown a dead list.
+    expect(screen.getByTestId("payment-gateway-wallet-only")).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-gateway-samankish")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("payment-gateway-mellat")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("payment-gateway-zarinpal")).not.toBeInTheDocument();
   });
 });

@@ -84,6 +84,18 @@ jest.mock("@/contexts/CartContext", () => ({
 jest.mock("@/services", () => ({
   CartService: {
     getAvailableGateways: jest.fn().mockResolvedValue(["samankish"]),
+    // Capabilities travel with the gateway list so the UI never infers a server
+    // feature flag from an absent field.
+    getCheckoutPaymentOptions: jest.fn().mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: false,
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    }),
     getSnappEligible: jest.fn().mockResolvedValue({ eligible: false }),
     applyDiscount: jest.fn(),
     checkCartStock: jest.fn().mockResolvedValue({ valid: true }),
@@ -128,8 +140,9 @@ jest.mock("./InformationForm", () => ({
 
 jest.mock("./DeliveryForm", () => ({
   __esModule: true,
-  default: ({ setValue }: any) => (
+  default: ({ setValue, walletTender }: any) => (
     <div data-testid="checkout-delivery-form">
+      {walletTender}
       <button
         type="button"
         data-testid="select-shipping"
@@ -217,8 +230,19 @@ jest.mock("./DiscountCoupon", () => ({
 
 jest.mock("./PaymentGateway", () => ({
   __esModule: true,
-  default: ({ availableGateways, onChange, snappEligible }: any) => (
-    <div data-testid="checkout-payment-gateway" data-snapp-eligible={String(snappEligible)}>
+  default: ({
+    availableGateways,
+    onChange,
+    snappEligible,
+    walletAvailableIrr,
+    snappBlockedByWalletSplit,
+  }: any) => (
+    <div
+      data-testid="checkout-payment-gateway"
+      data-snapp-eligible={String(snappEligible)}
+      data-wallet-available-irr={String(walletAvailableIrr ?? 0)}
+      data-snapp-blocked-by-wallet-split={String(Boolean(snappBlockedByWalletSplit))}
+    >
       <span data-testid="checkout-payment-gateway-count">{availableGateways?.length ?? 0}</span>
       {availableGateways?.includes("snappay") && (
         <button type="button" data-testid="select-snappay" onClick={() => onChange("snappay")}>
@@ -230,11 +254,7 @@ jest.mock("./PaymentGateway", () => ({
           select Mellat
         </button>
       )}
-      {availableGateways?.includes("wallet") && (
-        <button type="button" data-testid="select-wallet" onClick={() => onChange("wallet")}>
-          select wallet
-        </button>
-      )}
+
     </div>
   ),
 }));
@@ -267,6 +287,26 @@ describe("ShoppingCartBillForm auth gate", () => {
     mockPush.mockReset();
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["samankish"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: ["samankish"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: false,
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: false });
     (CartService.checkCartStock as jest.Mock).mockResolvedValue({ valid: true });
     (CartService.applyDiscount as jest.Mock).mockResolvedValue({
@@ -445,6 +485,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("shows no gateway options and blocks submit when no backend gateways are active", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue([]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: [],
+      paymentCapabilities: {
+        walletEnabled: [].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
 
     const store = createStore();
     store.set(currentUserAtom, { id: 1 });
@@ -472,6 +522,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("submits SnappPay only with a server quote and stable payment attempt", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:snappay-quote",
@@ -546,6 +606,16 @@ describe("ShoppingCartBillForm auth gate", () => {
     const paymentPageUrl = "https://pay.snapp.test/start?paymentToken=resume-token";
 
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:snappay-resume-quote",
@@ -608,6 +678,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("on bfcache restore only unsticks پرداخت and does not auto-redirect to SnappPay", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
 
     const store = createStore();
@@ -642,6 +722,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("routes an immediately paid wallet order to the canonical result page", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet"],
+      paymentCapabilities: {
+        walletEnabled: ["wallet"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:wallet-quote",
       financialSummary: {
@@ -651,6 +741,11 @@ describe("ShoppingCartBillForm auth gate", () => {
         shipping: 20_000,
         total: 120_000,
       },
+    });
+    // 120,000 toman of order against 500,000 toman of spendable credit.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 5_000_000, heldBalance: 0, availableBalance: 5_000_000 },
     });
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: true,
@@ -669,16 +764,331 @@ describe("ShoppingCartBillForm auth gate", () => {
       </Provider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId("select-wallet")).toBeVisible());
+    await waitFor(() =>
+      expect(screen.getByTestId("select-checkout-customer")).toBeVisible(),
+    );
     fireEvent.click(screen.getByTestId("select-checkout-customer"));
     fireEvent.click(screen.getByTestId("select-shipping"));
-    fireEvent.click(screen.getByTestId("select-wallet"));
+    // Ticking the wallet is the whole choice: it spends as much of the order
+    // as the shopper has, which here is all of it, so no bank is involved.
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
     fireEvent.click(screen.getByTestId("checkout-accept-terms"));
     fireEvent.click(screen.getByTestId("checkout-submit"));
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=88");
     });
+    expect((CartService.finalizeCart as jest.Mock).mock.calls.at(-1)?.[0]).toMatchObject({
+      gateway: "wallet",
+    });
+  });
+
+  it("offers the wallet-only card no credit while another checkout holds the balance", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    // The posted balance would cover the order, but every rial of it is
+    // committed to a checkout this shopper already started.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 5_000_000, heldBalance: 5_000_000, availableBalance: 0 },
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+        "data-wallet-available-irr",
+        "0",
+      );
+    });
+  });
+
+  it("names the predecessor on a wallet-only checkout, not just a partial one", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    // Everything is held by the shopper's own earlier attempt, and all of it is
+    // reclaimable — which is what makes the wallet-only card offerable at all.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        balance: 1_200_000,
+        heldBalance: 1_200_000,
+        availableBalance: 0,
+        reusableBalance: 1_200_000,
+      },
+    });
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:wallet-only-quote",
+      financialSummary: { subtotal: 100_000, discount: 0, tax: 0, shipping: 20_000, total: 120_000 },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: true,
+      orderId: 91,
+      redirectUrl: "",
+      paymentStatus: "Succeeded",
+    });
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-being-replaced");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:older-quote");
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("select-checkout-customer")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    // Credit covers the whole order, so this is a wallet-only checkout and the
+    // server still needs the predecessor named to hand its hold back.
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => expect(CartService.getCheckoutQuote).toHaveBeenCalled());
+    const quotePayload = (CartService.getCheckoutQuote as jest.Mock).mock.calls.at(-1)?.[0];
+    expect(quotePayload).toMatchObject({
+      gateway: "wallet",
+      supersedeAttemptId: "attempt-being-replaced",
+      // The whole order, stated explicitly, so the server resolves the same
+      // wallet-only allocation the card just showed the shopper.
+      walletAmountToman: 120_000,
+    });
+
+    await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalled());
+    expect((CartService.finalizeCart as jest.Mock).mock.calls.at(-1)?.[0]).toMatchObject({
+      supersedeAttemptId: "attempt-being-replaced",
+    });
+  });
+
+  it("re-reads the wallet when bfcache restores the page after a gateway trip", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    // Read before the shopper left for the bank: their credit is committed to
+    // the attempt they are about to abandon, so nothing is spendable and the
+    // contribution card hides itself.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        balance: 1_200_000,
+        heldBalance: 1_200_000,
+        availableBalance: 0,
+        reusableBalance: 0,
+      },
+    });
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-abandoned-at-bank");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:abandoned-quote");
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("select-checkout-customer")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    await waitFor(() => expect(WalletService.getMyWallet).toHaveBeenCalled());
+    expect(screen.queryByTestId("wallet-contribution-toggle")).toBeNull();
+
+    // They pressed back at the bank. The server now counts that attempt's hold
+    // as theirs to reclaim, but bfcache does not remount, so without an
+    // explicit re-read the card would stay hidden on a stale zero.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        balance: 1_200_000,
+        heldBalance: 1_200_000,
+        availableBalance: 0,
+        reusableBalance: 1_200_000,
+      },
+    });
+    (WalletService.getMyWallet as jest.Mock).mockClear();
+
+    await act(async () => {
+      const persisted = new Event("pageshow") as PageTransitionEvent;
+      Object.defineProperty(persisted, "persisted", { value: true });
+      window.dispatchEvent(persisted);
+    });
+
+    await waitFor(() =>
+      expect(WalletService.getMyWallet).toHaveBeenCalledWith("attempt-abandoned-at-bank"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+  });
+
+  it("re-asks SnappPay about the gateway leg when the wallet is ticked", async () => {
+    // Wallet credit is a tender, not a discount: the order total does not move
+    // when the box is ticked, so keying the eligibility check on the total left
+    // SnappPay answering about an amount it would never be charged.
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue([
+      "wallet",
+      "snappay",
+      "mellat",
+    ]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat", "snappay"],
+        gatewayMinimumsToman: { mellat: 1000, snappay: 1000 },
+      },
+    });
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    // 40,000 toman of credit against a 100,000 toman order.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 400_000, heldBalance: 0, availableBalance: 400_000 },
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
+    });
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 100_000 });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(2);
+    });
+    // 100,000 total - 40,000 wallet: the leg the server checks at the quote.
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 60_000 });
+
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(3);
+    });
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 100_000 });
+  });
+
+  it("withholds SnappPay instead of asking about a split the server refuses", async () => {
+    // `splitGateways` without snappay is the server saying it will refuse the
+    // combination with WALLET_SPLIT_UNSUPPORTED_GATEWAY before any eligibility
+    // call — so there is nothing to ask, and nothing to offer.
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue([
+      "wallet",
+      "snappay",
+      "mellat",
+    ]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 400_000, heldBalance: 0, availableBalance: 400_000 },
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+        "data-snapp-blocked-by-wallet-split",
+        "true",
+      );
+    });
+    // Settled "no", not "unknown": this is what takes the card out of the
+    // selectable list so a bank is picked instead.
+    expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+      "data-snapp-eligible",
+      "false",
+    );
+    expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
   });
 
   it("blocks payment until the shopper accepts the site terms", async () => {
@@ -1369,6 +1779,16 @@ describe("ShoppingCartBillForm auth gate", () => {
     window.localStorage.setItem("pendingCheckoutOrderId", "111459");
     window.localStorage.setItem("pendingCheckoutGateway", "snappay");
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay", "mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:card-quote",
@@ -1431,6 +1851,16 @@ describe("ShoppingCartBillForm auth gate", () => {
     window.localStorage.setItem("pendingCheckoutOrderId", "111459");
     window.localStorage.setItem("pendingCheckoutGateway", "snappay");
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay", "mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
 
     const store = createStore();
@@ -1556,6 +1986,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("mints a new attempt when only the coupon is applied, then again when it is removed", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.applyDiscount as jest.Mock).mockResolvedValue({
       success: true,
       discount: 10_000,
@@ -1670,6 +2110,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("mints a new attempt when only shipping changes on an unpaid checkout", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getCheckoutQuote as jest.Mock)
       .mockResolvedValueOnce({
         quoteHash: "sha256:post-shipping",

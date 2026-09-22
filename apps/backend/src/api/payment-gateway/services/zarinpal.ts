@@ -24,11 +24,14 @@ type ZarinPalRequestParams = {
   mobile?: string;
   email?: string;
   description?: string;
+  /** Purpose-specific return URL, e.g. the wallet top-up callback. */
+  callbackUrl?: string;
 };
 
 type ZarinPalVerifyParams = {
   authority: string;
   amountToman: number;
+  callbackUrl?: string;
 };
 
 const REQUEST_ENDPOINT = "/pg/v4/payment/request.json";
@@ -55,6 +58,42 @@ const normalizeMobile = (raw?: string): string | undefined => {
 const isLocalCallbackUrl = (value?: string): boolean =>
   /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(String(value || "").trim());
 
+/**
+ * Deterministic mode short-circuits the provider and mints a synthetic
+ * authority. It is an explicit opt-in and nothing else: a callback URL that
+ * happens to point at localhost is a deployment detail, not consent to accept
+ * fabricated receipts, and in a production build it is refused outright so a
+ * stray environment variable cannot turn real payments into simulated ones.
+ */
+export const isZarinPalSimulated = (): boolean => {
+  if (!isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC)) return false;
+  if (String(process.env.NODE_ENV || "").trim().toLowerCase() === "production") {
+    throw new Error(
+      "ZARINPAL_SIMULATION_REFUSED: deterministic ZarinPal cannot be enabled in a production build",
+    );
+  }
+  return true;
+};
+
+/** Authorities minted by deterministic mode, and only by it. */
+export const isSimulatedAuthority = (authority?: string | null): boolean =>
+  /^E2E-/.test(String(authority || "").trim());
+
+/**
+ * The gateway amount a simulated authority was minted for, or null when the
+ * authority is not one of ours or carries no amount.
+ *
+ * `E2E-{orderId}-{amount}-{requestId}`. Authorities minted before the amount
+ * was included return null, and the caller treats that as unverifiable rather
+ * than as agreement.
+ */
+export const simulatedAuthorityAmount = (authority?: string | null): number | null => {
+  const match = /^E2E-\d+-(\d+)-/.exec(String(authority || "").trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+};
+
 const sanitizeGatewayResponse = (value: unknown) => {
   if (!value || typeof value !== "object") return value;
   const clone = JSON.parse(JSON.stringify(value));
@@ -75,10 +114,13 @@ const isAmbiguousVerificationFailure = (error: any): boolean => {
 };
 
 export default ({ strapi }: { strapi: Strapi }) => ({
-  getConfig(): ZarinPalConfig {
+  getConfig(callbackUrlOverride?: string): ZarinPalConfig {
     const baseUrl = (process.env.URL || "").trim().replace(/\/$/, "");
+    // Wallet top-ups return to their own endpoint, not the order callback, so
+    // a credit can never be mistaken for an order settlement.
     const callbackUrl = String(
-      process.env.ZARINPAL_CALLBACK_URL ||
+      callbackUrlOverride ||
+        process.env.ZARINPAL_CALLBACK_URL ||
         (baseUrl ? `${baseUrl}/api/orders/payment-callback` : ""),
     ).trim();
 
@@ -86,8 +128,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       throw new Error("ZarinPal callback URL is not configured");
     }
 
-    const deterministic =
-      isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) || isLocalCallbackUrl(callbackUrl);
+    const deterministic = isZarinPalSimulated();
     const merchantId =
       String(process.env.ZARINPAL_MERCHANT_ID || "").trim() ||
       (deterministic ? E2E_SANDBOX_MERCHANT_ID : "");
@@ -126,7 +167,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
   async requestPayment(params: ZarinPalRequestParams) {
     const requestId = `ZP-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const config = this.getConfig();
+    const config = this.getConfig(params.callbackUrl);
     const client = this.createClient(config);
     const amount = this.amountForGateway(params.amountToman, config.currency);
     this.assertValidAmount(amount, config.currency);
@@ -134,11 +175,11 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       `[${requestId}] ZarinPal config resolved merchantIdLength=${config.merchantId.length} sandbox=${config.sandbox} callbackIsLocal=${isLocalCallbackUrl(config.callbackUrl)} e2eDeterministic=${isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC)}`,
     );
 
-    if (
-      isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) ||
-      isLocalCallbackUrl(config.callbackUrl)
-    ) {
-      const authority = `E2E-${params.orderId}-${requestId}`;
+    if (config.sandbox && isZarinPalSimulated()) {
+      // The amount is minted into the authority. Verification is stateless, so
+      // this is what lets the simulated verify refuse a mismatched amount the
+      // way the real gateway does, instead of approving whatever it is handed.
+      const authority = `E2E-${params.orderId}-${amount}-${requestId}`;
       return {
         success: true,
         authority,
@@ -211,7 +252,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       };
     } catch (error: any) {
       const details = parseGatewayError(error);
-      strapi.log.error(`[${requestId}] ZarinPal payment request error`, details);
+      strapi.log.error(`[${requestId}] ZarinPal payment request error`, {
+        message: details.message,
+        status: details.status,
+      });
       return {
         success: false,
         requestId,
@@ -225,14 +269,55 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
   async verifyPayment(params: ZarinPalVerifyParams) {
     const requestId = `ZPVERIFY-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const config = this.getConfig();
+    const config = this.getConfig(params.callbackUrl);
     const client = this.createClient(config);
     const amount = this.amountForGateway(params.amountToman, config.currency);
     this.assertValidAmount(amount, config.currency);
 
+    // A simulated authority is verified without contacting ZarinPal, but not
+    // without checking anything: the amount must be exactly the one the
+    // authority was minted for. Anything else — a real authority reaching this
+    // branch, an authority with no minted amount, a mismatched amount — is
+    // refused, so the branch can only ever confirm a payment this process
+    // itself started for this amount.
+    if (config.sandbox && isZarinPalSimulated() && isSimulatedAuthority(params.authority)) {
+      const minted = simulatedAuthorityAmount(params.authority);
+      if (minted === null || minted !== amount) {
+        strapi.log.warn(
+          `[${requestId}] Simulated ZarinPal verification refused: authority amount was ${minted ?? "missing"} ${config.currency}, asked to verify ${amount}`,
+        );
+        return {
+          success: false,
+          code: -51,
+          requestId,
+          amount,
+          currency: config.currency,
+          error:
+            minted === null
+              ? "Simulated authority carries no amount"
+              : "Simulated authority amount mismatch",
+          gatewayResponse: { deterministic: true, minted },
+        };
+      }
+      strapi.log.info(
+        `[${requestId}] Simulated ZarinPal verification at ${amount} ${config.currency}`,
+      );
+      return {
+        success: true,
+        alreadyVerified: false,
+        code: 100,
+        message: "Simulated verification",
+        refId: `E2EREF-${String(params.authority).replace(/^E2E-/, "")}`,
+        requestId,
+        amount,
+        currency: config.currency,
+        gatewayResponse: { deterministic: true, sandbox: config.sandbox },
+      };
+    }
+
     try {
       strapi.log.info(`[${requestId}] Verifying ZarinPal payment`, {
-        authority: params.authority,
+        hasAuthority: Boolean(params.authority),
         amount,
         currency: config.currency,
         sandbox: config.sandbox,
@@ -263,7 +348,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     } catch (error: any) {
       const details = parseGatewayError(error);
       const ambiguous = isAmbiguousVerificationFailure(error);
-      strapi.log.error(`[${requestId}] ZarinPal verification error`, details);
+      strapi.log.error(`[${requestId}] ZarinPal verification error`, {
+        message: details.message,
+        status: details.status,
+      });
       return {
         success: false,
         ambiguous,

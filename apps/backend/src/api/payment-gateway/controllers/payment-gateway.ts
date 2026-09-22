@@ -12,6 +12,11 @@ import {
   assertSnappayRuntimeConfig,
   isSnappayHardenedInitiationEnabled,
 } from "../services/snappay-orchestrator";
+import { buildPaymentCapabilities } from "../../cart/services/lib/payment-allocation";
+import {
+  isWalletSnappaySplitEnabled,
+  isWalletSplitEnabled,
+} from "../../local-user-wallet/services/wallet-readiness";
 
 export default factories.createCoreController(
   "api::payment-gateway.payment-gateway",
@@ -19,7 +24,15 @@ export default factories.createCoreController(
     async availableGateways(ctx) {
       try {
         const gateways = await getAvailableCheckoutGateways(strapi);
-        return ctx.send({ data: { gateways } });
+        // Reported alongside the gateways so the storefront renders what the
+        // server will actually accept, instead of inferring a feature flag from
+        // a field that happens to be missing from a later response.
+        const paymentCapabilities = buildPaymentCapabilities({
+          walletGatewayAvailable: gateways.some((gateway) => gateway.code === "wallet"),
+          splitEnabled: isWalletSplitEnabled(),
+          snappaySplitEnabled: isWalletSnappaySplitEnabled(),
+        });
+        return ctx.send({ data: { gateways, paymentCapabilities } });
       } catch (error) {
         strapi.log.error("Failed to resolve available checkout gateways", {
           message: (error as Error)?.message || String(error),

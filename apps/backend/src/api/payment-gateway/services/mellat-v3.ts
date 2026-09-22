@@ -250,7 +250,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
         strapi.log.info(`[${requestId}] [ATTEMPT ${attempt}/${maxRetries}] Payment response received in ${paymentDuration}ms:`, {
           resCode,
-          refId,
+          hasRefId: Boolean(refId),
           success: resCode === 0,
         });
 
@@ -259,7 +259,6 @@ export default ({ strapi }: { strapi: Strapi }) => ({
           if (!refId || refId.trim() === "") {
             strapi.log.error(`[${requestId}] RefId is missing from successful response`, {
               resCode,
-              response: response,
             });
             throw new Error("RefId not received from Mellat gateway");
           }
@@ -268,8 +267,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
           const totalDuration = Date.now() - startTime;
 
           strapi.log.info(`[${requestId}] ========== PAYMENT REQUEST SUCCESSFUL (${totalDuration}ms) ==========`, {
-            refId,
-            redirectUrl,
+            hasRefId: true,
             resCode,
           });
 

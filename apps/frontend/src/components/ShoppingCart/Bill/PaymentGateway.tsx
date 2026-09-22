@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import Image from "next/image";
 import classNames from "classnames";
 import { type CheckoutGatewayCode } from "@/services/cart/types/cart";
@@ -10,8 +10,18 @@ interface Props {
   snappEligible?: boolean;
   snappTitle?: string;
   snappDescription?: string;
-  walletBalanceIrr?: number;
-  requiredAmountIrr?: number;
+  /**
+   * The shopper has chosen to cover the whole order from their wallet, so the
+   * bank gateways are not part of this payment.
+   */
+  walletCoversTotal?: boolean;
+  /**
+   * A partial wallet tender is in play and SnappPay is not one of the gateways
+   * the server will split with. The card is withheld rather than left to fail
+   * at the quote, and the reason is said out loud so the shopper can see that
+   * unticking the wallet brings it back.
+   */
+  snappBlockedByWalletSplit?: boolean;
 }
 
 function ShoppingCartBillPaymentGateway({
@@ -21,12 +31,9 @@ function ShoppingCartBillPaymentGateway({
   snappEligible,
   snappTitle,
   snappDescription,
-  walletBalanceIrr = 0,
-  requiredAmountIrr = 0,
+  walletCoversTotal = false,
+  snappBlockedByWalletSplit = false,
 }: Props) {
-  const [walletHovered, setWalletHovered] = useState(false);
-  const walletDisabled = walletBalanceIrr < requiredAmountIrr || requiredAmountIrr <= 0;
-  const showWalletDetails = walletHovered || selected === "wallet";
 
   const snappDisplayTitle = snappTitle?.trim() || "اسنپ پی";
   const snappDisplayDescription = snappDescription?.trim();
@@ -57,21 +64,6 @@ function ShoppingCartBillPaymentGateway({
     img: "/images/cart/zarinpal.svg",
   };
 
-  const wallet = {
-    id: "wallet" as const,
-    name: "کیف پول",
-    img: "/images/cart/wallet.svg",
-    disabled: walletDisabled,
-    helper: (
-      <a
-        href="/wallet"
-        className="text-sm inline-block cursor-pointer rounded-md bg-infinity-primary px-4 py-2 font-medium text-white transition-colors hover:bg-infinity-primary"
-      >
-        شارژ کیف پول
-      </a>
-    ),
-  };
-
   const snappay = {
     id: "snappay" as const,
     name: snappDisplayTitle,
@@ -84,11 +76,32 @@ function ShoppingCartBillPaymentGateway({
   const showMellat = availableGateways.includes("mellat");
   const showZarinPal = availableGateways.includes("zarinpal");
   const showSnappay = availableGateways.includes("snappay") && snappEligible !== false;
-  const showWallet = availableGateways.includes("wallet");
+
+  if (walletCoversTotal) {
+    // Nothing is left for a bank to carry, so offering one would be a choice
+    // with no effect.
+    return (
+      <div className="flex flex-col gap-2" data-testid="payment-gateway-wallet-only">
+        <span className="text-2xl text-neutral-800 lg:text-xl">روش پرداخت</span>
+        <p className="rounded-lg border border-stone-100 bg-stone-50 p-4 text-base text-neutral-700">
+          کل مبلغ سفارش از کیف پول شما پرداخت می‌شود و نیازی به انتخاب درگاه بانکی نیست.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
       <span className="text-2xl text-neutral-800 lg:text-xl">درگاه پرداخت خود را انتخاب کنید</span>
+      {snappBlockedByWalletSplit && availableGateways.includes("snappay") && (
+        <p
+          data-testid="payment-gateway-snappay-wallet-blocked"
+          className="rounded-lg border border-stone-100 bg-stone-50 p-4 text-sm text-neutral-700"
+        >
+          پرداخت اقساطی اسنپ‌پی همراه با کیف پول امکان‌پذیر نیست. برای استفاده از اسنپ‌پی، تیک کیف
+          پول را بردارید.
+        </p>
+      )}
       {showSnappay && (
         <button
           onClick={() => !snappay.disabled && onChange(snappay.id)}
@@ -190,45 +203,6 @@ function ShoppingCartBillPaymentGateway({
             </button>
           )}
 
-          {showWallet && (
-            <button
-              onClick={() => !wallet.disabled && onChange(wallet.id)}
-              data-testid="payment-gateway-wallet"
-              data-disabled={wallet.disabled ? "true" : "false"}
-              data-selected={selected === wallet.id ? "true" : "false"}
-              onMouseEnter={() => setWalletHovered(true)}
-              onMouseLeave={() => setWalletHovered(false)}
-              className={classNames(
-                "flex w-full flex-col items-center gap-2 text-nowrap rounded-lg border border-stone-50 bg-stone-50 p-4 transition-opacity duration-300",
-                selected === wallet.id && "!border-infinity-primary",
-                wallet.disabled && !walletHovered && "cursor-not-allowed opacity-50",
-                wallet.disabled && walletHovered && "cursor-pointer opacity-100",
-              )}
-              type="button"
-            >
-              <div className="relative h-24 w-24 flex-shrink-0 lg:h-32 lg:w-32">
-                <Image
-                  src={wallet.img}
-                  alt={wallet.name}
-                  fill
-                  className="bg-stone-50 object-contain p-3"
-                  sizes="(min-width: 1024px) 128px, 96px"
-                />
-              </div>
-              <span className="text-sm lg:text-base"> درگاه پرداخت {wallet.name}</span>
-              {showWalletDetails && (
-                <div className="flex w-full flex-col items-center gap-3 pt-3 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="text-xs text-neutral-600">موجودی:</span>
-                    <span className="text-xl font-bold text-infinity-primary">
-                      {Math.round(walletBalanceIrr / 10).toLocaleString()} تومان
-                    </span>
-                  </div>
-                  {wallet.helper && <div className="flex w-full justify-center">{wallet.helper}</div>}
-                </div>
-              )}
-            </button>
-          )}
         </div>
       </div>
     </div>

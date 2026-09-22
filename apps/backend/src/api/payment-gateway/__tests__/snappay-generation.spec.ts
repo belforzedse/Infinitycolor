@@ -31,9 +31,9 @@ describe("SnappPay generation identity", () => {
     });
     const providerResponse = withSnappayPendingDispatch({}, pending);
     expect(snappayHasInFlightDispatch(providerResponse)).toBe(true);
-    expect(
-      snappayProviderPaymentIsUnresolved({ Status: "Pending", providerResponse }, ""),
-    ).toBe(true);
+    expect(snappayProviderPaymentIsUnresolved({ Status: "Pending", providerResponse }, "")).toBe(
+      true,
+    );
     expect(snappayDispatchWasAttempted({ providerResponse }, "")).toBe(true);
   });
 
@@ -115,6 +115,20 @@ describe("SnappPay generation identity", () => {
         amount: 2_200_000,
       }),
     ).toEqual({ ok: true });
+
+    expect(
+      statusMatchesActiveSnappayGeneration(
+        {
+          ...attempt,
+          WalletAmount: 700_000,
+          GatewayAmount: 1_500_000,
+        },
+        {
+          transactionId: "ABC1234567",
+          amount: 1_500_000,
+        },
+      ),
+    ).toEqual({ ok: true });
   });
 
   it("aligns full SHA-256 fingerprints with their display prefixes", () => {
@@ -126,7 +140,10 @@ describe("SnappPay generation identity", () => {
 
   it("strips generation identity keys from observation patches", () => {
     const patch = snappayObservationPatch(
-      { successful: false, diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 } },
+      {
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 },
+      },
       {
         generation: { seq: 9 },
         tokenAttemptSeq: 9,
@@ -176,9 +193,10 @@ describe("SnappPay generation identity", () => {
       hasValidatedCallback: false,
     };
     expect(snappayStoredPaymentPageResume(eligible)).toEqual({ ok: true });
-    expect(
-      snappayStoredPaymentPageResume({ ...eligible, hasValidatedCallback: true }),
-    ).toEqual({ ok: false, reason: "callback-recovery" });
+    expect(snappayStoredPaymentPageResume({ ...eligible, hasValidatedCallback: true })).toEqual({
+      ok: false,
+      reason: "callback-recovery",
+    });
     expect(
       snappayStoredPaymentPageResume({
         ...eligible,
@@ -228,9 +246,10 @@ describe("SnappPay generation identity", () => {
       hasValidatedCallback: false,
     };
     expect(snappayStoredPaymentPageResume(wiped)).toEqual({ ok: true });
-    expect(
-      snappayStoredPaymentPageResume({ ...wiped, storedTrackId: "" }),
-    ).toEqual({ ok: false, reason: "identity-unproven" });
+    expect(snappayStoredPaymentPageResume({ ...wiped, storedTrackId: "" })).toEqual({
+      ok: false,
+      reason: "identity-unproven",
+    });
     expect(
       snappayStoredPaymentPageResume({
         ...wiped,

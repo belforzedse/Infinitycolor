@@ -119,6 +119,45 @@ describe("ShoppingCartBillDeliveryForm discount + loading states", () => {
     expect(screen.queryByTestId("checkout-total-loading")).not.toBeInTheDocument();
   });
 
+  /**
+   * Wallet credit is spent against the order, so the totals have to show where it
+   * went. Before this, "قابل پرداخت" repeated the order total while the wallet card
+   * above it said the gateway leg was zero.
+   */
+  it("deducts the wallet and makes قابل پرداخت the gateway amount", async () => {
+    await renderForm(
+      <ShoppingCartBillDeliveryForm {...baseProps} discountPreview={preview} walletToman={40_000} />,
+    );
+
+    expect(screen.getByTestId("checkout-wallet-deduction")).toHaveTextContent("-40,000 تومان");
+    // 95,000 order total less 40,000 of credit.
+    expect(screen.getByTestId("checkout-payable-total")).toHaveTextContent("55,000 تومان");
+  });
+
+  it("shows nothing payable when the wallet covers the whole order", async () => {
+    await renderForm(
+      <ShoppingCartBillDeliveryForm {...baseProps} discountPreview={preview} walletToman={95_000} />,
+    );
+
+    expect(screen.getByTestId("checkout-payable-total")).toHaveTextContent("0 تومان");
+  });
+
+  it("never shows a negative payable when the credit figure outruns the total", async () => {
+    await renderForm(
+      <ShoppingCartBillDeliveryForm {...baseProps} discountPreview={preview} walletToman={500_000} />,
+    );
+
+    expect(screen.getByTestId("checkout-wallet-deduction")).toHaveTextContent("-95,000 تومان");
+    expect(screen.getByTestId("checkout-payable-total")).toHaveTextContent("0 تومان");
+  });
+
+  it("leaves the totals untouched when no wallet credit is applied", async () => {
+    await renderForm(<ShoppingCartBillDeliveryForm {...baseProps} discountPreview={preview} />);
+
+    expect(screen.queryByTestId("checkout-wallet-deduction")).not.toBeInTheDocument();
+    expect(screen.getByTestId("checkout-payable-total")).toHaveTextContent("95,000 تومان");
+  });
+
   it("does not refetch shipping options when only the selected method changes", async () => {
     const addressContext = { addressId: 44 };
     mockedGetAvailableShippingOptions.mockResolvedValue([
