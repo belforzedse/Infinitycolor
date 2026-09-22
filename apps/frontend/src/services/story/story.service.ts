@@ -6,6 +6,7 @@
  */
 import { apiClient } from "@/services";
 import { getStrapiServerUrl, ENDPOINTS } from "@/constants/api";
+import { normalizeStoryEntity, type StorySeenItems } from "@repo/api";
 import type {
   Story,
   StoryListParams,
@@ -25,47 +26,17 @@ interface StrapiListResponse<T> {
   };
 }
 
-interface StrapiSingleResponse<T> {
-  data: T;
-}
-
-function normalizeMediaAsset(raw: unknown) {
-  if (!raw || typeof raw !== "object") return undefined;
-  const r = raw as Record<string, unknown>;
-  const attrs = (r.attributes as Record<string, unknown>) ?? r;
-  return {
-    id: (r.id as number) ?? (attrs.id as number),
-    url: attrs.url as string,
-    alternativeText: attrs.alternativeText as string | undefined,
-    width: attrs.width as number | undefined,
-    height: attrs.height as number | undefined,
-    mime: attrs.mime as string | undefined,
-    formats: attrs.formats as Story["Media"] extends undefined ? never : Story["Media"] extends { formats?: infer F } ? F : never,
-  };
-}
-
 function normalizeStory(raw: unknown): Story {
-  if (!raw || typeof raw !== "object") throw new Error("Invalid story data");
-  const r = raw as Record<string, unknown>;
-  const attrs = (r.attributes as Record<string, unknown>) ?? r;
-  return {
-    id: r.id as number,
-    Title: attrs.Title as string,
-    Slug: attrs.Slug as string,
-    IsActive: attrs.IsActive as boolean,
-    SortOrder: (attrs.SortOrder as number) ?? 0,
-    MediaType: attrs.MediaType as Story["MediaType"],
-    Media: normalizeMediaAsset(attrs.Media) as Story["Media"],
-    Thumbnail: normalizeMediaAsset(attrs.Thumbnail) as Story["Thumbnail"],
-    StartAt: attrs.StartAt as string | undefined,
-    EndAt: attrs.EndAt as string | undefined,
-    DurationMs: (attrs.DurationMs as number) ?? 5000,
-    CtaLabel: attrs.CtaLabel as string | undefined,
-    CtaUrl: attrs.CtaUrl as string | undefined,
-    Overlays: attrs.Overlays as Story["Overlays"],
-    createdAt: attrs.createdAt as string,
-    updatedAt: attrs.updatedAt as string,
-  };
+  return normalizeStoryEntity(raw);
+}
+
+function populatedStoryEndpoint(path: string, extra?: URLSearchParams): string {
+  const query = extra ?? new URLSearchParams();
+  query.set("populate[Media]", "true");
+  query.set("populate[Thumbnail]", "true");
+  query.set("populate[Items][populate][Media]", "true");
+  query.set("populate[Items][populate][Thumbnail]", "true");
+  return `${path}?${query.toString()}`;
 }
 
 // ─── Public (server + client) ────────────────────────────────────────────────
@@ -112,6 +83,22 @@ export async function markStorySeen(storyId: number): Promise<{ created: boolean
   return { created: res.data?.created ?? false };
 }
 
+export async function getMySeenStoryItems(): Promise<StorySeenItems[]> {
+  const res = await apiClient.get<StorySeenItems[]>(ENDPOINTS.STORIES.SEEN_ITEMS_MINE);
+  return res.data ?? [];
+}
+
+export async function markStoryItemSeen(
+  storyId: number,
+  itemKey: string,
+): Promise<{ created: boolean }> {
+  const res = await apiClient.post<{ success: boolean; created: boolean }>(
+    ENDPOINTS.STORIES.SEEN_ITEM_MARK,
+    { storyId, itemKey },
+  );
+  return { created: res.data?.created ?? false };
+}
+
 // ─── Admin (store-manager / superadmin only) ──────────────────────────────────
 
 export async function listStories(params: StoryListParams = {}): Promise<StrapiListResponse<Story>> {
@@ -124,7 +111,7 @@ export async function listStories(params: StoryListParams = {}): Promise<StrapiL
   }
   if (params.search) query.set("filters[Title][$containsi]", params.search);
 
-  const endpoint = `${ENDPOINTS.STORIES.LIST}?${query.toString()}`;
+  const endpoint = populatedStoryEndpoint(ENDPOINTS.STORIES.LIST, query);
   const res = await apiClient.get<unknown[]>(endpoint, { cache: "no-store" });
   return {
     data: (res.data ?? []).map(normalizeStory),
@@ -133,21 +120,21 @@ export async function listStories(params: StoryListParams = {}): Promise<StrapiL
 }
 
 export async function getStory(id: number): Promise<Story> {
-  const res = await apiClient.get<unknown>(ENDPOINTS.STORIES.DETAIL(id), { cache: "no-store" });
+  const res = await apiClient.get<unknown>(populatedStoryEndpoint(ENDPOINTS.STORIES.DETAIL(id)), { cache: "no-store" });
   const raw = res.data;
   if (raw === undefined) throw new Error("Invalid story response");
   return normalizeStory(raw);
 }
 
 export async function createStory(data: CreateStoryData): Promise<Story> {
-  const res = await apiClient.post<unknown>(ENDPOINTS.STORIES.LIST, { data });
+  const res = await apiClient.post<unknown>(populatedStoryEndpoint(ENDPOINTS.STORIES.LIST), { data });
   const raw = res.data;
   if (raw === undefined) throw new Error("Invalid story response");
   return normalizeStory(raw);
 }
 
 export async function updateStory(id: number, data: UpdateStoryData): Promise<Story> {
-  const res = await apiClient.put<unknown>(ENDPOINTS.STORIES.DETAIL(id), { data });
+  const res = await apiClient.put<unknown>(populatedStoryEndpoint(ENDPOINTS.STORIES.DETAIL(id)), { data });
   const raw = res.data;
   if (raw === undefined) throw new Error("Invalid story response");
   return normalizeStory(raw);
@@ -161,6 +148,8 @@ export const storyService = {
   getActiveStories,
   getMySeenStoryIds,
   markStorySeen,
+  getMySeenStoryItems,
+  markStoryItemSeen,
   listStories,
   getStory,
   createStory,

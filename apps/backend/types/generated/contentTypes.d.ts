@@ -4010,6 +4010,15 @@ export interface ApiStorySeenStorySeen extends Schema.CollectionType {
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<"api::story-seen.story-seen", "oneToOne", "admin::user"> &
       Attribute.Private;
+    DedupeKey: Attribute.String &
+      Attribute.Unique &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    ItemKey: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
     SeenAt: Attribute.DateTime & Attribute.Required;
     story: Attribute.Relation<"api::story-seen.story-seen", "manyToOne", "api::story.story">;
     updatedAt: Attribute.DateTime;
@@ -4056,6 +4065,15 @@ export interface ApiStoryStory extends Schema.CollectionType {
       Attribute.DefaultTo<5000>;
     EndAt: Attribute.DateTime;
     IsActive: Attribute.Boolean & Attribute.DefaultTo<false>;
+    Items: Attribute.Component<"story.story-item", true> &
+      Attribute.Required &
+      Attribute.SetMinMax<
+        {
+          max: 20;
+          min: 1;
+        },
+        number
+      >;
     Media: Attribute.Media<"images" | "videos">;
     MediaType: Attribute.Enumeration<["image", "video"]> &
       Attribute.Required &

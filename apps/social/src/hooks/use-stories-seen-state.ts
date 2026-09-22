@@ -1,102 +1,99 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { getMySeenStoryIds, markStorySeen } from "@/services/story.service";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getMySeenStoryItems, markStoryItemSeen } from "@/services/story.service";
 
-const LS_KEY = "story_seen_ids";
+const LS_KEY = "story_seen_items_v2";
+const LEGACY_LS_KEY = "story_seen_ids";
+type SeenMap = Map<number, Set<string>>;
 
-function readLocalSeenIds(): number[] {
-  if (typeof window === "undefined") return [];
+function readLocal(): SeenMap {
+  const result: SeenMap = new Map();
+  if (typeof window === "undefined") return result;
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as number[]) : [];
+    const rows = JSON.parse(localStorage.getItem(LS_KEY) || "[]") as unknown;
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (Array.isArray(row) && typeof row[0] === "number" && Array.isArray(row[1])) {
+          result.set(row[0], new Set(row[1].filter((key): key is string => typeof key === "string")));
+        }
+      }
+    }
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_LS_KEY) || "[]") as unknown;
+    if (Array.isArray(legacy)) {
+      for (const id of legacy) {
+        if (typeof id !== "number") continue;
+        const keys = result.get(id) ?? new Set<string>();
+        keys.add(`legacy:${id}`);
+        result.set(id, keys);
+      }
+    }
   } catch {
-    return [];
+    return result;
+  }
+  return result;
+}
+
+function persist(items: SeenMap) {
+  try {
+    localStorage.setItem(
+      LS_KEY,
+      JSON.stringify([...items.entries()].map(([storyId, keys]) => [storyId, [...keys]])),
+    );
+  } catch {
+    // Keep in-memory state when storage is unavailable.
   }
 }
 
-function writeLocalSeenIds(ids: number[]) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(ids));
-  } catch {
-    // storage full or private mode
+function addRows(base: SeenMap, rows: Array<{ storyId: number; itemKeys: string[] }>): SeenMap {
+  const next = new Map([...base.entries()].map(([id, keys]) => [id, new Set(keys)]));
+  for (const row of rows) {
+    const keys = next.get(row.storyId) ?? new Set<string>();
+    row.itemKeys.forEach((key) => keys.add(key));
+    next.set(row.storyId, keys);
   }
+  return next;
 }
 
-/**
- * Seen IDs: localStorage for guests; merge + POST mark for authenticated users (storefront parity).
- */
 export function useStoriesSeenState(isAuthenticated: boolean) {
-  const [seenIds, setSeenIds] = useState<Set<number>>(new Set());
-
-  // Ids this session has already reported. The `setSeenIds` guard below cannot serve
-  // this purpose: it runs inside a state updater, which React may invoke twice (Strict
-  // Mode) and which does not gate the network call that follows it. Without this, opening
-  // a story posted a view for it more than once.
-  const reportedRef = useRef<Set<number>>(new Set());
-
-  useEffect(() => {
-    const localIds = readLocalSeenIds();
-    if (!localIds.length) return;
-    queueMicrotask(() => {
-      setSeenIds((prev) => {
-        const merged = new Set<number>();
-        Array.from(prev).forEach((id) => merged.add(id));
-        localIds.forEach((id) => merged.add(id));
-        return merged;
-      });
-    });
-  }, []);
+  const [seenItems, setSeenItems] = useState<SeenMap>(new Map());
+  const reportedRef = useRef(new Set<string>());
+  useEffect(() => setSeenItems(readLocal()), []);
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    void (async () => {
-      try {
-        const serverIds = await getMySeenStoryIds();
-        queueMicrotask(() => {
-          setSeenIds((prev) => {
-            const merged = new Set<number>();
-            Array.from(prev).forEach((id) => merged.add(id));
-            serverIds.forEach((id) => merged.add(id));
-            writeLocalSeenIds(Array.from(merged));
-            return merged;
-          });
+    void getMySeenStoryItems()
+      .then((rows) => {
+        setSeenItems((current) => {
+          const next = addRows(current, rows);
+          persist(next);
+          return next;
         });
-      } catch {
-        // keep local only
-      }
-    })();
+      })
+      .catch(() => undefined);
   }, [isAuthenticated]);
 
   const markSeen = useCallback(
-    async (storyId: number) => {
-      setSeenIds((prev) => {
-        if (prev.has(storyId)) return prev;
-        const next = new Set(prev);
-        next.add(storyId);
-        writeLocalSeenIds(Array.from(next));
+    async (storyId: number, itemKey = `legacy:${storyId}`) => {
+      setSeenItems((current) => {
+        if (current.get(storyId)?.has(itemKey)) return current;
+        const next = addRows(current, [{ storyId, itemKeys: [itemKey] }]);
+        persist(next);
         return next;
       });
-
       if (!isAuthenticated) return;
-      if (reportedRef.current.has(storyId)) return;
-      reportedRef.current.add(storyId);
-
+      const reportKey = `${storyId}:${itemKey}`;
+      if (reportedRef.current.has(reportKey)) return;
+      reportedRef.current.add(reportKey);
       try {
-        await markStorySeen(storyId);
+        await markStoryItemSeen(storyId, itemKey);
       } catch {
-        // local state already updated
-        // Allow a later attempt: the view is recorded locally either way, but a dropped
-        // request should not permanently lose the server-side record.
-        reportedRef.current.delete(storyId);
+        reportedRef.current.delete(reportKey);
       }
     },
     [isAuthenticated],
   );
 
-  const hasSeen = useCallback((storyId: number) => seenIds.has(storyId), [seenIds]);
-
-  return { seenIds, markSeen, hasSeen };
+  const seenIds = useMemo(() => new Set(seenItems.keys()), [seenItems]);
+  return { seenIds, seenItems, markSeen };
 }

@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { createHash } from "node:crypto";
 import {
   MEDIA_JOBS,
   QUEUE_NAMES,
@@ -48,13 +49,17 @@ function getMediaQueue(settings: QueueSettings): Queue<MaintenanceJobData, unkno
 
 export async function enqueueStoryVideoNormalization(
   storyId: number,
+  itemKey: string,
+  fileId: number,
   settings: QueueSettings = getQueueSettings(),
 ): Promise<void> {
+  const itemHash = createHash("sha1").update(itemKey).digest("hex").slice(0, 12);
   await getMediaQueue(settings).add(
     MEDIA_JOBS.normalizeStoryVideo,
-    { storyId },
-    // One pending job per story: repeated admin saves must not queue a transcode each.
-    { jobId: `normalize-story-video:${storyId}` },
+    { storyId, itemKey, fileId },
+    // Per story/item/file: reordering does not duplicate work, while replacing media
+    // creates a distinct job and a stale job can prove it no longer owns the item.
+    { jobId: `normalize-story-video:${storyId}:${itemHash}:${fileId}` },
   );
 }
 
@@ -68,6 +73,19 @@ export async function enqueueProductVideoNormalization(
     { productId, fileId },
     // Per-file so attaching a new clip after the first job completed still queues.
     { jobId: `normalize-product-video:${fileId}` },
+  );
+}
+
+export async function enqueueUploadedFileNormalization(
+  fileId: number,
+  settings: QueueSettings = getQueueSettings(),
+): Promise<void> {
+  await getMediaQueue(settings).add(
+    MEDIA_JOBS.normalizeUploadedFile,
+    { fileId },
+    // One job per raw file id; the product/story jobs above dedupe against this on the
+    // same underlying work (`normalizeUploadFile` is a no-op once a file is already web-safe).
+    { jobId: `normalize-uploaded-file:${fileId}` },
   );
 }
 

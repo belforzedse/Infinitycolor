@@ -10,6 +10,7 @@ const POSTER_SRC = "https://cdn.test/uploads/story-cover.webp";
 function payloadFor(overrides: Partial<StoryMediaPayload> = {}): StoryMediaPayload {
   return {
     storyId: 1,
+    itemKey: "item-1",
     kind: "video",
     src: VIDEO_SRC,
     poster: POSTER_SRC,
@@ -416,7 +417,7 @@ describe("StoryMediaSurface — undecodable and broken media", () => {
     expect(next).not.toHaveBeenCalled();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "تلاش دوباره" }));
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     });
     expect(screen.queryByTestId("story-media-error")).not.toBeInTheDocument();
     expect(video()).not.toBeNull();

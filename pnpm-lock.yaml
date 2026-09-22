@@ -11,7 +11,7 @@ overrides:
 
 patchedDependencies:
   react-instagram-stories@1.1.1:
-    hash: 271c92e466c8c150be7bfe16d8dadd1f1a2dfc81aa328cb31bf23b5cbd4da388
+    hash: c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3
     path: patches/react-instagram-stories@1.1.1.patch
 
 importers:
@@ -179,7 +179,7 @@ importers:
         version: 5.5.0(react@19.2.8)
       react-instagram-stories:
         specifier: 1.1.1
-        version: 1.1.1(patch_hash=271c92e466c8c150be7bfe16d8dadd1f1a2dfc81aa328cb31bf23b5cbd4da388)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 1.1.1(patch_hash=c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react-iran-maps:
         specifier: 1.2.2
         version: 1.2.2(@emotion/is-prop-valid@1.4.0)(prop-types@15.8.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -249,7 +249,7 @@ importers:
         version: 9.24.0(jiti@2.7.0)
       eslint-config-next:
         specifier: 16.3.2
-        version: 16.3.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2)
+        version: 16.3.2(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2)
       eslint-config-prettier:
         specifier: 9.1.2
         version: 9.1.2(eslint@9.24.0(jiti@2.7.0))
@@ -558,7 +558,7 @@ importers:
         version: 19.2.8(react@19.2.8)
       react-instagram-stories:
         specifier: 1.1.1
-        version: 1.1.1(patch_hash=271c92e466c8c150be7bfe16d8dadd1f1a2dfc81aa328cb31bf23b5cbd4da388)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 1.1.1(patch_hash=c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -777,7 +777,7 @@ importers:
         version: 5.5.0(react@19.2.8)
       react-instagram-stories:
         specifier: 1.1.1
-        version: 1.1.1(patch_hash=271c92e466c8c150be7bfe16d8dadd1f1a2dfc81aa328cb31bf23b5cbd4da388)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 1.1.1(patch_hash=c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react-intersection-observer:
         specifier: 10.0.0
         version: 10.0.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -994,7 +994,7 @@ importers:
         version: 5.5.0(react@19.2.8)
       react-instagram-stories:
         specifier: 1.1.1
-        version: 1.1.1(patch_hash=271c92e466c8c150be7bfe16d8dadd1f1a2dfc81aa328cb31bf23b5cbd4da388)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 1.1.1(patch_hash=c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       redis:
         specifier: 5.8.3
         version: 5.8.3
@@ -1207,7 +1207,7 @@ importers:
         version: 19.2.8(react@19.2.8)
       react-instagram-stories:
         specifier: 1.1.1
-        version: 1.1.1(patch_hash=271c92e466c8c150be7bfe16d8dadd1f1a2dfc81aa328cb31bf23b5cbd4da388)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 1.1.1(patch_hash=c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1240,7 +1240,7 @@ importers:
         version: 9.24.0(jiti@2.7.0)
       eslint-config-next:
         specifier: 16.3.2
-        version: 16.3.2(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0))
+        version: 16.3.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0))
       eslint-plugin-react:
         specifier: 7.37.5
         version: 7.37.5(eslint@9.24.0(jiti@2.7.0))
@@ -23756,13 +23756,33 @@ snapshots:
 
   escape-string-regexp@4.0.0: {}
 
-  eslint-config-next@16.3.2(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)):
+  eslint-config-next@16.3.2(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2):
     dependencies:
       '@next/eslint-plugin-next': 16.3.2(eslint@9.24.0(jiti@2.7.0))
       eslint: 9.24.0(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0))
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.24.0(jiti@2.7.0))
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0))
+      eslint-plugin-jsx-a11y: 6.10.2(eslint@9.24.0(jiti@2.7.0))
+      eslint-plugin-react: 7.37.5(eslint@9.24.0(jiti@2.7.0))
+      eslint-plugin-react-hooks: 7.0.1(eslint@9.24.0(jiti@2.7.0))
+      globals: 16.4.0
+      typescript-eslint: 8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2)
+    optionalDependencies:
+      typescript: 7.0.2
+    transitivePeerDependencies:
+      - '@typescript-eslint/parser'
+      - eslint-import-resolver-webpack
+      - eslint-plugin-import-x
+      - supports-color
+
+  eslint-config-next@16.3.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)):
+    dependencies:
+      '@next/eslint-plugin-next': 16.3.2(eslint@9.24.0(jiti@2.7.0))
+      eslint: 9.24.0(jiti@2.7.0)
+      eslint-import-resolver-node: 0.3.10
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.24.0(jiti@2.7.0))
+      eslint-plugin-import: 2.32.0(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.24.0(jiti@2.7.0))
       eslint-plugin-react: 7.37.5(eslint@9.24.0(jiti@2.7.0))
       eslint-plugin-react-hooks: 7.0.1(eslint@9.24.0(jiti@2.7.0))
@@ -23808,21 +23828,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)):
-    dependencies:
-      '@nolyfill/is-core-module': 1.0.39
-      debug: 4.4.3(supports-color@5.5.0)
-      eslint: 9.24.0(jiti@2.7.0)
-      get-tsconfig: 4.14.0
-      is-bun-module: 2.0.0
-      stable-hash: 0.0.5
-      tinyglobby: 0.2.16
-      unrs-resolver: 1.11.1
-    optionalDependencies:
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0))
-    transitivePeerDependencies:
-      - supports-color
-
   eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.24.0(jiti@2.7.0)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
@@ -23834,32 +23839,22 @@ snapshots:
       tinyglobby: 0.2.16
       unrs-resolver: 1.11.1
     optionalDependencies:
-      eslint-plugin-import: 2.32.0(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0))
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0))
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.12.1(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)):
+  eslint-module-utils@2.12.1(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
-      '@typescript-eslint/parser': 8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0))
-      eslint: 9.24.0(jiti@2.7.0)
-      eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0))
-    transitivePeerDependencies:
-      - supports-color
-
-  eslint-module-utils@2.12.1(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0)):
-    dependencies:
-      debug: 3.2.7
-    optionalDependencies:
+      '@typescript-eslint/parser': 8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2)
       eslint: 9.24.0(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
       eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.24.0(jiti@2.7.0))
     transitivePeerDependencies:
       - supports-color
 
-  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)):
+  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0)):
     dependencies:
       '@rtsao/scc': 1.1.0
       array-includes: 3.1.9
@@ -23870,7 +23865,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.24.0(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-module-utils: 2.12.1(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0)))(eslint@9.24.0(jiti@2.7.0))
+      eslint-module-utils: 2.12.1(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0))
       hasown: 2.0.3
       is-core-module: 2.16.2
       is-glob: 4.0.3
@@ -23882,7 +23877,7 @@ snapshots:
       string.prototype.trimend: 1.0.9
       tsconfig-paths: 3.15.0
     optionalDependencies:
-      '@typescript-eslint/parser': 8.59.2(@typescript/typescript6@6.0.2)(eslint@9.24.0(jiti@2.7.0))
+      '@typescript-eslint/parser': 8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2)
     transitivePeerDependencies:
       - eslint-import-resolver-typescript
       - eslint-import-resolver-webpack
@@ -23899,7 +23894,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.24.0(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-module-utils: 2.12.1(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0))
+      eslint-module-utils: 2.12.1(@typescript-eslint/parser@8.59.2(eslint@9.24.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.24.0(jiti@2.7.0))
       hasown: 2.0.3
       is-core-module: 2.16.2
       is-glob: 4.0.3
@@ -28620,7 +28615,7 @@ snapshots:
     dependencies:
       react: 19.2.8
 
-  react-instagram-stories@1.1.1(patch_hash=271c92e466c8c150be7bfe16d8dadd1f1a2dfc81aa328cb31bf23b5cbd4da388)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  react-instagram-stories@1.1.1(patch_hash=c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

@@ -39,16 +39,29 @@ export const MEDIA_JOBS = {
   normalizeStoryVideo: "media.normalizeStoryVideo",
   /** Transcode one product gallery/cover video to web-safe progressive MP4. */
   normalizeProductVideo: "media.normalizeProductVideo",
+  /**
+   * Transcode a raw `plugin::upload.file` row as soon as it lands, independent of any
+   * product/story attachment. The product/story jobs only fire once the entity that owns
+   * the file is saved — an admin picking a phone-recorded clip in the add-product form
+   * (no product row yet) would otherwise never get a playable preview until after save.
+   */
+  normalizeUploadedFile: "media.normalizeUploadedFile",
 } as const;
 
 export type MediaJobName = (typeof MEDIA_JOBS)[keyof typeof MEDIA_JOBS];
 
 export type NormalizeStoryVideoJobData = {
   storyId: number;
+  itemKey: string;
+  fileId: number;
 };
 
 export type NormalizeProductVideoJobData = {
   productId: number;
+  fileId: number;
+};
+
+export type NormalizeUploadedFileJobData = {
   fileId: number;
 };
 
@@ -130,6 +143,7 @@ export type MaintenanceJobData =
   | Record<string, never>
   | NormalizeStoryVideoJobData
   | NormalizeProductVideoJobData
+  | NormalizeUploadedFileJobData
   | ScheduledProductPublicationJobData
   | AnipoRecipientSyncJobData
   | EdgeCachePurgeJobData

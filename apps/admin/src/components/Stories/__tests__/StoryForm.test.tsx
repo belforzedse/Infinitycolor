@@ -20,10 +20,7 @@ describe("StoryForm", () => {
           Title: "عنوان",
           IsActive: false,
           SortOrder: 0,
-          MediaType: "image",
-          mediaId: 7,
-          mediaUrl: "/uploads/a.webp",
-          CtaUrl: "/pdp/old-product",
+          Items: [{ localId: "one", Key: "one", MediaType: "image", mediaId: 7, mediaUrl: "/uploads/a.webp", DurationMs: 5000, CtaUrl: "/pdp/old-product" }],
         }}
         onSubmit={onSubmit}
         isLoading={false}
@@ -36,12 +33,12 @@ describe("StoryForm", () => {
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith({
         Title: "عنوان",
-        MediaType: "image",
         IsActive: false,
         SortOrder: 0,
-        Media: 7,
         Thumbnail: null,
-        CtaUrl: "/pdp/old-product",
+        StartAt: null,
+        EndAt: null,
+        Items: [{ Key: "one", MediaType: "image", Media: 7, Thumbnail: null, DurationMs: 5000, CtaUrl: "/pdp/old-product", Overlays: [] }],
       });
     });
   });
@@ -55,10 +52,7 @@ describe("StoryForm", () => {
           Title: "عنوان",
           IsActive: true,
           SortOrder: 2,
-          MediaType: "image",
-          mediaId: 7,
-          mediaUrl: "/uploads/a.webp",
-          CtaUrl: "/pdp/old-product",
+          Items: [{ localId: "one", Key: "one", MediaType: "image", mediaId: 7, mediaUrl: "/uploads/a.webp", DurationMs: 5000, CtaUrl: "/pdp/old-product" }],
         }}
         onSubmit={onSubmit}
         isLoading={false}
@@ -72,7 +66,32 @@ describe("StoryForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "ذخیره تغییرات" }));
 
     await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ CtaUrl: null }));
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+        Items: [expect.objectContaining({ CtaUrl: null })],
+      }));
     });
+  });
+
+  it("duplicates, reorders, and removes item cards without losing stable existing keys", () => {
+    render(
+      <StoryForm
+        initialValues={{
+          Title: "عنوان",
+          Items: [
+            { localId: "one", Key: "one", MediaType: "image", mediaId: 7, mediaUrl: "/uploads/a.webp", DurationMs: 5000 },
+            { localId: "two", Key: "two", MediaType: "video", mediaId: 8, mediaUrl: "/uploads/b.mp4", DurationMs: 6000 },
+          ],
+        }}
+        onSubmit={jest.fn()}
+        isLoading={false}
+        submitLabel="ذخیره تغییرات"
+      />,
+    );
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "کپی آیتم" })[0]);
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    fireEvent.click(screen.getAllByRole("button", { name: "انتقال به پایین" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "حذف آیتم" })[1]);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
   });
 });

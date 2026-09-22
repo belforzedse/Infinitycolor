@@ -131,7 +131,9 @@ export async function loadUploadVideoFile(
   return asUploadVideoFile(file);
 }
 
-export async function normalizeUploadFile(
+const uploadNormalizationInFlight = new Map<number, Promise<NormalizeFileResult>>();
+
+async function normalizeUploadFileOnce(
   file: UploadVideoFile,
   { strapi, uploadsDir, dryRun = false, nameHint }: NormalizeFileDeps,
 ): Promise<NormalizeFileResult> {
@@ -217,4 +219,22 @@ export async function normalizeUploadFile(
     toBytes,
     durationMs: outputProbe.durationMs,
   };
+}
+
+/** Collapse story/product/upload jobs that point at the same shared upload. */
+export async function normalizeUploadFile(
+  file: UploadVideoFile,
+  deps: NormalizeFileDeps,
+): Promise<NormalizeFileResult> {
+  const running = uploadNormalizationInFlight.get(file.id);
+  if (running) return running;
+  const task = normalizeUploadFileOnce(file, deps);
+  uploadNormalizationInFlight.set(file.id, task);
+  try {
+    return await task;
+  } finally {
+    if (uploadNormalizationInFlight.get(file.id) === task) {
+      uploadNormalizationInFlight.delete(file.id);
+    }
+  }
 }

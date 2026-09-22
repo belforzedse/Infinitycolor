@@ -84,7 +84,8 @@ function RailPaginationButton({
 
 export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
   stories,
-  seenIds,
+  seenIds = new Set<number>(),
+  seenItems,
   onMarkSeen,
   resolveMediaUrl,
   heading,
@@ -97,6 +98,7 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
   renderMobileBadge,
   emptyPreviewLabel = "Video",
   unavailableText = "Story unavailable",
+  viewerLabels,
   showPagination = false,
   paginationLabels,
 }: StoryRailProps<TStory>) {
@@ -164,8 +166,8 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
   const handleClose = useCallback(() => setViewerOpen(false), []);
 
   const handleStoryView = useCallback(
-    (storyId: number) => {
-      void onMarkSeen(storyId);
+    (storyId: number, itemKey: string) => {
+      void onMarkSeen(storyId, itemKey);
     },
     [onMarkSeen],
   );
@@ -235,6 +237,7 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
           dir={dir}
         >
           <div
+            dir={dir}
             className={joinClasses(
               "flex w-max min-w-full flex-row justify-start gap-4",
               useAvatarOnMobile
@@ -246,8 +249,10 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
             <StoriesAvatarList
               stories={orderedStories}
               seenIds={seenIds}
+              seenItems={seenItems}
               onAvatarClick={handleAvatarClick}
               resolveMediaUrl={resolveMediaUrl}
+              dir={dir}
               mobileLayout={mobileLayout}
               renderMobileBadge={renderMobileBadge}
               emptyPreviewLabel={emptyPreviewLabel}
@@ -263,6 +268,7 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
           <StoriesViewerModal
             stories={orderedStories}
             seenIds={seenIds}
+            seenItems={seenItems}
             isOpen={viewerOpen}
             initialIndex={activeIndex}
             onClose={handleClose}
@@ -270,6 +276,8 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
             resolveMediaUrl={resolveMediaUrl}
             unavailableText={unavailableText}
             classNames={viewerClassNames}
+            dir={dir}
+            labels={viewerLabels}
           />
         </Suspense>
       ) : null}

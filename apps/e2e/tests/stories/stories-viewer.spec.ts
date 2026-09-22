@@ -16,7 +16,16 @@ declare global {
   interface Window {
     /** Story ids the harness has been asked to mark seen, in order. */
     __storyViews: number[];
+    __storyItemViews: string[];
   }
+}
+
+interface StoryItemSpec {
+  kind: "image" | "video";
+  file: string;
+  cover?: string;
+  durationMs?: number;
+  ctaUrl?: string;
 }
 
 interface StorySpec {
@@ -27,11 +36,26 @@ interface StorySpec {
   cover?: string;
   durationMs?: number;
   ctaUrl?: string;
+  items?: StoryItemSpec[];
 }
 
 function buildStories(specs: StorySpec[]) {
   // The rail sorts newest-first, so the timestamps must descend in the intended order.
-  return specs.map((spec, index) => ({
+  return specs.map((spec, index) => {
+    const itemSpecs = spec.items ?? [spec];
+    const items = itemSpecs.map((item, itemIndex) => ({
+      Key: `e2e:${spec.id}:${itemIndex}`,
+      MediaType: item.kind,
+      Media: {
+        id: 10_000 + spec.id * 100 + itemIndex,
+        url: mediaUrl(item.file),
+        mime: item.kind === "video" ? "video/mp4" : "image/webp",
+      },
+      ...(item.cover ? { Thumbnail: { id: 20_000 + spec.id * 100 + itemIndex, url: mediaUrl(item.cover), mime: "image/webp" } } : {}),
+      DurationMs: item.durationMs ?? 2000,
+      ...(item.ctaUrl ? { CtaUrl: item.ctaUrl } : {}),
+    }));
+    return {
     id: spec.id,
     Title: spec.title,
     MediaType: spec.kind,
@@ -51,14 +75,16 @@ function buildStories(specs: StorySpec[]) {
       : {}),
     DurationMs: spec.durationMs ?? 2000,
     ...(spec.ctaUrl ? { CtaUrl: spec.ctaUrl } : {}),
+    Items: items,
     updatedAt: new Date(Date.UTC(2026, 0, 100 - index)).toISOString(),
-  }));
+    };
+  });
 }
 
-async function openHarness(page: Page, specs: StorySpec[]): Promise<MediaRouteState> {
+async function openHarness(page: Page, specs: StorySpec[], dir: "rtl" | "ltr" = "rtl"): Promise<MediaRouteState> {
   const media = await installStoryMedia(page);
   const stories = encodeURIComponent(JSON.stringify(buildStories(specs)));
-  await page.goto(`/?stories=${stories}`);
+  await page.goto(`/?stories=${stories}&dir=${dir}`);
   await expect(page.getByTestId("harness-ready")).toBeVisible();
   return media;
 }
@@ -79,15 +105,31 @@ async function progress(page: Page): Promise<number> {
   });
 }
 
-/** Taps the right half of the story surface, which is the viewer's "next" gesture. */
+/** The harness is RTL: the left half advances and the right half goes back. */
 async function tapNext(page: Page) {
   const box = (await page.locator(".story-viewer-content").boundingBox())!;
-  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.6);
+  await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.6);
 }
 
 async function tapPrevious(page: Page) {
   const box = (await page.locator(".story-viewer-content").boundingBox())!;
-  await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.6);
+  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.6);
+}
+
+async function dragViewer(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  release = true,
+) {
+  const box = (await page.locator(".story-viewer-cube-viewport").boundingBox())!;
+  const start = { x: box.x + box.width * from.x, y: box.y + box.height * from.y };
+  const end = { x: box.x + box.width * to.x, y: box.y + box.height * to.y };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 8 });
+  if (release) await page.mouse.up();
+  return { box, start, end };
 }
 
 const IMAGE_A: StorySpec = {
@@ -127,6 +169,233 @@ test.describe("Stories viewer", () => {
     await expect
       .poll(() => page.evaluate(() => window.__storyViews), { timeout: 10_000 })
       .toEqual([1, 2, 3]);
+  });
+
+  test("navigates all items in a story before moving to the next story", async ({ page }) => {
+    await openHarness(page, [
+      {
+        ...IMAGE_A,
+        title: "grouped",
+        items: [
+          { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+          { kind: "video", file: STORY_FIXTURES.video, cover: STORY_FIXTURES.image, durationMs: 10_000 },
+          { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+        ],
+      },
+      IMAGE_C,
+    ]);
+    await openViewer(page, "grouped");
+    await expect(page.locator(".story-progress-bar")).toHaveCount(3);
+    await tapNext(page);
+    await expect(page.locator("video")).toHaveCount(1);
+    await tapNext(page);
+    await expect(page.locator("video")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__storyViews)).toEqual([1, 1, 1]);
+    await tapNext(page);
+    await expect.poll(() => page.evaluate(() => window.__storyViews)).toEqual([1, 1, 1, 3]);
+    expect(await page.evaluate(() => window.__storyItemViews)).toEqual([
+      "1:e2e:1:0",
+      "1:e2e:1:1",
+      "1:e2e:1:2",
+      "3:e2e:3:0",
+    ]);
+  });
+
+  test("applies explicit RTL direction and keyboard reading order", async ({ page }) => {
+    await openHarness(page, [IMAGE_A, VIDEO_B]);
+    await openViewer(page, "aaa");
+    await expect(page.locator(".story-viewer")).toHaveAttribute("dir", "rtl");
+    const origin = await page.locator(".story-progress-bar-fill").first().evaluate((element) => ({
+      x: Number.parseFloat(getComputedStyle(element).transformOrigin),
+      width: (element as HTMLElement).offsetWidth,
+    }));
+    expect(Math.abs(origin.x - origin.width)).toBeLessThan(1);
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.locator("video")).toHaveCount(1);
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator("video")).toHaveCount(0);
+  });
+
+  test("preserves upstream LTR tap and keyboard semantics", async ({ page }) => {
+    await openHarness(page, [IMAGE_A, VIDEO_B], "ltr");
+    await openViewer(page, "aaa");
+    await expect(page.locator(".story-viewer")).toHaveAttribute("dir", "ltr");
+    const box = (await page.locator(".story-viewer-content").boundingBox())!;
+    await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.6);
+    await expect(page.locator("video")).toHaveCount(1);
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.locator("video")).toHaveCount(0);
+  });
+
+  test("uses an interactive RTL cube to skip the remaining items and enter the next owner from the left", async ({ page }) => {
+    await openHarness(page, [
+      {
+        ...IMAGE_A,
+        title: "grouped",
+        items: [
+          { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+          { kind: "video", file: STORY_FIXTURES.video, cover: STORY_FIXTURES.image, durationMs: 10_000 },
+          { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+        ],
+      },
+      { ...IMAGE_C, title: "next-owner", durationMs: 10_000 },
+    ]);
+    await openViewer(page, "grouped");
+
+    const drag = await dragViewer(page, { x: 0.28, y: 0.55 }, { x: 0.7, y: 0.55 }, false);
+    await expect(page.locator(".story-viewer")).toHaveAttribute(
+      "data-transition-state",
+      "dragging-owner",
+    );
+    await expect(page.locator('[data-owner-face="next"]')).toHaveCount(1);
+    const faceAtLeft = await page.evaluate(({ x, y }) => {
+      return document
+        .elementFromPoint(x, y)
+        ?.closest("[data-owner-face]")
+        ?.getAttribute("data-owner-face");
+    }, {
+      x: drag.box.x + drag.box.width * 0.12,
+      y: drag.box.y + drag.box.height * 0.55,
+    });
+    expect(faceAtLeft).toBe("next");
+    expect(await page.evaluate(() => window.__storyItemViews)).toEqual(["1:e2e:1:0"]);
+
+    await page.mouse.up();
+    await expect(page.locator(".story-viewer-content .story-viewer-username")).toHaveText(
+      "next-owner",
+    );
+    expect(await page.evaluate(() => window.__storyItemViews)).toEqual([
+      "1:e2e:1:0",
+      "3:e2e:3:0",
+    ]);
+  });
+
+  test("mirrors owner swipes in LTR while keeping item taps as immediate cuts", async ({ page }) => {
+    await openHarness(page, [
+      {
+        ...IMAGE_A,
+        title: "ltr-grouped",
+        items: [
+          { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+          { kind: "video", file: STORY_FIXTURES.video, cover: STORY_FIXTURES.image, durationMs: 10_000 },
+        ],
+      },
+      { ...IMAGE_C, title: "ltr-next", durationMs: 10_000 },
+    ], "ltr");
+    await openViewer(page, "ltr-grouped");
+
+    const box = (await page.locator(".story-viewer-content").boundingBox())!;
+    await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.6);
+    await expect(page.locator("video")).toHaveCount(1);
+    await expect(page.locator(".story-viewer")).toHaveAttribute("data-transition-state", "idle");
+
+    await dragViewer(page, { x: 0.72, y: 0.55 }, { x: 0.28, y: 0.55 });
+    await expect(page.locator(".story-viewer-content .story-viewer-username")).toHaveText(
+      "ltr-next",
+    );
+  });
+
+  test("holds without navigating, cancels safely, and dismisses downward", async ({ page }) => {
+    await openHarness(page, [
+      {
+        ...IMAGE_A,
+        title: "gesture-owner",
+        durationMs: 10_000,
+        items: [
+          { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+          { kind: "video", file: STORY_FIXTURES.video, cover: STORY_FIXTURES.image, durationMs: 10_000 },
+        ],
+      },
+      IMAGE_C,
+    ]);
+    await openViewer(page, "gesture-owner");
+    const box = (await page.locator(".story-viewer-content").boundingBox())!;
+
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.55);
+    await page.mouse.down();
+    await expect(page.locator(".story-viewer")).toHaveAttribute("data-transition-state", "pressing");
+    await expect(surface(page)).toHaveAttribute("data-held", "true");
+    await page.waitForTimeout(220);
+    await page.mouse.up();
+    await expect(page.locator(".story-viewer")).toHaveAttribute("data-transition-state", "idle");
+    await expect(page.locator("video")).toHaveCount(0);
+
+    await dragViewer(page, { x: 0.35, y: 0.55 }, { x: 0.58, y: 0.55 }, false);
+    await page.locator(".story-viewer").dispatchEvent("pointercancel", {
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: box.x + box.width * 0.58,
+      clientY: box.y + box.height * 0.55,
+    });
+    await page.mouse.up();
+    await expect(page.locator(".story-viewer")).toHaveAttribute("data-transition-state", "idle");
+    await expect(page.locator(".story-viewer-content .story-viewer-username")).toHaveText(
+      "gesture-owner",
+    );
+
+    await dragViewer(page, { x: 0.5, y: 0.28 }, { x: 0.5, y: 0.68 });
+    await expect(page.locator(".story-viewer")).toHaveCount(0);
+  });
+
+  test("physically mirrors progress, header controls, safe viewport, and document locking", async ({ page }) => {
+    await openHarness(page, [{
+      ...IMAGE_A,
+      title: "geometry",
+      items: [
+        { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+        { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+        { kind: "image", file: STORY_FIXTURES.image, durationMs: 10_000 },
+      ],
+    }]);
+    await openViewer(page, "geometry");
+
+    const geometry = await page.evaluate(() => {
+      const bars = Array.from(document.querySelectorAll(".story-progress-bar"))
+        .map((element) => element.getBoundingClientRect().x);
+      const avatar = document.querySelector(".story-viewer-avatar")!.getBoundingClientRect();
+      const close = document.querySelector(".story-viewer-close")!.getBoundingClientRect();
+      const fill = document.querySelector(".story-progress-bar-fill") as HTMLElement;
+      const root = document.querySelector(".story-viewer")!.getBoundingClientRect();
+      return {
+        bars,
+        avatarCenter: avatar.x + avatar.width / 2,
+        closeCenter: close.x + close.width / 2,
+        fillOrigin: Number.parseFloat(getComputedStyle(fill).transformOrigin),
+        fillWidth: fill.offsetWidth,
+        root: { x: root.x, y: root.y, width: root.width, height: root.height },
+        htmlOverflow: document.documentElement.style.overflow,
+        bodyOverflow: document.body.style.overflow,
+        horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    expect(geometry.bars[0]).toBeGreaterThan(geometry.bars[1]);
+    expect(geometry.bars[1]).toBeGreaterThan(geometry.bars[2]);
+    expect(geometry.avatarCenter).toBeGreaterThan(geometry.closeCenter);
+    expect(Math.abs(geometry.fillOrigin - geometry.fillWidth)).toBeLessThan(1);
+    expect(geometry.root.x).toBe(0);
+    expect(geometry.root.y).toBe(0);
+    expect(geometry.root.width).toBe(page.viewportSize()!.width);
+    expect(geometry.htmlOverflow).toBe("hidden");
+    expect(geometry.bodyOverflow).toBe("hidden");
+    expect(geometry.horizontalOverflow).toBeLessThanOrEqual(0);
+  });
+
+  test("preserves owner navigation and dismissal with reduced motion", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openHarness(page, [
+      { ...IMAGE_A, title: "reduced-first", durationMs: 10_000 },
+      { ...IMAGE_C, title: "reduced-next", durationMs: 10_000 },
+    ]);
+    await openViewer(page, "reduced-first");
+
+    await dragViewer(page, { x: 0.28, y: 0.55 }, { x: 0.7, y: 0.55 });
+    await expect(page.locator(".story-viewer-content .story-viewer-username")).toHaveText(
+      "reduced-next",
+    );
+    await expect(page.locator(".story-viewer")).toHaveAttribute("data-transition-state", "idle");
+
+    await dragViewer(page, { x: 0.5, y: 0.28 }, { x: 0.5, y: 0.68 });
+    await expect(page.locator(".story-viewer")).toHaveCount(0);
   });
 
   test("reports each story view exactly once, including on revisit", async ({ page }) => {
@@ -251,7 +520,7 @@ test.describe("Stories viewer", () => {
 
     const box = (await page.locator(".story-viewer-content").boundingBox())!;
     for (let i = 0; i < 8; i += 1) {
-      await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.6, { delay: 10 });
+      await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.6, { delay: 10 });
     }
     await page.waitForTimeout(500);
 

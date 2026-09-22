@@ -20,10 +20,12 @@ import {
 } from "./playback-machine";
 import { describeMediaUrl, useStoryPlaybackStore, type StoryPlaybackStore } from "./playback-store";
 import { getSafeStoryCtaUrl } from "../story-utils";
+import type { StoryRailOverlay } from "../types";
 
 /** Payload we attach to each package story item; the package passes it through untouched. */
 export interface StoryMediaPayload {
   storyId: number;
+  itemKey: string;
   kind: "image" | "video" | "text";
   src: string;
   poster?: string;
@@ -31,6 +33,13 @@ export interface StoryMediaPayload {
   durationMs: number;
   text?: string;
   ctaUrl?: string | null;
+  overlays?: StoryRailOverlay[];
+  labels?: {
+    mediaFailure: string;
+    retry: string;
+    mute: string;
+    unmute: string;
+  };
 }
 
 /** Props the patched package hands a custom renderer (see patches/README.md, edit E3). */
@@ -118,6 +127,33 @@ function hasDecodableVideoTrack(video: HTMLVideoElement): boolean {
   const quality = video.getVideoPlaybackQuality?.();
   if (quality && quality.totalVideoFrames > 0) return true;
   return false;
+}
+
+function OverlayLayer({ overlays }: { overlays?: StoryRailOverlay[] }) {
+  if (!overlays?.length) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" data-testid="story-overlays">
+      {overlays.map((overlay) => {
+        const style: React.CSSProperties = {
+          left: `${overlay.x}%`,
+          top: `${overlay.y}%`,
+          width: overlay.width ? `${overlay.width}%` : undefined,
+          height: overlay.height ? `${overlay.height}%` : undefined,
+          transform: `translate(-50%, -50%) rotate(${overlay.rotation ?? 0}deg)`,
+          color: overlay.fontColor,
+          fontFamily: overlay.fontFamily,
+          fontSize: overlay.fontSize ? `${overlay.fontSize}px` : undefined,
+        };
+        if (overlay.type === "sticker" && overlay.imageUrl) {
+          return <img key={overlay.id} src={overlay.imageUrl} alt="" aria-hidden className="absolute object-contain" style={style} />;
+        }
+        if (overlay.type === "shape") {
+          return <span key={overlay.id} aria-hidden className="absolute rounded-2xl" style={{ ...style, backgroundColor: overlay.fontColor ?? "#ffffff" }} />;
+        }
+        return <span key={overlay.id} className="absolute whitespace-pre-wrap text-center font-peyda font-semibold drop-shadow" style={style}>{overlay.content}</span>;
+      })}
+    </div>
+  );
 }
 
 export function StoryMediaSurface(props: StoryMediaSurfaceProps): React.ReactElement | null {
@@ -602,6 +638,8 @@ function StoryMedia({
         />
       ) : null}
 
+      {state.phase !== "error" ? <OverlayLayer overlays={payload.overlays} /> : null}
+
       {ctaUrl && state.phase !== "error" ? (
         <a
           href={ctaUrl}
@@ -631,7 +669,7 @@ function StoryMedia({
           onMouseUp={stopTap}
           onTouchStart={stopTap}
           onTouchEnd={stopTap}
-          aria-label={audioEnabled ? "قطع صدا" : "پخش صدا"}
+          aria-label={audioEnabled ? (payload.labels?.mute ?? "Mute") : (payload.labels?.unmute ?? "Play sound")}
           aria-pressed={audioEnabled}
           className={`absolute right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${ctaUrl ? "bottom-20" : "bottom-6"}`}
         >
@@ -654,7 +692,7 @@ function StoryMedia({
           className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/70 px-8 text-center"
         >
           <p className="font-peyda text-base leading-7 text-white">
-            این استوری در این مرورگر پخش نمی‌شود.
+            {payload.labels?.mediaFailure ?? "This story cannot be played in this browser."}
           </p>
           <button
             type="button"
@@ -667,7 +705,7 @@ function StoryMedia({
             onPointerUp={stopTap}
             className="rounded-full border border-white/70 px-5 py-2 font-peyda text-sm text-white transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
           >
-            تلاش دوباره
+            {payload.labels?.retry ?? "Try again"}
           </button>
         </div>
       ) : null}

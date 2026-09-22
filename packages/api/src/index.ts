@@ -1,5 +1,7 @@
 export * from "./types/api";
 export * from "./types/commerce";
+export * from "./types/story";
+export * from "./story-normalize";
 export * from "./config/public";
 export * from "./utils/index";
 export { fetchWithTimeout } from "./fetch-with-timeout";

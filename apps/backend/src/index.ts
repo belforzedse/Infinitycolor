@@ -49,6 +49,8 @@ import { ensureAuditEventStorage } from "./audit/storage";
 import { ensureCategoryEditorialDatabaseInvariant } from "./api/product-category-content/services/category-editorial-database";
 import { ensureIssueReportStorage } from "./api/issue-report/services/issue-report-storage";
 import { ensureModelApplicationStorage } from "./api/model-application/services/model-application-storage";
+import { isVideoUpload } from "./services/media/normalize-upload-video";
+import { ensureStoryItemsMigration } from "./api/story/services/story-items-migration";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -602,7 +604,7 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
         "payment-gateway": ["snappEligible", "availableGateways"],
       },
       "api::story-seen": {
-        "story-seen": ["markSeen", "getMine"],
+        "story-seen": ["markSeen", "getMine", "markItemSeen", "getMineItems"],
       },
     },
   },
@@ -1390,6 +1392,33 @@ export default {
     registerAppLifecycles(strapi);
     strapi.db.lifecycles.subscribe(productLifeCycles);
     strapi.db.lifecycles.subscribe(productVariationLifeCycles);
+
+    // Await the one-row-to-one-item compatibility migration after Strapi has synchronized
+    // the component schema and before the web process starts serving story requests.
+    if (shouldRunWebBootstrapMaintenance()) {
+      await ensureStoryItemsMigration(strapi);
+    }
+
+    // Queue web-safe transcodes for any video the moment it lands, not only once it is
+    // attached to a saved product/story. An admin picking an HEVC/.mov phone recording in
+    // the add-product form has no product row yet, so relying solely on the product's
+    // afterCreate/afterUpdate hook would leave the upload-time preview blank until save.
+    // Best-effort: enqueue failures (e.g. Redis down) must never fail the upload itself.
+    strapi.db.lifecycles.subscribe({
+      models: ["plugin::upload.file"],
+      async afterCreate(event: any) {
+        const result = event?.result;
+        if (!result?.id || !isVideoUpload(result)) return;
+        try {
+          const { enqueueUploadedFileNormalization } = await import("./queue/media");
+          await enqueueUploadedFileNormalization(result.id);
+        } catch (error) {
+          strapi.log.warn(
+            `[upload] could not queue video normalization for file ${result.id}: ${(error as Error).message}`,
+          );
+        }
+      },
+    });
 
     // Invalidate rest-cache when cached content types change via DB (imports, scripts, entityService)
     const restCache = strapi.plugin("rest-cache");

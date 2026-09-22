@@ -6,13 +6,21 @@ import { factories } from "@strapi/strapi";
 import { hasCapability } from "@repo/auth-core";
 import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import { applyStoryCtaMutation, StoryCtaValidationError } from "../lib/story-cta";
+import { prepareStoryMutation, StoryItemsValidationError } from "../lib/story-items";
 
 type StoryMutationData = {
   Title?: string;
   Slug?: string;
   CtaLabel?: unknown;
   CtaUrl?: unknown;
+  Items?: unknown;
 };
+
+const STORY_POPULATE = {
+  Media: true,
+  Thumbnail: true,
+  Items: { populate: { Media: true, Thumbnail: true } },
+} as const;
 
 function slugify(input: string): string {
   return input
@@ -66,6 +74,8 @@ export default factories.createCoreController(
         };
       }
 
+      ctx.query.populate = STORY_POPULATE;
+
       return await super.find(ctx);
     },
 
@@ -76,7 +86,7 @@ export default factories.createCoreController(
       const hasAdminRole = Boolean(actor && hasCapability(actor.role, "content.stories.manage"));
 
       const story = await strapi.entityService.findOne("api::story.story", id, {
-        populate: { Media: true, Thumbnail: true },
+        populate: STORY_POPULATE,
       });
 
       if (!story) {
@@ -99,8 +109,11 @@ export default factories.createCoreController(
       }
       try {
         applyStoryCtaMutation(data);
+        await prepareStoryMutation(strapi, data as Record<string, unknown>);
       } catch (error) {
-        if (error instanceof StoryCtaValidationError) return ctx.badRequest(error.message);
+        if (error instanceof StoryCtaValidationError || error instanceof StoryItemsValidationError) {
+          return ctx.badRequest(error.message);
+        }
         throw error;
       }
       if (!data.Slug) {
@@ -118,8 +131,11 @@ export default factories.createCoreController(
       if (!data) return ctx.badRequest("اطلاعات استوری الزامی است.");
       try {
         applyStoryCtaMutation(data);
+        await prepareStoryMutation(strapi, data as Record<string, unknown>, storyId);
       } catch (error) {
-        if (error instanceof StoryCtaValidationError) return ctx.badRequest(error.message);
+        if (error instanceof StoryCtaValidationError || error instanceof StoryItemsValidationError) {
+          return ctx.badRequest(error.message);
+        }
         throw error;
       }
       if (data && !data.Slug && data.Title?.trim()) {
@@ -152,7 +168,7 @@ export default factories.createCoreController(
               },
             ],
           },
-          populate: { Media: true, Thumbnail: true },
+          populate: STORY_POPULATE,
           sort: [{ updatedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
           limit: 50,
         });

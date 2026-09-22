@@ -26,6 +26,15 @@
     "SeenAt": {
       "type": "datetime",
       "required": true
+    },
+    "ItemKey": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "DedupeKey": {
+      "type": "string",
+      "unique": true,
+      "maxLength": 64
     }
   }
 }

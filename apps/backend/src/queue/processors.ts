@@ -98,12 +98,16 @@ export async function processMaintenanceJob(
       return runAnalyticsOutboxRepairTick(strapi);
     }
     case MEDIA_JOBS.normalizeStoryVideo: {
-      const { storyId } = job.data as { storyId: number };
+      const { storyId, itemKey, fileId } = job.data as {
+        storyId: number;
+        itemKey: string;
+        fileId: number;
+      };
       const { normalizeStoryVideo } = await import("../services/media/normalize-story-video");
       const { FfmpegUnavailableError } = await import("../services/media/video-normalization");
       const path = await import("node:path");
       try {
-        return await normalizeStoryVideo(storyId, {
+        return await normalizeStoryVideo(storyId, itemKey, fileId, {
           strapi,
           uploadsDir: path.join(strapi.dirs.static.public, "uploads"),
         });
@@ -136,6 +140,31 @@ export async function processMaintenanceJob(
           });
         }
         return result;
+      } catch (error) {
+        if (error instanceof FfmpegUnavailableError) {
+          strapi.log.error(`[media] ${error.message}`);
+          throw new UnrecoverableError(error.message);
+        }
+        throw error;
+      }
+    }
+    case MEDIA_JOBS.normalizeUploadedFile: {
+      const { fileId } = job.data as { fileId: number };
+      const { loadUploadVideoFile, normalizeUploadFile } = await import(
+        "../services/media/normalize-upload-video"
+      );
+      const { FfmpegUnavailableError } = await import("../services/media/video-normalization");
+      const path = await import("node:path");
+      try {
+        const file = await loadUploadVideoFile(strapi, fileId);
+        if (!file) {
+          return { fileId, status: "missing" as const, detail: "upload row not found" };
+        }
+        return await normalizeUploadFile(file, {
+          strapi,
+          uploadsDir: path.join(strapi.dirs.static.public, "uploads"),
+          nameHint: `upload-${fileId}`,
+        });
       } catch (error) {
         if (error instanceof FfmpegUnavailableError) {
           strapi.log.error(`[media] ${error.message}`);

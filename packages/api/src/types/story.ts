@@ -1,0 +1,121 @@
+export type StoryMediaType = "image" | "video";
+
+export interface StoryMediaAsset {
+  id: number;
+  url: string;
+  alternativeText?: string;
+  width?: number;
+  height?: number;
+  mime?: string;
+  formats?: {
+    large?: { url: string };
+    medium?: { url: string };
+    small?: { url: string };
+    thumbnail?: { url: string };
+  };
+}
+
+export interface StoryOverlay {
+  id: string;
+  type: "text" | "sticker" | "shape";
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  content?: string;
+  fontSize?: number;
+  fontColor?: string;
+  fontFamily?: string;
+  imageUrl?: string;
+}
+
+/** One ordered slide inside a story group. `Key` is stable across media replacement/reorder. */
+export interface StoryItem {
+  id?: number;
+  Key: string;
+  MediaType: StoryMediaType;
+  Media?: StoryMediaAsset;
+  Thumbnail?: StoryMediaAsset;
+  DurationMs: number;
+  CtaLabel?: string | null;
+  CtaUrl?: string | null;
+  Overlays?: StoryOverlay[];
+}
+
+export interface Story {
+  id: number;
+  Title: string;
+  Slug: string;
+  IsActive: boolean;
+  SortOrder: number;
+  Items: StoryItem[];
+  /** Compatibility mirror of Items[0] for one release. */
+  MediaType: StoryMediaType;
+  Media?: StoryMediaAsset;
+  /** Story-level rail cover. */
+  Thumbnail?: StoryMediaAsset;
+  StartAt?: string | null;
+  EndAt?: string | null;
+  DurationMs: number;
+  CtaLabel?: string | null;
+  CtaUrl?: string | null;
+  Overlays?: StoryOverlay[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoryItemInput {
+  id?: number;
+  Key?: string;
+  MediaType: StoryMediaType;
+  Media: number;
+  Thumbnail?: number | null;
+  DurationMs?: number;
+  CtaUrl?: string | null;
+  CtaLabel?: string | null;
+  Overlays?: StoryOverlay[];
+}
+
+export interface StorySeen {
+  id: number;
+  story: Pick<Story, "id" | "Title">;
+  ItemKey?: string;
+  SeenAt: string;
+  createdAt: string;
+}
+
+export interface StorySeenItems {
+  storyId: number;
+  itemKeys: string[];
+}
+
+export interface StoryListParams {
+  page?: number;
+  pageSize?: number;
+  sort?: string;
+  search?: string;
+  isActive?: boolean;
+}
+
+export interface CreateStoryData {
+  Title: string;
+  Items?: StoryItemInput[];
+  IsActive?: boolean;
+  SortOrder?: number;
+  Thumbnail?: number | null;
+  StartAt?: string | null;
+  EndAt?: string | null;
+  /** Compatibility input accepted for one release. */
+  MediaType?: StoryMediaType;
+  Media?: number;
+  DurationMs?: number;
+  CtaLabel?: string | null;
+  CtaUrl?: string | null;
+  Overlays?: StoryOverlay[];
+}
+
+export type UpdateStoryData = Partial<CreateStoryData>;
+
+export const STORY_ITEM_LIMIT = 20;
+export const STORY_CTA_LABEL = "مشاهده لینک";

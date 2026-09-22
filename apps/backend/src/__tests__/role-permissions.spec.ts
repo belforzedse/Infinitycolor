@@ -595,7 +595,11 @@ function createActionTree() {
       ],
     ],
     ["api::local-user-address", "local-user-address", [...crud, "getMyAddresses", "createAddress"]],
-    ["api::story-seen", "story-seen", ["markSeen", "getMine"]],
+    [
+      "api::story-seen",
+      "story-seen",
+      ["markSeen", "getMine", "markItemSeen", "getMineItems"],
+    ],
   ] as Array<[string, string, string[]]>) {
     addController(typeKey, controllerName, actions);
   }

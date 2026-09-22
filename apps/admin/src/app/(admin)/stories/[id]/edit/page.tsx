@@ -43,15 +43,26 @@ export default function EditStoryPage() {
         const story = await storyService.getStory(storyId);
         setInitialValues({
           Title: story.Title,
-          MediaType: story.MediaType,
           IsActive: story.IsActive,
           SortOrder: story.SortOrder,
+          StartAt: story.StartAt,
+          EndAt: story.EndAt,
           updatedAt: story.updatedAt,
-          mediaId: story.Media?.id,
-          mediaUrl: resolveMediaUrl(story.Media?.url),
-          thumbnailId: story.Thumbnail?.id,
-          thumbnailUrl: resolveMediaUrl(story.Thumbnail?.url),
-          CtaUrl: story.CtaUrl,
+          coverId: story.Thumbnail?.id,
+          coverUrl: resolveMediaUrl(story.Thumbnail?.url),
+          Items: story.Items.map((item) => ({
+            localId: `story-${story.id}-item-${item.Key}`,
+            id: item.id,
+            Key: item.Key,
+            MediaType: item.MediaType,
+            mediaId: item.Media?.id,
+            mediaUrl: resolveMediaUrl(item.Media?.url),
+            thumbnailId: item.Thumbnail?.id,
+            thumbnailUrl: resolveMediaUrl(item.Thumbnail?.url),
+            DurationMs: item.DurationMs,
+            CtaUrl: item.CtaUrl,
+            Overlays: item.Overlays,
+          })),
         });
       } catch (err) {
         toast.error(translateErrorMessage(extractErrorMessage(err), "خطا در دریافت اطلاعات استوری."));

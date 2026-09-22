@@ -17,7 +17,7 @@ function resolveMediaUrl(url?: string): string | undefined {
   return resolveAssetUrl(url) || url.trim().replace(/\s+/g, "");
 }
 
-function formatDate(iso?: string): string {
+function formatDate(iso?: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("fa-IR", {
     year: "numeric",

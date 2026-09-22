@@ -1,7 +1,7 @@
 "use client";
 
 import type { StoryRailPreview, StoryRailStory, StoriesAvatarListProps } from "./types";
-import { getStoryRailPreview } from "./story-utils";
+import { getStoryRailPreview, isStoryFullySeen } from "./story-utils";
 
 const INNER_SIZE_PX = 74;
 const OUTER_SIZE_PX = 80;
@@ -173,9 +173,11 @@ function StoryMobileCardInner<TStory extends StoryRailStory>({
 
 export function StoriesAvatarList<TStory extends StoryRailStory = StoryRailStory>({
   stories,
-  seenIds,
+  seenIds = new Set<number>(),
+  seenItems,
   onAvatarClick,
   resolveMediaUrl,
+  dir = "rtl",
   mobileLayout = "card",
   renderMobileBadge,
   emptyPreviewLabel = "Video",
@@ -185,6 +187,7 @@ export function StoriesAvatarList<TStory extends StoryRailStory = StoryRailStory
 
   return (
     <div
+      dir={dir}
       className={joinClasses(
         useAvatarOnMobile
           ? "flex h-20 min-h-0 flex-none flex-row items-center gap-4"
@@ -194,7 +197,7 @@ export function StoriesAvatarList<TStory extends StoryRailStory = StoryRailStory
     >
       {stories.map((story, index) => {
         const preview = getStoryRailPreview(story, resolveMediaUrl);
-        const isSeen = seenIds.has(story.id);
+        const isSeen = isStoryFullySeen(story, seenItems, seenIds);
 
         return (
           <button

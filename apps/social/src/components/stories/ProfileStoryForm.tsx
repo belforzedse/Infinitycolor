@@ -1,12 +1,24 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
-import { ImagePlus, ToggleLeft, ToggleRight, Upload, X } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ImagePlus, Loader2, RefreshCcw, ToggleLeft, ToggleRight, Upload, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { IMAGE_BASE_URL } from "@repo/api";
 import { Button } from "@repo/ui/button";
 import { uploadFile } from "@/services/upload.service";
-import type { CreateStoryData, StoryMediaType } from "@/types/story";
+import { apiClient } from "@/lib/api-client";
+import { ENDPOINTS } from "@/lib/api-endpoints";
+import type { CreateStoryData, StoryItem, StoryItemInput, StoryMediaType } from "@/types/story";
+
+/** How often, and for how long, to poll the backend for a normalized replacement of a
+ * video the browser could not decode (Chromium has no platform HEVC decoder, so an
+ * HEVC/.mov phone recording "plays" with audio but paints zero frames and never fires
+ * `error`). 5s x 24 ~= 2 minutes, generous for a short story clip transcode. */
+const VIDEO_POLL_INTERVAL_MS = 5000;
+const VIDEO_POLL_MAX_ATTEMPTS = 24;
+/** Grace period for a `.mov` container that never fires `loadedmetadata` or `error` at
+ * all on a platform with no HEVC decoder — it just sits at readyState 0 forever. */
+const VIDEO_STUCK_TIMEOUT_MS = 8000;
 
 export type ProfileStoryFormValues = {
   Title: string;
@@ -19,6 +31,8 @@ export type ProfileStoryFormValues = {
   thumbnailId?: number;
   thumbnailUrl?: string;
   CtaUrl?: string | null;
+  /** Full canonical array; profile editing updates item one and preserves the remainder. */
+  Items?: StoryItem[];
 };
 
 type ProfileStoryFormProps = {
@@ -63,6 +77,81 @@ export function ProfileStoryForm({
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
 
+  // Chromium (no platform HEVC decoder) "plays" an HEVC/.mov clip with audio but paints
+  // zero frames and never fires `error` — videoWidth/videoHeight stay 0 forever. Phone
+  // recordings land in this shape. The backend transcodes them async as soon as they're
+  // uploaded (see the `plugin::upload.file` afterCreate hook in apps/backend/src/index.ts),
+  // so once a raw source fails to decode we poll for that replacement and swap `mediaUrl`
+  // to it — the preview should end up actually playing, not just explaining why it can't.
+  const [videoUnplayable, setVideoUnplayable] = useState(false);
+  const [isProcessingVideo, setIsProcessingVideo] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const pollAttemptsRef = useRef(0);
+
+  const markVideoUnplayable = () => {
+    if (mediaId) {
+      setIsProcessingVideo(true);
+    } else {
+      setVideoUnplayable(true);
+    }
+  };
+
+  useEffect(() => {
+    if (mediaType !== "video" || !mediaUrl || videoUnplayable || isProcessingVideo) return;
+    // Some `.mov` containers never fire `loadedmetadata` or `error` at all on a platform
+    // with no HEVC decoder — they just sit at readyState 0 forever. Fall back after a
+    // grace period instead of leaving a black box indefinitely.
+    const timer = window.setTimeout(() => {
+      if ((videoRef.current?.readyState ?? 0) === 0) {
+        markVideoUnplayable();
+      }
+    }, VIDEO_STUCK_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaType, mediaUrl, videoUnplayable, isProcessingVideo]);
+
+  useEffect(() => {
+    if (!isProcessingVideo || !mediaId) return;
+    let cancelled = false;
+    let timer: number;
+
+    const poll = async () => {
+      if (cancelled) return;
+      pollAttemptsRef.current += 1;
+      try {
+        const { data } = await apiClient.get<{ url?: string; mime?: string }>(
+          `${ENDPOINTS.FILE.DOWNLOAD}/${mediaId}`,
+        );
+        // `mime` flips to "video/mp4" once the backend rewrites the row. Checking the
+        // mime rather than diffing the URL avoids a false "done" on a poll that returns
+        // the same still-unnormalized file.
+        if (data?.url && data.mime === "video/mp4") {
+          if (!cancelled) {
+            setMediaUrl(data.url);
+            setIsProcessingVideo(false);
+            setVideoUnplayable(false);
+          }
+          return;
+        }
+      } catch {
+        // Transient network/API hiccup — keep polling silently, no toast spam.
+      }
+      if (cancelled) return;
+      if (pollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) {
+        setIsProcessingVideo(false);
+        setVideoUnplayable(true);
+      } else {
+        timer = window.setTimeout(poll, VIDEO_POLL_INTERVAL_MS);
+      }
+    };
+
+    timer = window.setTimeout(poll, VIDEO_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isProcessingVideo, mediaId]);
+
   async function handleMediaUpload(file: File) {
     setUploadingMedia(true);
     try {
@@ -71,6 +160,9 @@ export function ProfileStoryForm({
       setMediaId(uploaded.id);
       setMediaUrl(uploaded.url);
       setMediaType(uploaded.mime.startsWith("video/") ? "video" : "image");
+      setVideoUnplayable(false);
+      setIsProcessingVideo(false);
+      pollAttemptsRef.current = 0;
     } catch {
       toast.error("آپلود رسانه ناموفق بود.");
     } finally {
@@ -102,14 +194,36 @@ export function ProfileStoryForm({
       toast.error("آپلود رسانه الزامی است.");
       return;
     }
+    const originalItems = initialValues?.Items ?? [];
+    const first = originalItems[0];
+    const items: StoryItemInput[] = [
+      {
+        ...(first?.id ? { id: first.id } : {}),
+        ...(first?.Key ? { Key: first.Key } : {}),
+        MediaType: mediaType,
+        Media: mediaId,
+        Thumbnail: first?.Thumbnail?.id ?? null,
+        DurationMs: first?.DurationMs ?? 5000,
+        CtaUrl: ctaUrl.trim() || null,
+        Overlays: first?.Overlays ?? [],
+      },
+      ...originalItems.slice(1).map((item) => ({
+        ...(item.id ? { id: item.id } : {}),
+        Key: item.Key,
+        MediaType: item.MediaType,
+        Media: item.Media!.id,
+        Thumbnail: item.Thumbnail?.id ?? null,
+        DurationMs: item.DurationMs,
+        CtaUrl: item.CtaUrl ?? null,
+        Overlays: item.Overlays ?? [],
+      })),
+    ];
     await onSubmit({
       Title: title.trim(),
-      MediaType: mediaType,
       IsActive: isActive,
       SortOrder: sortOrder,
-      Media: mediaId,
       Thumbnail: thumbnailId,
-      CtaUrl: ctaUrl.trim() || null,
+      Items: items,
     });
   }
 
@@ -128,6 +242,11 @@ export function ProfileStoryForm({
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="flex min-w-0 flex-col gap-5">
+          {(initialValues?.Items?.length ?? 0) > 1 && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 font-peyda text-sm text-amber-800">
+              این داستان {initialValues?.Items?.length} آیتم دارد. این فرم آیتم اول را ویرایش می‌کند و آیتم‌های دیگر را بدون تغییر نگه می‌دارد.
+            </section>
+          )}
           <section className="rounded-2xl bg-white p-5 shadow-[0_0_14.7px_rgba(0,0,0,0.04)]">
             <label className="mb-2 block font-peyda text-sm font-medium text-zinc-700">عنوان</label>
             <input
@@ -143,11 +262,58 @@ export function ProfileStoryForm({
             {mediaUrl ? (
               <div className="relative inline-flex">
                 {mediaType === "video" ? (
-                  <video
-                    src={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)}
-                    controls
-                    className="h-56 rounded-xl"
-                  />
+                  isProcessingVideo ? (
+                    <div className="flex h-56 w-40 flex-col items-center justify-center gap-2 rounded-xl bg-zinc-800 px-3 text-center">
+                      <Loader2 className="size-6 animate-spin text-white/70" aria-hidden />
+                      <span className="font-peyda text-xs leading-5 text-white/80">
+                        این ویدیو در حال پردازش برای پخش در مرورگر است...
+                      </span>
+                      <a
+                        href={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(event) => event.stopPropagation()}
+                        className="rounded-md bg-white/10 px-3 py-1.5 font-peyda text-[11px] font-medium text-white underline decoration-white/40 hover:bg-white/20"
+                      >
+                        دانلود ویدیوی اصلی
+                      </a>
+                    </div>
+                  ) : videoUnplayable ? (
+                    <div className="flex h-56 w-40 flex-col items-center justify-center gap-2 rounded-xl bg-zinc-800 px-3 text-center">
+                      <RefreshCcw className="size-6 text-white/70" aria-hidden />
+                      <span className="font-peyda text-xs leading-5 text-white/80">
+                        این فرمت ویدیو (احتمالاً HEVC) توسط مرورگر شما قابل پخش نیست، هرچند فایل
+                        با موفقیت بارگذاری شده است.
+                      </span>
+                      <a
+                        href={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(event) => event.stopPropagation()}
+                        className="rounded-md bg-white/10 px-3 py-1.5 font-peyda text-[11px] font-medium text-white underline decoration-white/40 hover:bg-white/20"
+                      >
+                        دانلود ویدیو برای بررسی
+                      </a>
+                    </div>
+                  ) : (
+                    <video
+                      ref={videoRef}
+                      src={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)}
+                      controls
+                      className="h-56 rounded-xl"
+                      onLoadedMetadata={(event) => {
+                        if (
+                          event.currentTarget.videoWidth === 0 &&
+                          event.currentTarget.videoHeight === 0
+                        ) {
+                          markVideoUnplayable();
+                        }
+                      }}
+                      onError={() => markVideoUnplayable()}
+                    />
+                  )
                 ) : (
                   <img
                     src={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)}
@@ -160,6 +326,9 @@ export function ProfileStoryForm({
                   onClick={() => {
                     setMediaId(undefined);
                     setMediaUrl(undefined);
+                    setVideoUnplayable(false);
+                    setIsProcessingVideo(false);
+                    pollAttemptsRef.current = 0;
                   }}
                   className="absolute -right-2 -top-2 rounded-full bg-rose-500 p-1 text-white"
                   aria-label="حذف رسانه"

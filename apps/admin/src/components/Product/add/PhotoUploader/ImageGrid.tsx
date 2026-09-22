@@ -75,6 +75,7 @@ const SortablePreviewItem: React.FC<SortablePreviewItemProps> = ({
         mimeType={item.file.type}
         uploadStatus={item.uploadStatus}
         uploadError={item.uploadError}
+        fileId={item.fileId}
         onRemove={() => onRemoveFile(index)}
         onRetry={onRetryFile ? () => onRetryFile(index) : undefined}
       />

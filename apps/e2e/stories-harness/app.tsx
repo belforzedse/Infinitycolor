@@ -17,10 +17,12 @@ import "./harness.css";
 declare global {
   interface Window {
     __storyViews: number[];
+    __storyItemViews: string[];
   }
 }
 
 window.__storyViews = [];
+window.__storyItemViews = [];
 
 function readStories(): StoryRailStory[] {
   const raw = new URLSearchParams(window.location.search).get("stories");
@@ -30,13 +32,19 @@ function readStories(): StoryRailStory[] {
 
 function Harness() {
   const [stories] = useState(readStories);
-  const [seenIds, setSeenIds] = useState<Set<number>>(new Set());
+  const [seenItems, setSeenItems] = useState<Map<number, Set<string>>>(new Map());
+  const direction = new URLSearchParams(window.location.search).get("dir") === "ltr" ? "ltr" : "rtl";
 
   // Mirrors the apps' `markSeen`: record the id, and count every call so a test can prove
   // a story is reported exactly once.
-  const onMarkSeen = useCallback((storyId: number) => {
+  const onMarkSeen = useCallback((storyId: number, itemKey: string) => {
     window.__storyViews.push(storyId);
-    setSeenIds((prev) => (prev.has(storyId) ? prev : new Set(prev).add(storyId)));
+    window.__storyItemViews.push(`${storyId}:${itemKey}`);
+    setSeenItems((previous) => {
+      const next = new Map(previous);
+      next.set(storyId, new Set(next.get(storyId) ?? []).add(itemKey));
+      return next;
+    });
   }, []);
 
   return (
@@ -44,10 +52,10 @@ function Harness() {
       <h1 data-testid="harness-ready">Stories harness</h1>
       <StoryRail
         stories={stories}
-        seenIds={seenIds}
+        seenItems={seenItems}
         onMarkSeen={onMarkSeen}
         resolveMediaUrl={(url) => url}
-        dir="rtl"
+        dir={direction}
         mobileLayout="avatar"
         emptyPreviewLabel="ویدیو"
         unavailableText="Story unavailable"

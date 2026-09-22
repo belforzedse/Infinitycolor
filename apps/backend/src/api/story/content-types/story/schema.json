@@ -31,6 +31,14 @@
       "default": 0,
       "min": 0
     },
+    "Items": {
+      "type": "component",
+      "repeatable": true,
+      "component": "story.story-item",
+      "required": true,
+      "min": 1,
+      "max": 20
+    },
     "MediaType": {
       "type": "enumeration",
       "enum": ["image", "video"],

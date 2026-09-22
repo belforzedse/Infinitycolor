@@ -42,6 +42,11 @@ export interface FileWithPreview {
   /** The resolved URL this item was (or will be) reported as by the parent, used to
    * match it back up in `reconcileWithLocalPreviews` regardless of array position. */
   remoteUrl?: string;
+  /** Strapi `plugin::upload.file` id from the upload response. Lets a video preview poll
+   * for the backend's web-safe transcode of an HEVC/.mov clip instead of staying stuck
+   * on a raw source the browser cannot decode. Undefined for items reconstructed from
+   * `initialImages`/`initialVideos` URLs, which never had an upload response. */
+  fileId?: number;
 }
 
 interface UseUploadProps {
@@ -220,7 +225,7 @@ export function useUpload({
   const updateItemById = (
     type: FileType,
     id: string,
-    patch: Partial<Pick<FileWithPreview, "uploadStatus" | "uploadError" | "remoteUrl">>,
+    patch: Partial<Pick<FileWithPreview, "uploadStatus" | "uploadError" | "remoteUrl" | "fileId">>,
   ) => {
     const updater = (items: FileWithPreview[]) =>
       items.map((item) => (item.id === id ? { ...item, ...patch } : item));
@@ -314,6 +319,7 @@ export function useUpload({
       uploadStatus: "uploaded",
       uploadError: null,
       remoteUrl: resolveAssetUrl(response[0].url),
+      fileId: response[0].id,
     });
   };
 

@@ -38,6 +38,7 @@ export default function EditStoryPage() {
           thumbnailId: story.Thumbnail?.id,
           thumbnailUrl: story.Thumbnail?.url,
           CtaUrl: story.CtaUrl,
+          Items: story.Items,
         });
       })
       .catch((error: unknown) => {
