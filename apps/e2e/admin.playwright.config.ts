@@ -8,6 +8,12 @@ import {
 } from "./helpers/env";
 
 const isCI = !!process.env.CI;
+// Playwright discards a web server's stdout by default, so a server that dies
+// on start-up fails the run as "Exit code: 254" with no cause (pipelines
+// 1104/1105). CI keeps the output; local runs stay quiet.
+const webServerOutput = isCI
+  ? ({ stdout: "pipe", stderr: "pipe" } as const)
+  : {};
 const authServerCommand = process.env.E2E_AUTH_SERVER_COMMAND?.trim();
 const adminServerCommand = process.env.E2E_ADMIN_SERVER_COMMAND?.trim();
 const storefrontServerCommand = process.env.E2E_WEB_SERVER_COMMAND?.trim();
@@ -117,6 +123,7 @@ export default defineConfig({
             url: `${centralAuthOrigin().replace(/\/$/, "")}/api/health/ready`,
             name: "central-auth",
             reuseExistingServer: !isCI,
+            ...webServerOutput,
             timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
             env: {
               ...stringProcessEnvironment(),
@@ -132,6 +139,7 @@ export default defineConfig({
             url: storefrontBaseURL(),
             name: "storefront",
             reuseExistingServer: !isCI,
+            ...webServerOutput,
             timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
             env: {
               ...stringProcessEnvironment(),
@@ -156,6 +164,7 @@ export default defineConfig({
             url: `${adminBaseURL().replace(/\/$/, "")}/api/health/live`,
             name: "admin",
             reuseExistingServer: !isCI,
+            ...webServerOutput,
             timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
             env: {
               ...stringProcessEnvironment(),
