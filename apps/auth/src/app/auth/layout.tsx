@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { headers } from "next/headers";
 import { getSessionCookie } from "better-auth/cookies";
 import { AuthIllustration } from "@repo/auth-ui";
-import authLogo from "../../../../frontend/public/images/logo_PDF.webp";
+import authLogo from "@/assets/logo_PDF.webp";
 import { AuthFlowProvider } from "@/components/auth/auth-flow-context";
 import { getAuthEnv } from "@/server/env";
 
