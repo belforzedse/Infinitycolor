@@ -991,6 +991,9 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
             ? Number(contractTransaction.id)
             : undefined,
           contractTransactionData: { Status: "Failed" },
+          cancellationReasonCode: reason.startsWith("reservation_")
+            ? "payment_expired"
+            : undefined,
         });
         try {
           await strapi.entityService.create("api::order-log.order-log", {
@@ -1578,6 +1581,7 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
               {
                 reservationStatus: "Expired",
                 contractData: { external_source: "Mellat" },
+                cancellationReasonCode: "payment_expired",
               },
             );
 

@@ -188,7 +188,7 @@ describe("verifyPaymentHandler", () => {
     expect(strapi.entityService.update).toHaveBeenCalledWith(
       "api::order.order",
       100,
-      { data: { Status: "Cancelled" } },
+      { data: { Status: "Cancelled", CancellationReason: "پرداخت توسط درگاه تایید نشد" } },
     );
     expect(strapi.entityService.create).toHaveBeenCalledWith(
       "api::order-log.order-log",
@@ -254,7 +254,7 @@ describe("verifyPaymentHandler", () => {
     await verifyPaymentHandler(strapi as any, ctx);
 
     expect(strapi.entityService.update).toHaveBeenCalledWith("api::order.order", 100, {
-      data: { Status: "Cancelled" },
+      data: { Status: "Cancelled", CancellationReason: "پرداخت توسط درگاه تایید نشد" },
     });
     expect(Sentry.captureMessage).toHaveBeenCalledWith(
       "payment.result:failure",
@@ -969,6 +969,7 @@ describe("verifyPaymentHandler", () => {
           Status: "Cancelled",
           external_source: "ZarinPal",
           external_id: "AUTH-CANCEL",
+          CancellationReason: "پرداخت توسط درگاه تایید نشد",
         },
       },
     );

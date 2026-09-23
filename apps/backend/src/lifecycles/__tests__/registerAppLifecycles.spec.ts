@@ -281,6 +281,47 @@ describe("registerAppLifecycles", () => {
     );
   });
 
+  it("prefers CancellationReason over Description/Note for the cancellation SMS and timeline entry", async () => {
+    const { strapi, subscribers, activityService } = createMockStrapi();
+    strapi.entityService.findOne
+      .mockResolvedValueOnce({
+        id: 14,
+        Status: "Paying",
+        Type: "Cart",
+        Description: "an old unrelated admin note",
+        user: { id: 5 },
+      })
+      .mockResolvedValueOnce({
+        id: 14,
+        Status: "Cancelled",
+        Type: "Cart",
+        Description: "an old unrelated admin note",
+        CancellationReason: "پرداخت توسط درگاه تایید نشد",
+        user: { id: 5 },
+      });
+
+    registerAppLifecycles(strapi);
+    const subscriber = getSubscriber(subscribers, "api::order.order");
+    const event = { params: { where: { id: 14 } }, result: { id: 14 }, state: {} };
+
+    await subscriber.beforeUpdate(event);
+    await subscriber.afterUpdate(event);
+
+    expect(notifyOrderStatusSms).toHaveBeenCalledWith(
+      strapi,
+      expect.objectContaining({
+        orderId: 14,
+        newStatus: "Cancelled",
+        reason: "پرداخت توسط درگاه تایید نشد",
+      })
+    );
+    expect(activityService.logOrderCancelled).toHaveBeenCalledWith(
+      5,
+      14,
+      "پرداخت توسط درگاه تایید نشد",
+    );
+  });
+
   it("does not queue status SMS when status is unchanged", async () => {
     const { strapi, subscribers } = createMockStrapi();
     strapi.entityService.findOne

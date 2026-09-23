@@ -153,7 +153,7 @@ export interface StoryStoryItem extends Schema.Component {
       }>;
     CtaUrl: Attribute.String &
       Attribute.SetMinMaxLength<{
-        maxLength: 500;
+        maxLength: 2048;
       }>;
     DurationMs: Attribute.Integer &
       Attribute.SetMinMax<

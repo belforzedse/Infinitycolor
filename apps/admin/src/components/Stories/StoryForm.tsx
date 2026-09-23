@@ -81,62 +81,11 @@ function blankItem(): StoryFormItemValues {
   return { localId: clientKey(), MediaType: "image", DurationMs: 5000, Overlays: [] };
 }
 
-function blankOverlay(): StoryOverlay {
-  return { id: clientKey(), type: "text", x: 50, y: 50, content: "", fontSize: 28, fontColor: "#ffffff" };
-}
-
-function OverlayEditor({ overlays, onChange }: { overlays: StoryOverlay[]; onChange: (overlays: StoryOverlay[]) => void }) {
-  const update = (id: string, patch: Partial<StoryOverlay>) =>
-    onChange(overlays.map((overlay) => overlay.id === id ? { ...overlay, ...patch } : overlay));
-  return (
-    <div className="mt-5 border-t border-slate-100 pt-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-slate-700">لایه‌های روی آیتم</span>
-        <button type="button" disabled={overlays.length >= 12} onClick={() => onChange([...overlays, blankOverlay()])} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 disabled:opacity-40">افزودن لایه</button>
-      </div>
-      <div className="space-y-3">
-        {overlays.map((overlay, overlayIndex) => (
-          <div key={overlay.id} className="rounded-xl bg-slate-50 p-3">
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-600">لایه {overlayIndex + 1}</span>
-              <button type="button" onClick={() => onChange(overlays.filter((entry) => entry.id !== overlay.id))} className="rounded-md p-1.5 text-rose-500 hover:bg-rose-50" aria-label={`حذف لایه ${overlayIndex + 1}`}><Trash2 className="h-4 w-4" aria-hidden /></button>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="text-xs text-slate-600">نوع<select value={overlay.type} onChange={(event) => update(overlay.id, { type: event.target.value as StoryOverlay["type"] })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2"><option value="text">متن</option><option value="sticker">تصویر</option><option value="shape">شکل</option></select></label>
-              <label className="text-xs text-slate-600">افقی (%)<input type="number" min={0} max={100} value={overlay.x} onChange={(event) => update(overlay.id, { x: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2" /></label>
-              <label className="text-xs text-slate-600">عمودی (%)<input type="number" min={0} max={100} value={overlay.y} onChange={(event) => update(overlay.id, { y: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2" /></label>
-              <label className="text-xs text-slate-600">چرخش<input type="number" min={-360} max={360} value={overlay.rotation ?? 0} onChange={(event) => update(overlay.id, { rotation: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2" /></label>
-              {overlay.type === "text" ? <>
-                <label className="text-xs text-slate-600 sm:col-span-2">متن<input value={overlay.content ?? ""} maxLength={300} onChange={(event) => update(overlay.id, { content: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2" /></label>
-                <label className="text-xs text-slate-600">اندازه متن<input type="number" min={8} max={96} value={overlay.fontSize ?? 28} onChange={(event) => update(overlay.id, { fontSize: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2" /></label>
-              </> : null}
-              {overlay.type === "sticker" ? <label className="text-xs text-slate-600 sm:col-span-2">نشانی تصویر<input dir="ltr" inputMode="url" value={overlay.imageUrl ?? ""} onChange={(event) => update(overlay.id, { imageUrl: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-left" /></label> : null}
-              {overlay.type !== "text" ? <>
-                <label className="text-xs text-slate-600">عرض (%)<input type="number" min={1} max={100} value={overlay.width ?? 20} onChange={(event) => update(overlay.id, { width: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2" /></label>
-                <label className="text-xs text-slate-600">ارتفاع (%)<input type="number" min={1} max={100} value={overlay.height ?? 20} onChange={(event) => update(overlay.id, { height: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2" /></label>
-              </> : null}
-              {overlay.type !== "sticker" ? <label className="text-xs text-slate-600">رنگ<input type="color" value={overlay.fontColor ?? "#ffffff"} onChange={(event) => update(overlay.id, { fontColor: event.target.value })} className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white p-1" /></label> : null}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function fullUrl(url?: string, version?: string) {
   if (!url) return undefined;
   const value = resolveAssetUrl(url) || url.trim().replace(/\s+/g, "");
   if (!version) return value;
   return `${value}${value.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}`;
-}
-
-function toDateInput(value?: string | null): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return shifted.toISOString().slice(0, 16);
 }
 
 function SortableItemCard({
@@ -273,18 +222,10 @@ function SortableItemCard({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-[160px_1fr]">
-        <label className="text-sm font-medium text-slate-700">
-          مدت نمایش
-          <input type="number" min={1000} step={500} value={item.DurationMs} onChange={(event) => onChange({ DurationMs: Number(event.target.value) })} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-          <span className="mt-1 block text-xs font-normal text-slate-400">میلی‌ثانیه</span>
-        </label>
-        <label className="text-sm font-medium text-slate-700">
-          لینک دکمه «مشاهده لینک»
-          <input type="text" inputMode="url" dir="ltr" value={item.CtaUrl ?? ""} onChange={(event) => onChange({ CtaUrl: event.target.value })} placeholder="https://example.com یا /pdp/product" className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-left text-sm" />
-        </label>
-      </div>
-      <OverlayEditor overlays={item.Overlays ?? []} onChange={(Overlays) => onChange({ Overlays })} />
+      <label className="mt-4 block text-sm font-medium text-slate-700">
+        لینک دکمه «مشاهده لینک»
+        <input type="text" inputMode="url" dir="ltr" value={item.CtaUrl ?? ""} onChange={(event) => onChange({ CtaUrl: event.target.value })} placeholder="https://example.com یا /pdp/product" className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-left text-sm" />
+      </label>
     </article>
   );
 }
@@ -293,8 +234,6 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
   const [title, setTitle] = useState(initialValues?.Title ?? "");
   const [isActive, setIsActive] = useState(initialValues?.IsActive ?? false);
   const [sortOrder, setSortOrder] = useState(initialValues?.SortOrder ?? 0);
-  const [startAt, setStartAt] = useState(toDateInput(initialValues?.StartAt));
-  const [endAt, setEndAt] = useState(toDateInput(initialValues?.EndAt));
   const [coverId, setCoverId] = useState(initialValues?.coverId);
   const [coverUrl, setCoverUrl] = useState(initialValues?.coverUrl);
   const [items, setItems] = useState<StoryFormItemValues[]>(
@@ -349,9 +288,6 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
     if (items.length < 1 || items.length > MAX_ITEMS) return void toast.error("تعداد آیتم‌ها معتبر نیست.");
     const missing = items.findIndex((item) => !item.mediaId);
     if (missing >= 0) return void toast.error(`رسانه آیتم ${missing + 1} الزامی است.`);
-    const invalidDuration = items.findIndex((item) => !Number.isInteger(item.DurationMs) || item.DurationMs < 1000);
-    if (invalidDuration >= 0) return void toast.error(`مدت نمایش آیتم ${invalidDuration + 1} معتبر نیست.`);
-    if (startAt && endAt && new Date(startAt) > new Date(endAt)) return void toast.error("زمان پایان باید پس از زمان شروع باشد.");
 
     const payloadItems: StoryItemInput[] = items.map((item) => ({
       ...(item.id ? { id: item.id } : {}),
@@ -359,7 +295,7 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
       MediaType: item.MediaType,
       Media: item.mediaId!,
       Thumbnail: item.thumbnailId ?? null,
-      DurationMs: item.DurationMs,
+      DurationMs: Number.isInteger(item.DurationMs) && item.DurationMs >= 1000 ? item.DurationMs : 5000,
       CtaUrl: item.CtaUrl?.trim() || null,
       Overlays: item.Overlays ?? [],
     }));
@@ -368,8 +304,8 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
       IsActive: isActive,
       SortOrder: sortOrder,
       Thumbnail: coverId ?? null,
-      StartAt: startAt ? new Date(startAt).toISOString() : null,
-      EndAt: endAt ? new Date(endAt).toISOString() : null,
+      StartAt: null,
+      EndAt: null,
       Items: payloadItems,
     });
   }
@@ -433,8 +369,6 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
 
         <section className="space-y-4 rounded-2xl bg-white p-5 shadow-sm">
           <label className="block text-sm font-medium text-slate-700">ترتیب نمایش<input type="number" min={0} value={sortOrder} onChange={(event) => setSortOrder(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2" /></label>
-          <label className="block text-sm font-medium text-slate-700">شروع نمایش<input type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-left" dir="ltr" /></label>
-          <label className="block text-sm font-medium text-slate-700">پایان نمایش<input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-left" dir="ltr" /></label>
         </section>
       </aside>
     </form>

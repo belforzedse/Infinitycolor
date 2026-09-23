@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { formatCancellationReasonForSms } from "../../../../services/sms/notifications";
 import { logAdminOrderCancel } from "../../../../utils/adminActivity";
 import { releaseReservedStockAtomic } from "../../../cart/services/lib/stock";
 import { releaseOrderDiscountClaim } from "../../../cart/services/lib/discount-claim";
@@ -247,7 +248,10 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       // operator does not see a shipped label on a cancelled order. Provider
       // «لغو شده» runs after commit via notifyAnipoParcelCancelled.
       anipoCancelSnapshot = captureAnipoCancelSnapshot(currentOrder);
-      const orderUpdateData: Record<string, unknown> = { Status: "Cancelled" };
+      const orderUpdateData: Record<string, unknown> = {
+        Status: "Cancelled",
+        CancellationReason: formatCancellationReasonForSms(reason, "admin_cancelled"),
+      };
       if (reservationReleased) {
         orderUpdateData.ReservationStatus = "Released";
       }

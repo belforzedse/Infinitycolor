@@ -1,6 +1,7 @@
 import { Strapi } from "@strapi/strapi";
 import { releaseOrderReservation } from "../../../../utils/stockReservations";
 import { closeGroupIfAbandoned } from "../../../reserve-group/lib/reserve-group";
+import { formatCancellationReasonForSms } from "../../../../services/sms/notifications";
 
 type FinancialSummary = {
   subtotal: number;
@@ -41,6 +42,7 @@ export const cancelOrderAndRelease = async (
     contractData?: Record<string, unknown>;
     contractTransactionId?: number;
     contractTransactionData?: Record<string, unknown>;
+    cancellationReasonCode?: string;
   } = {}
 ) => {
   const logContext = {
@@ -80,7 +82,17 @@ export const cancelOrderAndRelease = async (
 
     await strapi.db.query("api::order.order").update({
       where: { id: orderId },
-      data: { ...options.orderData, Status: "Cancelled" },
+      data: {
+        ...options.orderData,
+        Status: "Cancelled",
+        // Deliberately never the raw `reason` param here: some callers (Saman/
+        // Mellat/ZarinPal) source it from unauthenticated vendor callback text,
+        // which must never reach the customer-facing reason verbatim.
+        CancellationReason: formatCancellationReasonForSms(
+          undefined,
+          options.cancellationReasonCode ?? "payment_gateway_declined",
+        ),
+      },
       transacting: trx,
     } as any);
     await strapi.db.query("api::contract.contract").update({

@@ -74,7 +74,11 @@
     },
     "CtaUrl": {
       "type": "string",
-      "maxLength": 500
+      "maxLength": 2048,
+      "columnType": {
+        "type": "string",
+        "args": [2048]
+      }
     },
     "Overlays": {
       "type": "json"

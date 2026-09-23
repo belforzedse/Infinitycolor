@@ -25,6 +25,9 @@
     "Note": {
       "type": "text"
     },
+    "CancellationReason": {
+      "type": "text"
+    },
     "user": {
       "type": "relation",
       "relation": "manyToOne",

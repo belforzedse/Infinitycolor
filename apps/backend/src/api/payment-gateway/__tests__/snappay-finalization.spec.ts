@@ -137,6 +137,16 @@ describe("SnappPay admin update finalization", () => {
         }),
       );
       expect(transactionUpdate).not.toHaveProperty("TrackId");
+
+      // An unmapped internal-looking reason must resolve to the honest
+      // gateway-declined label, never the generic "cancelled by support" text.
+      const orderUpdate = updates["api::order.order"].mock.calls[0][0].data;
+      expect(orderUpdate).toEqual(
+        expect.objectContaining({
+          Status: "Cancelled",
+          CancellationReason: "پرداخت توسط درگاه تایید نشد",
+        }),
+      );
     },
   );
 
@@ -171,6 +181,7 @@ describe("SnappPay admin update finalization", () => {
             Status: "Cancelled",
             ShippingBarcode: null,
             AnipoBarcodeState: "Voided",
+            CancellationReason: "پرداخت توسط درگاه تایید نشد",
           }),
         ]),
       );

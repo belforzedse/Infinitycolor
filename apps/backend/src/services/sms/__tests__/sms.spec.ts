@@ -308,6 +308,29 @@ describe("sms service", () => {
     expect(formatCancellationReasonForSms("SOME_INTERNAL_CODE")).toBe("لغو سفارش توسط پشتیبانی");
   });
 
+  it("uses a caller-supplied fallback reason code instead of the generic support default", () => {
+    // No reason at all: falls back to the given code's label, not the hardcoded default.
+    expect(formatCancellationReasonForSms(undefined, "payment_gateway_declined")).toBe(
+      "پرداخت توسط درگاه تایید نشد",
+    );
+    // An unmapped internal-looking code: also falls back to the given code, not the default.
+    expect(
+      formatCancellationReasonForSms("provider_terminal_status", "payment_gateway_declined"),
+    ).toBe("پرداخت توسط درگاه تایید نشد");
+    // A mapped code still wins over the fallback.
+    expect(formatCancellationReasonForSms("out_of_stock", "payment_gateway_declined")).toBe(
+      "ناموجود بودن کالا",
+    );
+    // Genuine human-typed free text still passes through unchanged, fallback or not.
+    expect(
+      formatCancellationReasonForSms("مشتری تماس گرفت و لغو کرد", "payment_gateway_declined"),
+    ).toBe("مشتری تماس گرفت و لغو کرد");
+    // An unrecognized fallback code degrades to the original hardcoded default.
+    expect(formatCancellationReasonForSms(undefined, "not_a_real_code")).toBe(
+      "لغو سفارش توسط پشتیبانی",
+    );
+  });
+
   it("builds SMS params without leaking internal status or extra reason fields", () => {
     expect(
       buildOrderNotificationParams({

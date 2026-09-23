@@ -1,15 +1,9 @@
-import { extractRelationId, prepareStoryMutation } from "../../lib/story-items";
+import { extractRelationId } from "../../lib/story-items";
 
-async function validateAndNormalizeStory(event: any) {
-  const data = event.params?.data;
-  if (!data || typeof data !== "object") return;
-  const storyId = Number(event.params?.where?.id);
-  await prepareStoryMutation(
-    strapi,
-    data as Record<string, unknown>,
-    Number.isFinite(storyId) && storyId > 0 ? storyId : undefined,
-  );
-}
+// No before* hooks: Items normalization belongs to the controller (prepareStoryMutation).
+// entityService materializes component rows before db-layer lifecycles fire, so by then
+// `data.Items` is only `{ id, __pivot }` references — re-validating them rejected every
+// create, and rewriting them would drop the component join rows.
 
 /** Queue every non-web-safe video item independently. Upload-time normalization may have
  * already completed; the worker re-checks the file and safely becomes a no-op. */
@@ -45,12 +39,6 @@ async function enqueueVideoNormalization(event: any) {
 }
 
 export default {
-  async beforeCreate(event: any) {
-    await validateAndNormalizeStory(event);
-  },
-  async beforeUpdate(event: any) {
-    await validateAndNormalizeStory(event);
-  },
   async afterCreate(event: any) {
     await enqueueVideoNormalization(event);
   },

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import type { Strapi } from "@strapi/strapi";
+import { formatCancellationReasonForSms } from "../../../services/sms/notifications";
 import { consumeOrderReservation, releaseOrderReservation } from "../../../utils/stockReservations";
 import { decrementStockAtomic } from "../../cart/services/lib/stock";
 import {
@@ -615,7 +616,13 @@ export async function applySnappayCancellation(
 
     const now = new Date();
     anipoCancelSnapshot = captureAnipoCancelSnapshot(order);
-    const orderUpdate: Record<string, unknown> = { Status: "Cancelled" };
+    const orderUpdate: Record<string, unknown> = {
+      Status: "Cancelled",
+      // SnappPay's diagnostic reason strings are our own internal codes (or, on
+      // the operator-cancel path, an admin's own typed text) — safe to thread
+      // through raw, unlike the vendor-callback-sourced reasons in gateway-helpers.ts.
+      CancellationReason: formatCancellationReasonForSms(reason, "payment_gateway_declined"),
+    };
     // Local Anipo void in-txn; provider «لغو شده» runs after commit.
     if (order.ShippingBarcode) {
       orderUpdate.ShippingBarcode = null;

@@ -2056,6 +2056,7 @@ export interface ApiOrderOrder extends Schema.CollectionType {
       > &
       Attribute.DefaultTo<0>;
     AppliedGeneralDiscountId: Attribute.Integer;
+    CancellationReason: Attribute.Text;
     CartCleanupCompletedAt: Attribute.DateTime;
     contract: Attribute.Relation<"api::order.order", "oneToOne", "api::contract.contract">;
     createdAt: Attribute.DateTime;
@@ -2809,7 +2810,14 @@ export interface ApiProductCategoryProductCategory extends Schema.CollectionType
     external_id: Attribute.String;
     external_source: Attribute.String;
     featured: Attribute.Boolean & Attribute.DefaultTo<false>;
-    homepageOrder: Attribute.Integer & Attribute.DefaultTo<1000>;
+    homepageOrder: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<1000>;
     Image: Attribute.Media<"images">;
     isMainCategory: Attribute.Boolean & Attribute.DefaultTo<false>;
     MegaMenuImage: Attribute.Media<"images">;
@@ -4085,7 +4093,7 @@ export interface ApiStoryStory extends Schema.CollectionType {
       }>;
     CtaUrl: Attribute.String &
       Attribute.SetMinMaxLength<{
-        maxLength: 500;
+        maxLength: 2048;
       }>;
     DurationMs: Attribute.Integer &
       Attribute.SetMinMax<

@@ -1,6 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/node";
+import { formatCancellationReasonForSms } from "../../../services/sms/notifications";
 import { releaseOrderReservation } from "../../../utils/stockReservations";
 import { enqueueSnappayOperation } from "../../../queue/snappay";
 import { mapToSnappayCategory } from "./snappay-category-mapper";
@@ -1014,7 +1015,12 @@ async function failInitiation(
     const now = new Date();
     await strapi.db.query(ORDER_UID).update({
       where: { id: bundle.order.id },
-      data: { Status: "Cancelled" },
+      data: {
+        Status: "Cancelled",
+        // Never `message` here: it can echo adapter/HTTP error text from
+        // SnappPay's own response, which must not reach the customer verbatim.
+        CancellationReason: formatCancellationReasonForSms(undefined, "payment_gateway_declined"),
+      },
       transacting: trx,
     } as any);
     await strapi.db.query(CONTRACT_UID).update({

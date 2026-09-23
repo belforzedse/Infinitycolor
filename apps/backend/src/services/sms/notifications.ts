@@ -37,6 +37,8 @@ const CANCELLATION_REASON_LABELS: Record<string, string> = {
   duplicate_order: "ثبت سفارش تکراری",
   admin_cancelled: "لغو توسط پشتیبانی",
   support_cancelled: "لغو توسط پشتیبانی",
+  operator_cancel: "لغو توسط پشتیبانی",
+  payment_gateway_declined: "پرداخت توسط درگاه تایید نشد",
 };
 
 const DEFAULT_CANCELLATION_REASON = "لغو سفارش توسط پشتیبانی";
@@ -68,14 +70,21 @@ export function formatOrderStatusForSms(status?: string | null): string | undefi
   return trimSmsParam(STATUS_LABELS[status] || status);
 }
 
-export function formatCancellationReasonForSms(reason?: string | null): string {
+export function formatCancellationReasonForSms(
+  reason?: string | null,
+  fallbackReasonCode?: string,
+): string {
+  const fallback = fallbackReasonCode
+    ? CANCELLATION_REASON_LABELS[normalizeReasonKey(fallbackReasonCode)] ?? DEFAULT_CANCELLATION_REASON
+    : DEFAULT_CANCELLATION_REASON;
+
   const clean = trimSmsParam(reason);
-  if (!clean) return DEFAULT_CANCELLATION_REASON;
+  if (!clean) return fallback;
 
   const mapped = CANCELLATION_REASON_LABELS[normalizeReasonKey(clean)];
   if (mapped) return mapped;
 
-  return looksLikeInternalReason(clean) ? DEFAULT_CANCELLATION_REASON : clean;
+  return looksLikeInternalReason(clean) ? fallback : clean;
 }
 
 export function isNotifiableOrderStatus(status?: string | null): boolean {
