@@ -199,6 +199,13 @@ export interface OrderPaymentStatusResponse {
   /** What the gateway was asked to charge, in IRR. Equals `amountIrr` when no wallet was used. */
   gatewayAmountIrr?: number;
   /**
+   * Paid orders only: the sum of the order's settled, non-return charge legs,
+   * in IRR (wallet + gateway for a split). The analytics `purchase` revenue.
+   */
+  paidAmountIrr?: number;
+  /** Paid orders only: when the last charge leg settled, ISO. */
+  paidAt?: string;
+  /**
    * Lifecycle of this checkout's wallet credit. `Active` means the money is
    * still committed to this payment and cannot be spent anywhere else, which is
    * the only state where offering to abandon the checkout makes sense.

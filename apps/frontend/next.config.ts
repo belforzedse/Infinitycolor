@@ -85,6 +85,7 @@ const nextConfig = {
     "@repo/fonts",
     "@repo/social-posts",
     "@repo/story-rail",
+    "@repo/video-player",
   ],
   reactStrictMode: true,
   poweredByHeader: false,

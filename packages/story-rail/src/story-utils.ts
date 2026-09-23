@@ -1,3 +1,4 @@
+import { readVideoDelivery } from "@repo/video-player";
 import type {
   ResolveStoryMediaUrl,
   StoryRailItem,
@@ -109,8 +110,13 @@ export function getStoryRailPreview(
 
   const imageItem = items.find(isImageStory);
   const mediaUrl = imageItem?.Media?.url;
-  if (!mediaUrl) return { mode: "empty" };
-  return { mode: "image", url: resolveMediaUrl(getPreviewImageUrl(imageItem?.Media) ?? mediaUrl) };
+  if (mediaUrl) {
+    return { mode: "image", url: resolveMediaUrl(getPreviewImageUrl(imageItem?.Media) ?? mediaUrl) };
+  }
+
+  // A video story with no admin thumbnail: the media worker's generated poster.
+  const poster = items.map((item) => (isVideoStory(item) ? readVideoDelivery(item.Media)?.poster : null)).find(Boolean);
+  return poster ? { mode: "image", url: resolveMediaUrl(poster) } : { mode: "empty" };
 }
 
 export function isStoryFullySeen(

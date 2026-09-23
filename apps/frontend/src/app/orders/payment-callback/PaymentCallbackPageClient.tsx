@@ -14,30 +14,6 @@ import {
 import { useAtom } from "jotai";
 import { SubmitOrderStep } from "@/types/Order";
 import { useCart } from "@/contexts/CartContext";
-import { trackAnalyticsEvent } from "@/lib/analytics";
-
-/** Type guard for object with optional code string (e.g. PaymentError). */
-function hasCode(x: unknown): x is { code: string } {
-  return (
-    typeof x === "object" &&
-    x !== null &&
-    "code" in x &&
-    typeof (x as { code: unknown }).code === "string"
-  );
-}
-
-/**
- * Derive a stable error code from payment callback errors.
- * Prefers error.code when present; falls back to message-based detection.
- */
-function getPaymentCallbackErrorCode(error: unknown): string {
-  if (hasCode(error)) return error.code;
-  const message = (error instanceof Error ? error.message : String(error ?? "")).toLowerCase();
-  if (message.includes("ناقص")) return "MISSING_PARAMS";
-  if (message.includes("network")) return "NETWORK_ERROR";
-  if (message.includes("timeout")) return "TIMEOUT";
-  return "UNKNOWN_ERROR";
-}
 
 function PaymentCallbackContent() {
   const [loading, setLoading] = useState(true);
@@ -56,17 +32,6 @@ function PaymentCallbackContent() {
         await clearCart();
       } catch (error) {
         console.error("[PaymentCallback] Failed to refresh cart after payment:", error);
-      }
-      if (completedOrderId) {
-        // Purchase revenue is emitted exactly once by the backend after
-        // authoritative payment settlement. The browser records only the
-        // callback outcome, so retries or duplicate tabs cannot create a
-        // client-side conversion.
-        trackAnalyticsEvent({
-          category: "checkout",
-          action: "payment_callback_success",
-          onceKey: `payment-callback-success:${completedOrderId}`,
-        });
       }
       setSubmitOrderStep(SubmitOrderStep.Success);
       router.push(
@@ -147,21 +112,11 @@ function PaymentCallbackContent() {
         if (verificationResult.success) {
           await navigateToSuccess(verificationResult.orderId);
         } else {
-          trackAnalyticsEvent({
-            category: "checkout",
-            action: "payment_callback_failed",
-            onceKey: `payment-callback-failed:${verificationResult.orderId || orderIdToVerify}`,
-          });
           setSubmitOrderStep(SubmitOrderStep.Failure);
           router.push("/orders/failure");
         }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : "خطا در بررسی وضعیت پرداخت";
-        trackAnalyticsEvent({
-          category: "checkout",
-          action: "payment_callback_error",
-          onceKey: `payment-callback-error:${orderIdToVerify ?? "unknown"}:${getPaymentCallbackErrorCode(err)}`,
-        });
         setError(errorMessage);
         setSubmitOrderStep(SubmitOrderStep.Failure);
         setTransactionId(null);

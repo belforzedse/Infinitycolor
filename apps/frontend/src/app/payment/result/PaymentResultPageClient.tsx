@@ -20,6 +20,7 @@ import {
   readContinuableCheckoutIdentity,
 } from "@/lib/checkout-identity";
 import { formatHoldDeadline } from "@/utils/walletHolds";
+import { reportPaymentResult, reportPaymentUnresolved } from "./paymentResultAnalytics";
 
 const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled", "Expired"]);
 const PAID_ORDER_STATUSES = new Set(["Started", "Shipment", "Done"]);
@@ -158,6 +159,10 @@ export default function PaymentResultPageClient() {
     searchParams.get("resNum") ||
     searchParams.get("order");
   const orderId = Number(orderIdParam);
+  // Set by the backend callback redirect; only refines a non-paid outcome into
+  // "cancelled" for analytics, never decides whether the order was paid.
+  const resultHintRef = useRef(searchParams.get("resultHint"));
+  const latestResultRef = useRef<OrderPaymentStatusResponse | null>(null);
   const [result, setResult] = useState<OrderPaymentStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -179,6 +184,7 @@ export default function PaymentResultPageClient() {
 
   useEffect(() => {
     hasResultRef.current = result !== null;
+    latestResultRef.current = result;
   }, [result]);
 
   // Set as early as possible -- before the status fetch below, which is
@@ -234,6 +240,7 @@ export default function PaymentResultPageClient() {
                 skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
               );
         setResult(next);
+        reportPaymentResult(next, { resultHint: resultHintRef.current });
         if (isAbandon) {
           // The server decides whether the claim was recorded: a shopper whose
           // own successful return already reached us is refused, and must not be
@@ -309,6 +316,7 @@ export default function PaymentResultPageClient() {
           skipGlobalLoader: true,
         });
         setResult(next);
+        reportPaymentResult(next, { resultHint: resultHintRef.current });
         await applyPaidSideEffects(next, () => clearCartRef.current());
       } catch (err) {
         if (isRateLimited(err)) return;
@@ -341,7 +349,11 @@ export default function PaymentResultPageClient() {
 
     const runTick = () => {
       if (cancelled) return;
-      if (Date.now() - startedAt > budgetMs) return;
+      if (Date.now() - startedAt > budgetMs) {
+        // Polling gives up here; the shopper is left on the "checking" card.
+        reportPaymentUnresolved(latestResultRef.current);
+        return;
+      }
       if (typeof document !== "undefined" && document.hidden) {
         schedule(pollDelayMs(checks, isSnappayResult));
         return;

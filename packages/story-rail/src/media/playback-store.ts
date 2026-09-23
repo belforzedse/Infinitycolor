@@ -20,6 +20,11 @@ export interface StoryPlaybackSnapshot {
   progress: number;
   /** Story item id the progress belongs to, so a stale publish can be discarded. */
   itemId: string | null;
+  /**
+   * Item id of the live story once it has enough buffered (or is an image/text) that
+   * warming the next video will not starve it. Compared with the active id by the modal.
+   */
+  readyForNext: string | null;
 }
 
 export interface StoryAudioPreference {
@@ -31,6 +36,7 @@ export interface StoryAudioPreference {
 
 export interface StoryPlaybackStore {
   publishProgress(itemId: string, progress: number): void;
+  publishReadyForNext(itemId: string): void;
   subscribe(listener: () => void): () => void;
   getSnapshot(): StoryPlaybackSnapshot;
   audio: StoryAudioPreference;
@@ -82,12 +88,17 @@ export function createAudioPreference(): StoryAudioPreference {
 
 export function createPlaybackStore(reportIssue?: StoryMediaIssueReporter): StoryPlaybackStore {
   const listeners = new Set<() => void>();
-  let snapshot: StoryPlaybackSnapshot = { progress: 0, itemId: null };
+  let snapshot: StoryPlaybackSnapshot = { progress: 0, itemId: null, readyForNext: null };
 
   return {
     publishProgress(itemId: string, progress: number) {
       if (snapshot.itemId === itemId && snapshot.progress === progress) return;
-      snapshot = { itemId, progress };
+      snapshot = { ...snapshot, itemId, progress };
+      listeners.forEach((listener) => listener());
+    },
+    publishReadyForNext(itemId: string) {
+      if (snapshot.readyForNext === itemId) return;
+      snapshot = { ...snapshot, readyForNext: itemId };
       listeners.forEach((listener) => listener());
     },
     subscribe(listener: () => void) {

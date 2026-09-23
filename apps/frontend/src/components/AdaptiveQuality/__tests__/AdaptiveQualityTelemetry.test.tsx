@@ -44,8 +44,6 @@ jest.mock("@/lib/adaptive-quality", () => ({
 }));
 
 jest.mock("@/lib/analytics", () => ({
-  ANALYTICS_CONSENT_EVENT: "analytics-consent-changed",
-  getAnalyticsConsent: () => "granted",
   trackAnalyticsEvent: (event: unknown) => mockTrackAnalyticsEvent(event),
 }));
 
@@ -109,7 +107,7 @@ describe("AdaptiveQualityTelemetry", () => {
     });
   });
 
-  it("emits consent-granted downgrade and recovery telemetry with fixed fields", () => {
+  it("emits downgrade and recovery telemetry with fixed fields", () => {
     render(<AdaptiveQualityTelemetry />);
     mockTrackAnalyticsEvent.mockClear();
 

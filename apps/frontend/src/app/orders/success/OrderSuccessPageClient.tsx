@@ -1,13 +1,12 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useAtom } from "jotai";
 import { useSearchParams } from "next/navigation";
 import { orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
-import { trackAnalyticsEvent } from "@/lib/analytics";
 import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 export default function OrderSuccess() {
@@ -20,15 +19,6 @@ export default function OrderSuccess() {
   const resolvedOrderId = orderId ?? (orderIdParam ? Number(orderIdParam) : null);
   const resolvedOrderNumber = orderNumber ?? (orderIdParam || "");
   const resolvedTransactionId = transactionId ?? transactionIdParam;
-
-  useEffect(() => {
-    if (!resolvedOrderId) return;
-    trackAnalyticsEvent({
-      category: "checkout",
-      action: "order_success_page_view",
-      onceKey: `order-success-page:${resolvedOrderId}`,
-    });
-  }, [resolvedOrderId]);
 
   return (
     <StorefrontContainer className="py-10">

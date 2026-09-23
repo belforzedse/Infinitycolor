@@ -249,4 +249,94 @@ describe("order.checkPaymentStatus", () => {
     expect(attemptFindOne).not.toHaveBeenCalled();
     expect(ctx.badRequest).not.toHaveBeenCalled();
   });
+
+  it("reports the settled charge (all non-return legs, IRR) and when it settled", async () => {
+    const { controller } = loadController(
+      {
+        id: 64,
+        Status: "Started",
+        PaymentGateway: "SamanKish",
+        contract: {
+          contract_transactions: [
+            { id: 1, Type: "Gateway", Status: "Success", Amount: 18_000_000, SettledAt: "2026-09-20T08:30:00.000Z" },
+            { id: 2, Type: "Gateway", Status: "Success", Amount: 3_490_000, SettledAt: "2026-09-20T08:29:00.000Z" },
+            { id: 3, Type: "Gateway", Status: "Failed", Amount: 21_490_000 },
+            { id: 4, Type: "Return", Status: "Success", Amount: 1_000_000 },
+          ],
+        },
+      },
+      { id: 91, attemptId: "attempt-64", Status: "Succeeded", Amount: 21_490_000 },
+    );
+    const ctx = {
+      params: { id: "64" },
+      state: { user: { id: 10 } },
+      forbidden: jest.fn(),
+      badRequest: jest.fn(),
+    };
+
+    const result = await controller.checkPaymentStatus(ctx);
+
+    expect(result.data).toEqual(
+      expect.objectContaining({
+        isPaid: true,
+        paidAmountIrr: 21_490_000,
+        paidAt: "2026-09-20T08:30:00.000Z",
+      }),
+    );
+  });
+
+  it("reports the settled charge for a Started SnappPay order whose attempt still reads Pending", async () => {
+    const { controller } = loadController(
+      {
+        id: 66,
+        Status: "Started",
+        PaymentGateway: "SnappPay",
+        contract: {
+          contract_transactions: [
+            { id: 5, Type: "Gateway", Status: "Success", Amount: 35_000_000, SettledAt: "2026-09-20T09:00:00.000Z" },
+          ],
+        },
+      },
+      { id: 93, attemptId: "attempt-66", Status: "Pending", Amount: 35_000_000 },
+    );
+    const ctx = {
+      params: { id: "66" },
+      state: { user: { id: 10 } },
+      forbidden: jest.fn(),
+      badRequest: jest.fn(),
+    };
+
+    const result = await controller.checkPaymentStatus(ctx);
+
+    expect(result.data.status).toBe("Started");
+    expect(result.data).toEqual(
+      expect.objectContaining({ paidAmountIrr: 35_000_000, paidAt: "2026-09-20T09:00:00.000Z" }),
+    );
+  });
+
+  it("never reports a paid amount for an order that is not paid", async () => {
+    const { controller } = loadController(
+      {
+        id: 65,
+        Status: "Paying",
+        PaymentGateway: "SamanKish",
+        contract: {
+          contract_transactions: [{ id: 1, Type: "Gateway", Status: "Pending", Amount: 5_000 }],
+        },
+      },
+      { id: 92, attemptId: "attempt-65", Status: "Redirected", Amount: 5_000 },
+    );
+    const ctx = {
+      params: { id: "65" },
+      state: { user: { id: 10 } },
+      forbidden: jest.fn(),
+      badRequest: jest.fn(),
+    };
+
+    const result = await controller.checkPaymentStatus(ctx);
+
+    expect(result.data.isPaid).toBe(false);
+    expect(result.data).not.toHaveProperty("paidAmountIrr");
+    expect(result.data).not.toHaveProperty("paidAt");
+  });
 });

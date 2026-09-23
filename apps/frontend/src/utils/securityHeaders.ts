@@ -55,6 +55,9 @@ export function getContentSecurityPolicyReportOnly(): string {
   const connectSources = unique([
     "'self'",
     ...getTrustedApiSourceOrigins(),
+    // hls.js fetches playlists and segments with XHR/fetch, which `connect-src` (not
+    // `media-src`) governs, from the same media origins images and progressive video use.
+    ...getTrustedImageSourceOrigins(),
     getUmamiOrigin(),
     getSentryOrigin(),
     getCentralAuthOrigin(),

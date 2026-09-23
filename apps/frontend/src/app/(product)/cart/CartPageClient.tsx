@@ -6,7 +6,7 @@ import ShoppingCartDesktopTable from "@/components/ShoppingCart/Table/Desktop";
 import ShoppingCartMobileTable from "@/components/ShoppingCart/Table/Mobile";
 import CartSkeleton from "@/components/Skeletons/CartSkeleton";
 import EmptyShoppingCart from "@/components/ShoppingCart/Empty";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { ProductCardProps } from "@/components/Product/Card";
 import { getRandomProducts } from "@/services/product/homepage";
@@ -63,9 +63,14 @@ export default function CartPageClient() {
     [cartItems],
   );
 
+  // One view_cart per visit to /cart, once the cart has loaded with items.
+  // Editing quantities here is not another view.
+  const viewCartTrackedRef = useRef(false);
   useEffect(() => {
+    if (viewCartTrackedRef.current) return;
     if (isLoading) return;
     if (cartItems.length <= 0) return;
+    viewCartTrackedRef.current = true;
     trackAnalyticsEvent({
       category: "ecommerce",
       action: "view_cart",
@@ -73,9 +78,8 @@ export default function CartPageClient() {
       properties: {
         quantity: cartItems.reduce((sum, item) => sum + item.quantity, 0),
       },
-      onceKey: `view-cart:${cartItems.length}:${Math.round(totalValue)}`,
     });
-  }, [isLoading, cartItems.length, totalValue]);
+  }, [isLoading, cartItems, totalValue]);
 
   if (!isCartShellReady || isLoading) {
     return (

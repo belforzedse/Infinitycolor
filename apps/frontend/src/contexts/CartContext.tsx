@@ -750,16 +750,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       // Remove item optimistically
       setCartItems((prev) => prev.filter((item) => item.id !== id && item.cartItemId !== id));
       const undoToastId = showRemoveUndoToast(item);
-      trackAnalyticsEvent({
-        category: "ecommerce",
-        action: "remove_from_cart",
-        valueToman: item.price * item.quantity,
-        properties: {
-          product_id: item.productId,
-          ...(item.variationId ? { variant_id: item.variationId } : {}),
-          quantity: item.quantity,
-        },
-      });
 
       // Queue API call in the background
       try {
@@ -775,6 +765,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           await CartService.removeCartItem(Number(cartItemId));
           await fetchUserCart();
         }, `remove-${cartItemId}`);
+        // Only a removal the server accepted is an outcome.
+        trackAnalyticsEvent({
+          category: "ecommerce",
+          action: "remove_from_cart",
+          valueToman: item.price * item.quantity,
+          properties: {
+            product_id: item.productId,
+            ...(item.variationId ? { variant_id: item.variationId } : {}),
+            quantity: item.quantity,
+          },
+        });
       } catch (error) {
         console.error("Failed to remove item from cart:", error);
         toast.dismiss(undoToastId);
@@ -842,15 +843,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           cartItem.id === id || cartItem.cartItemId === id ? { ...cartItem, quantity } : cartItem,
         ),
       );
-      trackAnalyticsEvent({
-        category: "ecommerce",
-        action: "update_quantity",
-        properties: {
-          product_id: item.productId,
-          ...(item.variationId ? { variant_id: item.variationId } : {}),
-          quantity,
-        },
-      });
 
       // Queue API call in the background
       try {
@@ -867,6 +859,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           // Refresh cart to ensure consistency with backend
           await fetchUserCart();
         }, `update-${cartItemId}`);
+        // Only a quantity the server accepted is an outcome.
+        trackAnalyticsEvent({
+          category: "ecommerce",
+          action: "update_quantity",
+          properties: {
+            product_id: item.productId,
+            ...(item.variationId ? { variant_id: item.variationId } : {}),
+            quantity,
+          },
+        });
       } catch (error: any) {
         console.error("Failed to update cart item:", error);
 

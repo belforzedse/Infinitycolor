@@ -55,6 +55,13 @@ export type SocialPostCardProps = {
   actionTone?: SocialPostCardActionTone;
   /** Keep the complete card layout while rendering moving media as its cover image. */
   staticMedia?: boolean;
+  /**
+   * Render a video post's preview as its cover image, with no <video> element. Grids of
+   * 48–100 cards never play in place (playback is on the post page), so an element per
+   * card is only a decoder and a connection waiting to happen. Unlike `staticMedia` this
+   * changes nothing else about the card (image fade-in and so on).
+   */
+  posterOnlyVideo?: boolean;
 };
 
 const ACTION_TEXT_CLASS =
@@ -182,6 +189,7 @@ export function SocialPostCard({
   linkAriaLabel,
   actionTone = "default",
   staticMedia = false,
+  posterOnlyVideo = false,
 }: SocialPostCardProps) {
   const layout = POST_CARD_LAYOUTS[variant];
   const { widthPx, imageHeightPx, columnGapPx } = layout;
@@ -281,7 +289,15 @@ export function SocialPostCard({
     linkAriaLabel ?? (imageAlt ? `مشاهده پست ${imageAlt}` : "مشاهده پست");
   const mediaContent = (
     <>
-      {isVideoMedia(activeMedia) ? (
+      {isVideoMedia(activeMedia) && posterOnlyVideo ? (
+        <CardImage
+          src={imageSrc}
+          alt={activeMedia.alternativeText || imageAlt || "ویدیوی پست"}
+          sizes={imageSizes}
+          unoptimized={imageSrc.startsWith("data:")}
+          immediate={staticMedia}
+        />
+      ) : isVideoMedia(activeMedia) ? (
         <video
           src={activeMedia.url}
           className="h-full w-full object-cover"

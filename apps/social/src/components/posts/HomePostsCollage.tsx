@@ -156,6 +156,7 @@ export function HomePostsCollage({
                 className="animate-stagger-fade-up flex min-w-0 justify-center"
               >
                 <PostCard
+                  posterOnlyVideo
                   variant={variant}
                   widthMode="fluid"
                   imageSrc={post.imageSrc}
@@ -187,6 +188,7 @@ export function HomePostsCollage({
               >
                 <div className="w-full min-w-0">
                   <PostCard
+                    posterOnlyVideo
                     variant={post.variant}
                     widthMode="fluid"
                     fluidMaxWidth="none"
@@ -214,6 +216,7 @@ export function HomePostsCollage({
                 className="animate-stagger-fade-up min-w-0 w-full"
               >
                 <PostCard
+                  posterOnlyVideo
                   variant={post.variant}
                   widthMode="fluid"
                   fluidMaxWidth="none"

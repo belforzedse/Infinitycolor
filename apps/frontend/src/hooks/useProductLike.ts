@@ -148,13 +148,14 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
     setLikesOwner,
   ]);
 
-  // Toggle like status
-  const toggleLike = async (e: React.MouseEvent<HTMLButtonElement>) => {
+  // Toggle like status. Resolves to the server-confirmed favorite state, or null
+  // when nothing changed (signed out, already pending, superseded, or failed).
+  const toggleLike = async (e: React.MouseEvent<HTMLButtonElement>): Promise<boolean | null> => {
     e.preventDefault();
     e.stopPropagation();
 
     const key = `${userId}:${productId}`;
-    if (pendingLikes.has(key)) return;
+    if (pendingLikes.has(key)) return null;
     pendingLikes.add(key);
     setIsLoading(true);
     const generation = identity.current.generation;
@@ -163,15 +164,15 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
       const token = await centralAuth.tokenManager.getToken();
       if (!token) {
         redirectToAuth();
-        return;
+        return null;
       }
-      if (identity.current.generation !== generation) return;
+      if (identity.current.generation !== generation) return null;
       if (userId !== null) likeRevisions.set(userId, (likeRevisions.get(userId) || 0) + 1);
       const response = await apiClient.post<{ isFavorite: boolean }>(
         ENDPOINTS.PRODUCT_LIKES.TOGGLE,
         { productId, isFavorite: desired },
       );
-      if (identity.current.generation !== generation) return;
+      if (identity.current.generation !== generation) return null;
       const result = response as unknown as { isFavorite?: boolean };
       if (typeof result.isFavorite !== "boolean") throw new Error("Invalid favorite response");
       setLikedProducts((current) => {
@@ -181,8 +182,10 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
               createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
           : others;
       });
+      return result.isFavorite;
     } catch (error) {
       console.error("Error toggling product like:", error);
+      return null;
     } finally {
       pendingLikes.delete(key);
       setIsLoading(false);

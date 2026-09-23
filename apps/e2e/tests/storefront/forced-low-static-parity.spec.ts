@@ -34,7 +34,6 @@ test("forced lowest tier stays complete through core storefront discovery and ca
     if (isMovingMedia(request)) movingMediaRequests.push(request.url());
   });
   await page.addInitScript(() => {
-    localStorage.setItem("analytics-consent", "denied");
     localStorage.setItem("pdp_debug", "0");
   });
   await installLocalMediaFixture(page);

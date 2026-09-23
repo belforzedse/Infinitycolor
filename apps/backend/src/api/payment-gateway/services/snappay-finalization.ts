@@ -8,7 +8,7 @@ import {
   releaseOrderDiscountClaim,
 } from "../../cart/services/lib/discount-claim";
 import { consumeCheckoutCartLines } from "../../cart/services/lib/order-cart-cleanup";
-import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../../report/analytics/outbox";
+import { enqueueOrderPaid, enqueueRefundForReturn } from "../../report/analytics/outbox";
 import { confirmReservePaymentForOrder } from "../../reserve-group/lib/reserve-group";
 import { captureWalletLegForSettlement } from "../../local-user-wallet/services/wallet-holds";
 import {
@@ -778,7 +778,7 @@ export async function runSnappaySideEffects(
   }
   // Analytics is durable-but-asynchronous; a provider/DB outage must never
   // hold the commerce side-effects lease or replay cart/stock work.
-  void enqueuePurchaseForOrder(strapi as any, orderId).catch(() => undefined);
+  void enqueueOrderPaid(strapi as any, orderId).catch(() => undefined);
   await strapi.db.query("api::payment-attempt.payment-attempt").update({
     where: { id: attemptId },
     data: { sideEffectsCompletedAt: new Date() },

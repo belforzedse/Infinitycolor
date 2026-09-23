@@ -30,6 +30,7 @@ const nextConfig: NextConfig = {
     "@repo/fonts",
     "@repo/social-posts",
     "@repo/story-rail",
+    "@repo/video-player",
   ],
   async headers() {
     return [

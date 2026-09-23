@@ -1,10 +1,15 @@
 import type { ConnectionOptions } from "bullmq";
+import { QUEUE_NAMES } from "./contracts";
+
+export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
 export type QueueSettings = {
   redisUrl: string;
   redisPassword?: string;
   prefix: string;
   timezone: string;
+  /** Queues this worker process consumes. */
+  queues: QueueName[];
   concurrency: {
     commerce: number;
     analytics: number;
@@ -25,6 +30,21 @@ export type QueueSettings = {
   };
 };
 
+/**
+ * `WORKER_QUEUES=media` runs a dedicated media worker; unset means every queue, which is
+ * what the generic workers have always done. Unknown names are ignored, and a value that
+ * names nothing valid falls back to all queues rather than starting an idle worker.
+ */
+export function readWorkerQueues(value: string | undefined): QueueName[] {
+  const all = Object.values(QUEUE_NAMES) as QueueName[];
+  if (!value?.trim()) return all;
+  const requested = value
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name): name is QueueName => (all as string[]).includes(name));
+  return requested.length ? [...new Set(requested)] : all;
+}
+
 function readPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -39,6 +59,7 @@ export function getQueueSettings(env: NodeJS.ProcessEnv = process.env): QueueSet
     redisPassword: env.QUEUE_REDIS_PASSWORD || undefined,
     prefix: env.QUEUE_PREFIX || "bull:infinity",
     timezone: env.QUEUE_TIMEZONE || "Asia/Tehran",
+    queues: readWorkerQueues(env.WORKER_QUEUES),
     concurrency: {
       commerce: readPositiveInt(env.WORKER_CONCURRENCY_COMMERCE, 1),
       analytics: readPositiveInt(env.WORKER_CONCURRENCY_ANALYTICS, 1),

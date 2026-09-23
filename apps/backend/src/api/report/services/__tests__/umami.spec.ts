@@ -1,9 +1,12 @@
 import {
+  __private,
+  getUmamiBehaviorReport,
   getUmamiClient,
   getUmamiConfig,
   getUmamiRealtimeReport,
   isUmamiConfigured,
   normalizeUmamiFilters,
+  UMAMI_FUNNELS,
 } from "../umami";
 
 describe("Umami client", () => {
@@ -165,5 +168,115 @@ describe("Umami client", () => {
         payload: { website: websiteId, url: "/commerce/purchase", name: "purchase" },
       }),
     ).rejects.toThrow("UMAMI_COLLECTOR_REJECTED");
+  });
+
+  it("never shows the backend's diagnostic session as a live visitor", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          totals: { visitors: 2 },
+          events: [
+            { sessionId: "shopper", urlPath: "/pdp/red" },
+            { sessionId: "backend", urlPath: "/commerce/order_paid", eventName: "order_paid" },
+            { sessionId: "backend", urlPath: "/commerce/refund", eventName: "refund" },
+          ],
+        }),
+    } as Response);
+
+    await expect(getUmamiRealtimeReport()).resolves.toEqual({
+      activeVisitors: 1,
+      topPages: [{ path: "/pdp/red", visitors: 1 }],
+    });
+  });
+
+  it("keeps missing metric values null and gives event tables event columns", () => {
+    expect(
+      __private.metricRows([{ name: "/plp", pageviews: "12", visitors: 5 }], "path"),
+    ).toEqual([{ label: "/plp", pageviews: 12, visitors: 5 }]);
+    expect(
+      __private.metricRows(
+        [{ name: "purchase", pageviews: "7", visitors: 6, visits: 6, bounces: 0, totaltime: 9 }],
+        "event",
+      ),
+    ).toEqual([{ label: "purchase", count: 7, visitors: 6, visits: 6 }]);
+  });
+
+  it("reads Umami's grouped UTM and attribution shapes", () => {
+    expect(
+      __private.utmGroups({ utm_source: [{ utm: "instagram", views: 9 }], utm_term: [] }),
+    ).toEqual({
+      utm_source: [{ label: "instagram", value: 9 }],
+      utm_medium: [],
+      utm_campaign: [],
+      utm_content: [],
+      utm_term: [],
+    });
+    expect(
+      __private.attributionGroups({
+        referrer: [{ name: "instagram.com", value: 4 }],
+        paidAds: [],
+        utm_source: [{ name: "story", value: 2 }],
+        total: { pageviews: 10, visitors: 6, visits: 7 },
+      }),
+    ).toEqual({
+      referrer: [{ label: "instagram.com", value: 4 }],
+      paidAds: [],
+      utm_source: [{ label: "story", value: 2 }],
+      utm_medium: [],
+      utm_campaign: [],
+      total: { visitors: 6, visits: 7 },
+    });
+  });
+
+  it("drops journeys that pass through a server diagnostic", () => {
+    expect(
+      __private.visitorJourneys([
+        { e1: "/plp", e2: "view_item", e3: "add_to_cart", count: 5 },
+        { e1: "order_paid", e2: "order_paid", count: 90 },
+        { e1: "/commerce/purchase", count: 40 },
+      ]),
+    ).toEqual([{ e1: "/plp", e2: "view_item", e3: "add_to_cart", count: 5 }]);
+  });
+
+  it("runs the shared funnels without the report-level event filter", async () => {
+    const bodies: Array<{ path: string; body: any }> = [];
+    jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      bodies.push({ path: url.pathname, body });
+      const payload = url.pathname.startsWith("/api/reports/")
+        ? url.pathname.endsWith("goal")
+          ? { num: 3, total: 90 }
+          : []
+        : url.pathname.includes("/stats")
+          ? { pageviews: 10, visitors: 5, visits: 6, bounces: 2, totaltime: 60 }
+          : [];
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) } as Response;
+    });
+
+    const report = await getUmamiBehaviorReport(
+      "conversion",
+      { startDate: "2026-09-15", endDate: "2026-09-20" },
+      { filters: { event: "view_item", device: "mobile" } },
+    );
+
+    const funnels = bodies.filter((call) => call.path === "/api/reports/funnel");
+    expect(funnels.map((call) => call.body.parameters)).toEqual(
+      expect.arrayContaining(
+        Object.values(UMAMI_FUNNELS).map((definition) =>
+          expect.objectContaining({
+            window: definition.window,
+            steps: definition.steps.map((value) => ({ type: "event", value })),
+          }),
+        ),
+      ),
+    );
+    for (const call of [...funnels, ...bodies.filter((c) => c.path === "/api/reports/goal")]) {
+      expect(call.body.filters).toEqual({ device: "mobile" });
+    }
+    expect(report.sections.funnelDefinitions).toBe(UMAMI_FUNNELS);
+    expect(report.sections.purchaseGoal).toEqual({ num: 3, total: 90 });
   });
 });

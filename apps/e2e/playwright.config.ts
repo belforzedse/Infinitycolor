@@ -48,7 +48,9 @@ export default defineConfig({
   testDir: "./tests",
   // Admin CRUD now belongs to the independently runnable admin application.
   // Its dedicated config owns these files and their root-relative URLs.
-  testIgnore: ["super-admin/**/*.spec.ts"],
+  // The analytics wire test needs a storefront built against its stub
+  // collector; analytics.playwright.config.ts owns it.
+  testIgnore: ["super-admin/**/*.spec.ts", "analytics/**/*.spec.ts"],
   outputDir: "test-results",
   globalSetup: "./scripts/global-setup.ts",
   fullyParallel: true,

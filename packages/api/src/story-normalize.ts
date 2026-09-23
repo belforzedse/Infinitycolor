@@ -50,6 +50,10 @@ export function normalizeStoryMediaAsset(raw: unknown): StoryMediaAsset | undefi
     entity.formats && typeof entity.formats === "object"
       ? (entity.formats as StoryMediaAsset["formats"])
       : undefined;
+  const providerMetadata =
+    entity.provider_metadata && typeof entity.provider_metadata === "object"
+      ? (entity.provider_metadata as { video?: unknown })
+      : undefined;
   return {
     id,
     url: stringValue(entity.url),
@@ -58,6 +62,9 @@ export function normalizeStoryMediaAsset(raw: unknown): StoryMediaAsset | undefi
     height: typeof entity.height === "number" ? entity.height : undefined,
     mime: optionalString(entity.mime),
     formats,
+    previewUrl: optionalString(entity.previewUrl),
+    // Keep only the pipeline's delivery record, not whatever else a provider stored.
+    ...(providerMetadata?.video ? { provider_metadata: { video: providerMetadata.video } } : {}),
   };
 }
 

@@ -239,12 +239,16 @@ export default function PDPHeroInfoAction({
 
   const handleToggleLike = async (e: React.MouseEvent<HTMLButtonElement>) => {
     try {
-      await toggleLike(e);
-      trackAnalyticsEvent({
-        category: "engagement",
-        action: isLiked ? "remove_from_wishlist" : "add_to_wishlist",
-        properties: { product_id: productId },
-      });
+      const isFavorite = await toggleLike(e);
+      // Only a change the server confirmed; a signed-out redirect or a failed
+      // toggle is not a wishlist action.
+      if (typeof isFavorite === "boolean") {
+        trackAnalyticsEvent({
+          category: "engagement",
+          action: isFavorite ? "add_to_wishlist" : "remove_from_wishlist",
+          properties: { product_id: productId },
+        });
+      }
     } catch (err) {
       logger.error("Failed to toggle like", { productId, name, error: err });
       notify.error("خطا در به‌روزرسانی علاقه‌مندی");

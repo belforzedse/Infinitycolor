@@ -71,7 +71,7 @@ describe("JourneyFlow", () => {
 
     // One fixture row used all 4 steps, so the cap footnote must be shown.
     expect(
-      screen.getByText(/آنچه پس از اقدام چهارم رخ داده، در این داده دیده نمی‌شود/),
+      screen.getByText(/آنچه پس از قدم چهارم رخ داده، در این داده دیده نمی‌شود/),
     ).toBeInTheDocument();
   });
 

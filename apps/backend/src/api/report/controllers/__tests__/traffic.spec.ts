@@ -87,7 +87,7 @@ describe("Umami behavior report endpoints", () => {
       source: "umami",
       dataStart: "2026-08-09",
       status: "ok",
-      currency: "IRR",
+      currency: "Toman",
     });
     expect(getUmamiBehaviorReportMock).toHaveBeenCalledWith(
       "acquisition",
@@ -120,17 +120,16 @@ describe("Umami behavior report endpoints", () => {
       sections: {},
       errors: { source: "UMAMI_UNAVAILABLE" },
     });
-    (global as any).strapi.db.connection.raw.mockImplementation((sql: string) => {
-      if (sql.includes("COUNT(*)::bigint AS total_orders")) {
-        return Promise.resolve({ rows: [{ total_orders: 3, paid_orders: 2 }] });
-      }
-      if (sql.includes("AS total_irr")) {
-        return Promise.resolve({ rows: [{ total_irr: 12_500_000 }] });
-      }
-      return Promise.resolve({ rows: [] });
-    });
+    const raw = (global as any).strapi.db.connection.raw;
+    raw.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes("storefront_orders")
+          ? { rows: [{ total_orders: 3, paid_orders: 2, revenue_irr: 12_500_000 }] }
+          : { rows: [] },
+      ),
+    );
     const controller = loadController();
-    const ctx = createCtx();
+    const ctx = createCtx({ query: { startDate: "2026-09-15", endDate: "2026-09-20" } });
 
     await controller.behaviorConversion(ctx);
 
@@ -138,11 +137,16 @@ describe("Umami behavior report endpoints", () => {
     expect(ctx.body.data.summary).toBeUndefined();
     expect(ctx.body.data.sections.commerce).toEqual({
       source: "commerce",
+      scope: "storefront",
       currency: "Toman",
+      range: { start: "2026-09-15", end: "2026-09-20" },
       paidOrders: 2,
       totalOrders: 3,
       revenueToman: 1_250_000,
     });
+    // Umami only sees the new storefront; legacy WooCommerce orders stay out.
+    const commerceSql = raw.mock.calls.find(([sql]: [string]) => sql.includes("storefront_orders"))[0];
+    expect(commerceSql).toContain("o.external_source IS DISTINCT FROM 'woocommerce'");
     expect(ctx.body.meta.warnings).toContain(
       "Umami is unavailable; commerce totals remain current.",
     );

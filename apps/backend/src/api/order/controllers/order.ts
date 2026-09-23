@@ -39,6 +39,7 @@ import {
   projectOrderReserve,
   withReserveProjection,
 } from "../../reserve-group/lib/reserve-group";
+import { summarizeSettledCharges } from "./helpers/settledCharges";
 
 // Business fields captured as admin activity on a generic `PUT /orders/:id` edit. Whitelisted on
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
@@ -578,6 +579,13 @@ export default factories.createCoreController(
                 ? "Failed"
                 : "Unknown");
         const isPaid = paymentStatus === "Succeeded";
+        // What was actually charged, from the settled legs. The storefront's
+        // revenue-bearing analytics `purchase` reads these; `amountIrr` below is
+        // the attempt total fixed at checkout. A paid order status counts too:
+        // a SnappPay order can be Started while its attempt row still reads
+        // Pending, and the result page already treats that order as paid.
+        const orderIsPaid = ["Started", "Shipment", "Done"].includes(order.Status);
+        const settledCharges = isPaid || orderIsPaid ? summarizeSettledCharges(txList) : null;
         const canRetry = ["Failed", "Cancelled", "Expired"].includes(paymentStatus);
         const shippingMethodCode =
           order.ShippingMethodCode || (order as any).shipping?.Code || null;
@@ -618,6 +626,12 @@ export default factories.createCoreController(
             // alongside it so the result page can show what came from the
             // wallet and what the bank carried.
             amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
+            ...(settledCharges && settledCharges.amountIrr > 0
+              ? {
+                  paidAmountIrr: settledCharges.amountIrr,
+                  paidAt: settledCharges.settledAt ?? undefined,
+                }
+              : {}),
             // Whether this checkout still has the shopper's credit committed.
             // "Active" is what makes the abandon action worth offering; once it
             // is Released or Captured the money is no longer in limbo.

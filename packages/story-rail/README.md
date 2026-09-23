@@ -76,4 +76,5 @@ here cannot cover — run them against a real build:
 - [ ] **Sound.** Open a story, unmute, advance twice — the preference should persist across
       stories within the session and reset next time the viewer opens.
 - [ ] **Network panel.** Opening the viewer should fetch the active story plus adjacent
-      covers; the next video should show metadata-range requests, not a full body.
+      covers. The next video is warmed (roughly its first 3 s) only once the current one has
+      about 4 s buffered, and a story change cancels the warm read.

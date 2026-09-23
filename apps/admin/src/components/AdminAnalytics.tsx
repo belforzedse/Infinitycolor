@@ -2,7 +2,7 @@
 
 import Script from "next/script";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 type Primitive = string | number | boolean;
 type UmamiApi = {
@@ -17,8 +17,6 @@ type UmamiApi = {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export const ADMIN_ANALYTICS_CONSENT_KEY = "infinity_admin_analytics_consent";
-export const ADMIN_ANALYTICS_CONSENT_EVENT = "infinity-admin-analytics-consent";
 
 export function adminRouteGroup(pathname: string): string {
   const first =
@@ -84,16 +82,6 @@ function trackerConfiguration(): {
   }
 }
 
-function hasConsent(): boolean {
-  try {
-    return (
-      window.localStorage.getItem(ADMIN_ANALYTICS_CONSENT_KEY) === "granted"
-    );
-  } catch {
-    return false;
-  }
-}
-
 function trackRoute(group: string): void {
   const api = (window as Window & { umami?: UmamiApi }).umami;
   if (!api) return;
@@ -115,26 +103,18 @@ export default function AdminAnalytics() {
   const pathname = usePathname() || "/";
   const group = useMemo(() => adminRouteGroup(pathname), [pathname]);
   const configuration = useMemo(() => trackerConfiguration(), []);
-  const [consented, setConsented] = useState(false);
   const lastTrackedGroup = useRef("");
 
+  // Route groups only, for every admin session: there is no consent tier
+  // (docs/analytics.md). The storefront website is never this one.
   useEffect(() => {
-    setConsented(hasConsent());
-    const update = () => setConsented(hasConsent());
-    window.addEventListener(ADMIN_ANALYTICS_CONSENT_EVENT, update);
-    return () =>
-      window.removeEventListener(ADMIN_ANALYTICS_CONSENT_EVENT, update);
-  }, []);
-
-  useEffect(() => {
-    if (!configuration || !consented || lastTrackedGroup.current === group)
-      return;
+    if (!configuration || lastTrackedGroup.current === group) return;
     if (!(window as Window & { umami?: UmamiApi }).umami) return;
     lastTrackedGroup.current = group;
     trackRoute(group);
-  }, [configuration, consented, group]);
+  }, [configuration, group]);
 
-  if (!configuration || !consented) return null;
+  if (!configuration) return null;
   return (
     <Script
       src={`${configuration.baseUrl}/telemetry.js`}

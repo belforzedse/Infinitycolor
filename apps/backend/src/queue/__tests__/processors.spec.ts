@@ -1,7 +1,12 @@
 jest.mock(
   "bullmq",
   () => ({
-    UnrecoverableError: class UnrecoverableError extends Error {},
+    UnrecoverableError: class UnrecoverableError extends Error {
+      name = "UnrecoverableError";
+    },
+    DelayedError: class DelayedError extends Error {
+      name = "DelayedError";
+    },
   }),
   { virtual: true },
 );
@@ -312,7 +317,7 @@ describe("queue processors", () => {
     expect(mockedProcessSnappayOperation).not.toHaveBeenCalled();
   });
 
-  it("normalizes a product gallery clip and clears the PDP origin caches", async () => {
+  it("normalizes a product gallery clip with job context; cache clearing belongs to the pipeline", async () => {
     const strapi = createMockStrapi();
     mockedNormalizeProductVideoFile.mockResolvedValue({
       productId: 4624,
@@ -322,36 +327,50 @@ describe("queue processors", () => {
     } as any);
 
     await processMaintenanceJob(strapi, {
+      id: "normalize-product-video-120001",
       name: MEDIA_JOBS.normalizeProductVideo,
       data: { productId: 4624, fileId: 120001 },
+      attemptsMade: 1,
     } as any);
 
     expect(mockedNormalizeProductVideoFile).toHaveBeenCalledWith(4624, 120001, {
       strapi,
       uploadsDir: "/app/public/uploads",
+      jobId: "normalize-product-video-120001",
+      attempt: 2,
     });
-    expect(mockedClearProductOriginCaches).toHaveBeenCalledWith(
-      strapi,
-      "fantasy-sleeping-set-n002",
-      { availabilityCrossed: false, logPrefix: "product-video-normalize" },
-    );
+    // The pipeline clears the product's caches on every row switch, whichever job ran it.
+    expect(mockedClearProductOriginCaches).not.toHaveBeenCalled();
   });
 
-  it("does not revalidate when the gallery clip was already web-safe", async () => {
+  it("delays, without spending an attempt, when another worker holds the file", async () => {
     const strapi = createMockStrapi();
-    mockedNormalizeProductVideoFile.mockResolvedValue({
-      productId: 1,
-      slug: "already-safe",
-      status: "skipped",
-      files: [{ fileId: 9, status: "skipped" }],
-    } as any);
+    const { MediaBusyError } = jest.requireActual("../../services/media/normalize-upload-video");
+    mockedNormalizeProductVideoFile.mockRejectedValue(new MediaBusyError(9));
+    const moveToDelayed = jest.fn(async () => undefined);
 
-    await processMaintenanceJob(strapi, {
-      name: MEDIA_JOBS.normalizeProductVideo,
-      data: { productId: 1, fileId: 9 },
-    } as any);
+    await expect(
+      processMaintenanceJob(
+        strapi,
+        { id: "j", name: MEDIA_JOBS.normalizeProductVideo, data: { productId: 1, fileId: 9 }, moveToDelayed } as any,
+        "lock-token",
+      ),
+    ).rejects.toMatchObject({ name: "DelayedError" });
+    expect(moveToDelayed).toHaveBeenCalledWith(expect.any(Number), "lock-token");
+  });
 
-    expect(mockedClearProductOriginCaches).not.toHaveBeenCalled();
+  it("fails permanently on an upload re-running cannot fix", async () => {
+    const strapi = createMockStrapi();
+    const { MediaProcessingError } = jest.requireActual("../../services/media/media-process");
+    mockedNormalizeProductVideoFile.mockRejectedValue(
+      new MediaProcessingError("no_video_stream", "the file has no video stream"),
+    );
+    await expect(
+      processMaintenanceJob(strapi, {
+        name: MEDIA_JOBS.normalizeProductVideo,
+        data: { productId: 1, fileId: 9 },
+      } as any),
+    ).rejects.toMatchObject({ name: "UnrecoverableError" });
   });
 
   it("fails permanently when ffmpeg is missing rather than retrying the transcode", async () => {

@@ -49,13 +49,17 @@ const EVENT_LABELS: Record<string, string> = {
   add_payment_info: "انتخاب روش پرداخت",
   place_order_attempt: "تلاش برای ثبت سفارش",
   payment_redirect: "انتقال به درگاه پرداخت",
-  payment_completed: "تکمیل پرداخت",
+  payment_failed: "پرداخت ناموفق",
+  payment_cancelled: "لغو پرداخت توسط خریدار",
+  payment_unresolved: "نتیجه پرداخت نامشخص ماند",
+  order_paid: "پرداخت تأییدشده در سرور",
+  payment_completed: "تکمیل پرداخت (نسخه قدیم)",
   payment_callback_success: "بازگشت موفق از درگاه",
   payment_callback_failed: "بازگشت ناموفق از درگاه",
   payment_callback_error: "خطا در بازگشت از درگاه",
   order_success_page_view: "مشاهده صفحه خرید موفق",
   order_failure_page_view: "مشاهده صفحه پرداخت ناموفق",
-  purchase: "خرید موفق",
+  purchase: "خرید موفق (تأییدشده)",
   refund: "بازپرداخت",
   refund_irr: "بازپرداخت",
   login: "ورود به حساب",
@@ -133,6 +137,21 @@ const CITY_LABELS: Record<string, string> = {
   hamadan: "همدان",
   arak: "اراک",
   "bandar abbas": "بندرعباس",
+  gorgan: "گرگان",
+  sari: "ساری",
+  babol: "بابل",
+  amol: "آمل",
+  qazvin: "قزوین",
+  zanjan: "زنجان",
+  ardabil: "اردبیل",
+  sanandaj: "سنندج",
+  kermanshah: "کرمانشاه",
+  "khorramabad": "خرم‌آباد",
+  bojnurd: "بجنورد",
+  semnan: "سمنان",
+  zahedan: "زاهدان",
+  bushehr: "بوشهر",
+  "gonbad-e kavus": "گنبد کاووس",
 };
 
 const IRAN_REGION_LABELS: Record<string, string> = {
@@ -326,6 +345,70 @@ export function presentBehaviorValue(
   );
 }
 
+/**
+ * Umami journeys mix page views (a path) and custom events (a name) in one
+ * sequence; present each with its own vocabulary.
+ */
+export function presentJourneyStep(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  return raw.startsWith("/") ? presentPath(raw) : presentBehaviorValue(raw, "event");
+}
+
+/** Funnel window in minutes, as Persian words («۱ ساعت», «۲۴ ساعت», «۳۰ دقیقه»). */
+export function presentWindow(minutes: unknown): string | null {
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const format = (n: number) => new Intl.NumberFormat("fa-IR").format(n);
+  if (value % 1440 === 0 && value > 1440) return `${format(value / 1440)} روز`;
+  if (value % 60 === 0) return `${format(value / 60)} ساعت`;
+  return `${format(value)} دقیقه`;
+}
+
+/** The checkout-side events the conversion tab lists; product browsing lives elsewhere. */
+export const CHECKOUT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  "view_cart",
+  "begin_checkout",
+  "add_shipping_info",
+  "add_payment_info",
+  "apply_coupon",
+  "place_order_attempt",
+  "payment_redirect",
+  "purchase",
+  "payment_failed",
+  "payment_cancelled",
+  "payment_unresolved",
+  "checkout_error",
+  "order_paid",
+  "refund",
+]);
+
+/** Events offered in the filter picker, in funnel order, with Persian labels. */
+export const FILTERABLE_EVENTS: ReadonlyArray<{ value: string; label: string }> = [
+  "view_item_list",
+  "select_item",
+  "view_item",
+  "click_add_to_cart",
+  "add_to_cart",
+  "remove_from_cart",
+  "update_quantity",
+  "view_cart",
+  "begin_checkout",
+  "add_shipping_info",
+  "add_payment_info",
+  "apply_coupon",
+  "place_order_attempt",
+  "payment_redirect",
+  "purchase",
+  "payment_failed",
+  "payment_cancelled",
+  "payment_unresolved",
+  "checkout_error",
+  "site_search",
+  "add_to_wishlist",
+  "share_product",
+  "open_comments",
+].map((value) => ({ value, label: EVENT_LABELS[value] ?? value }));
+
 export function performanceP75(value: unknown): number | null {
   const candidate =
     value && typeof value === "object" && !Array.isArray(value)
@@ -354,10 +437,13 @@ const SECTION_LABELS: Record<string, string> = {
   firstAttribution: "اولین منبع ورود خریداران",
   lastAttribution: "آخرین منبع پیش از خرید",
   purchaseGoal: "خریدهای ثبت‌شده",
-  checkoutFunnel: "مسیر خرید",
+  discoveryFunnel: "مسیر محصول تا ثبت سفارش",
+  checkoutFunnel: "مسیر ثبت سفارش تا خرید",
+  paymentFunnel: "مسیر درگاه تا خرید",
+  commerce: "فروش فروشگاه",
   journeys: "مسیر حرکت کاربران",
   retention: "بازگشت کاربران",
-  performance: "Core Web Vitals",
+  performance: "سرعت صفحه",
 };
 
 export function presentAnalyticsMessage(value: unknown): string {

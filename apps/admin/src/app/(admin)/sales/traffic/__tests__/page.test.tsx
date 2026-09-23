@@ -159,22 +159,47 @@ describe("behavior report page", () => {
     expect(screen.getByText(/مستقیماً از سفارش‌ها و پرداخت‌های فروشگاه/)).toBeInTheDocument();
   });
 
-  it("renders a directly labelled purchase funnel with step drop-off", async () => {
+  it("renders each funnel with its own window, step drop-off, and checkout-only events", async () => {
     getBehaviorViewMock.mockImplementation(async (view: string) =>
       view === "conversion"
         ? ok({
             kind: "conversion",
             summary: { visits: 100 },
             sections: {
-              commerce: { paidOrders: 30, totalOrders: 40, revenueToman: 5_000_000 },
+              commerce: {
+                paidOrders: 30,
+                totalOrders: 40,
+                revenueToman: 5_000_000,
+                range: { start: "2026-09-14", end: "2026-09-20" },
+              },
               purchaseGoal: { num: 30, total: 100 },
-              checkoutFunnel: [
+              funnelDefinitions: {
+                discovery: { window: 1440, steps: ["view_item", "add_to_cart", "begin_checkout"] },
+                checkout: {
+                  window: 60,
+                  steps: ["begin_checkout", "add_shipping_info", "place_order_attempt", "purchase"],
+                },
+                payment: { window: 60, steps: ["payment_redirect", "purchase"] },
+              },
+              discoveryFunnel: [
                 { value: "view_item", visitors: 100 },
                 { value: "add_to_cart", visitors: 60 },
                 { value: "begin_checkout", visitors: 45 },
+              ],
+              checkoutFunnel: [
+                { value: "begin_checkout", visitors: 45 },
+                { value: "add_shipping_info", visitors: 40 },
+                { value: "place_order_attempt", visitors: 36 },
                 { value: "purchase", visitors: 30 },
               ],
-              event: [],
+              paymentFunnel: [
+                { value: "payment_redirect", visitors: 34 },
+                { value: "purchase", visitors: 30 },
+              ],
+              event: [
+                { label: "purchase", count: 31, visitors: 30 },
+                { label: "adaptive_quality_tier_change", count: 900, visitors: 90 },
+              ],
             },
             errors: {},
           })
@@ -183,13 +208,19 @@ describe("behavior report page", () => {
     render(<BehaviorReportPage />);
     await screen.findAllByText("نمایش صفحه");
     fireEvent.click(screen.getByRole("tab", { name: /مسیر خرید/ }));
-    expect(await screen.findByText("مسیر خرید کاربران")).toBeInTheDocument();
-    expect(screen.getByText("افزودن به سبد خرید")).toBeInTheDocument();
-    expect(screen.getAllByText(/ریزش این مرحله/)).toHaveLength(3);
-    expect(screen.getByText(/تبدیل از ابتدا تا خرید/)).toHaveTextContent("۳۰٪");
+    expect(await screen.findByText("از مشاهده محصول تا شروع ثبت سفارش")).toBeInTheDocument();
+    expect(screen.getByText("از شروع ثبت سفارش تا خرید")).toBeInTheDocument();
+    expect(screen.getByText("از انتقال به درگاه تا خرید")).toBeInTheDocument();
+    expect(screen.getByText(/حداکثر ۲۴ ساعت پس از مرحله قبل/)).toBeInTheDocument();
+    expect(screen.getAllByText(/حداکثر ۱ ساعت پس از مرحله قبل/)).toHaveLength(2);
+    expect(screen.getAllByText(/ریزش این مرحله/)).toHaveLength(6);
     expect(
-      screen.getByText(/بیشترین ریزش در مرحله «افزودن به سبد خرید» بوده است؛ ۴۰ کاربر/),
+      screen.getByText(/بیشترین ریزش در مرحله «افزودن به سبد خرید» بوده است؛ ۴۰ بازدیدکننده/),
     ).toBeInTheDocument();
+    // The conversion table lists checkout events only, with an event-count column.
+    expect(screen.getByText("تعداد رخداد")).toBeInTheDocument();
+    expect(screen.queryByText("تغییر خودکار کیفیت نمایش")).not.toBeInTheDocument();
+    expect(screen.getByText(/سفارش‌های واردشده از سایت قدیم در این عددها نیستند/)).toBeInTheDocument();
   });
 
   it("renders the journey flow with Persian labels and the 4-step cap footnote", async () => {
@@ -201,7 +232,7 @@ describe("behavior report page", () => {
             sections: {
               journeys: [
                 {
-                  e1: "view_item",
+                  e1: "/pdp/red-shirt",
                   e2: "add_to_cart",
                   e3: "begin_checkout",
                   e4: "purchase",
@@ -217,13 +248,13 @@ describe("behavior report page", () => {
     render(<BehaviorReportPage />);
     await screen.findAllByText("نمایش صفحه");
     fireEvent.click(screen.getByRole("tab", { name: /صفحات و محصولات/ }));
-    expect(
-      await screen.findByText("پرتکرارترین توالی اقدام‌های کاربران"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("پرتکرارترین مسیرهای بازدید")).toBeInTheDocument();
     expect(screen.getAllByText(/مشاهده محصول/).length).toBeGreaterThan(0);
+    // A page step is presented as a page, not as a raw path or event name.
+    expect(screen.getAllByText(/محصول: red shirt/).length).toBeGreaterThan(0);
     expect(screen.getByText(/افزودن به علاقه‌مندی‌ها/)).toBeInTheDocument();
     expect(
-      screen.getByText(/آنچه پس از اقدام چهارم رخ داده، در این داده دیده نمی‌شود/),
+      screen.getByText(/آنچه پس از قدم چهارم رخ داده، در این داده دیده نمی‌شود/),
     ).toBeInTheDocument();
   });
 
@@ -252,13 +283,15 @@ describe("behavior report page", () => {
     const { container } = render(<BehaviorReportPage />);
     await screen.findAllByText("نمایش صفحه");
     fireEvent.click(screen.getByRole("tab", { name: /سرعت و تجربه کاربری/ }));
-    expect(await screen.findByText("LCP صفحه‌ها")).toBeInTheDocument();
-    expect(screen.getAllByText("۱۸۰ ms").length).toBeGreaterThan(0);
+    expect(
+      await screen.findByText("نمایش محتوای اصلی (LCP) در صفحه‌ها"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("۱۸۰ میلی‌ثانیه").length).toBeGreaterThan(0);
     expect(screen.getByText("پرداخت")).toBeInTheDocument();
     expect(screen.getByText("رایانه همراه")).toBeInTheDocument();
     expect(screen.getByText("Opera")).toBeInTheDocument();
     expect(container.querySelectorAll("[data-dimension-icon]").length).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByText(/ms —/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ms/)).not.toBeInTheDocument();
   });
 
   it("renders unavailable without inventing zero values", async () => {
@@ -297,7 +330,9 @@ describe("behavior report page", () => {
     expect(
       screen.queryByText("بخشی از اطلاعات این گزارش موقتاً در دسترس نیست."),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByText("مسیر خرید موقتاً در دسترس نیست.")).toHaveLength(1);
+    expect(
+      screen.getAllByText("مسیر ثبت سفارش تا خرید موقتاً در دسترس نیست."),
+    ).toHaveLength(1);
   });
 
   it("polls realtime every 30 seconds and pauses while hidden", async () => {

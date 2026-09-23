@@ -59,10 +59,12 @@ function describe(result: NormalizeProductResult): string {
         file.probe.fastStart ? "faststart" : "moov-at-end",
       );
     }
-    if (file.fromBytes) {
-      fileParts.push(`${formatBytes(file.fromBytes)} → ${formatBytes(file.toBytes)}`);
+    const output = file.video?.output;
+    const sourceBytes = file.video?.source?.size ? file.video.source.size * 1024 : undefined;
+    if (output) {
+      fileParts.push(`${formatBytes(sourceBytes)} → ${formatBytes(output.mp4.bytes)}`);
     }
-    if (file.decision?.reasons.length) fileParts.push(`[${file.decision.reasons.join("; ")}]`);
+    if (file.reasons?.length) fileParts.push(`[${file.reasons.join("; ")}]`);
     if (file.detail) fileParts.push(file.detail);
     parts.push(fileParts.join(" "));
   }

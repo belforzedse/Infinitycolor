@@ -1,4 +1,6 @@
-import { getStrapiServerUrl, IMAGE_BASE_URL } from "@repo/api/config";
+import { getStrapiServerUrl } from "@repo/api/config";
+import { strapiMediaUrl as feedMediaUrl } from "@repo/social-posts";
+import { readVideoDelivery, resolveVideoSource, type VideoSource } from "@repo/video-player/delivery";
 import { getHomeDemoPosts, isSocialHomePostsDemoEnabled } from "@/components/posts/home-posts-demo";
 
 export type PostDetailMedia = {
@@ -6,6 +8,8 @@ export type PostDetailMedia = {
   url: string;
   alternativeText: string;
   mime?: string;
+  /** Video delivery from the media worker: normalized MP4, HLS ladder, poster. */
+  video?: VideoSource;
 };
 
 export type PostDetailComment = {
@@ -41,6 +45,10 @@ type StrapiMediaAttrs = {
   url?: string;
   alternativeText?: string;
   mime?: string;
+  previewUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
+  provider_metadata?: unknown;
 };
 
 function readAttrs(entry: unknown): Record<string, unknown> {
@@ -51,12 +59,13 @@ function readAttrs(entry: unknown): Record<string, unknown> {
   return r;
 }
 
+/**
+ * Same resolver as the feed cards: uploads are served from the media CDN. The detail page
+ * used to build `IMAGE_BASE_URL + path` itself, which sent every post video through the
+ * API origin and Strapi instead of the CDN.
+ */
 function strapiMediaUrl(relativeOrAbsolute: string | undefined): string | null {
-  if (!relativeOrAbsolute?.trim()) return null;
-  const u = relativeOrAbsolute.trim();
-  if (u.startsWith("http://") || u.startsWith("https://")) return u;
-  const base = IMAGE_BASE_URL.replace(/\/$/, "");
-  return `${base}${u.startsWith("/") ? u : `/${u}`}`;
+  return feedMediaUrl(relativeOrAbsolute);
 }
 
 function normalizeMediaEntry(entry: unknown): StrapiMediaAttrs | null {
@@ -69,6 +78,10 @@ function normalizeMediaEntry(entry: unknown): StrapiMediaAttrs | null {
     url: typeof attrs.url === "string" ? attrs.url : undefined,
     alternativeText: typeof attrs.alternativeText === "string" ? attrs.alternativeText : undefined,
     mime: typeof attrs.mime === "string" ? attrs.mime : undefined,
+    previewUrl: typeof attrs.previewUrl === "string" ? attrs.previewUrl : null,
+    width: typeof attrs.width === "number" ? attrs.width : null,
+    height: typeof attrs.height === "number" ? attrs.height : null,
+    provider_metadata: attrs.provider_metadata,
   };
 }
 
@@ -224,6 +237,11 @@ function postDetailQuery(slug: string): string {
   p.set("populate[Media][fields][0]", "url");
   p.set("populate[Media][fields][1]", "alternativeText");
   p.set("populate[Media][fields][2]", "mime");
+  // Video delivery: generated poster, dimensions and the media worker's outputs.
+  p.set("populate[Media][fields][3]", "previewUrl");
+  p.set("populate[Media][fields][4]", "width");
+  p.set("populate[Media][fields][5]", "height");
+  p.set("populate[Media][fields][6]", "provider_metadata");
   p.set("populate[post_likes][count]", "true");
   p.set("populate[post_comments][count]", "true");
   p.set("pagination[pageSize]", "1");
@@ -259,11 +277,16 @@ function normalizePostDetail(entry: unknown, comments: PostDetailComment[]): Pos
     const url = strapiMediaUrl(item.url);
     if (!url || seenUrls.has(url)) return;
     seenUrls.add(url);
+    const isVideo = item.mime?.toLowerCase().startsWith("video");
+    const video = isVideo
+      ? (resolveVideoSource(readVideoDelivery(item), (path) => strapiMediaUrl(path) ?? "") ?? undefined)
+      : undefined;
     media.push({
       id: String(item.id ?? `${id}-${index}`),
       url,
-      alternativeText: item.alternativeText?.trim() || "تصویر پست",
+      alternativeText: item.alternativeText?.trim() || (isVideo ? "ویدیوی پست" : "تصویر پست"),
       mime: item.mime,
+      ...(video ? { video } : {}),
     });
   });
 

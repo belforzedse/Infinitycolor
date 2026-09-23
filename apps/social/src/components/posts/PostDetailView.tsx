@@ -48,6 +48,9 @@ import {
   readCommentDraft,
   saveCommentDraft,
 } from "@/lib/offline-snapshots";
+import { InlineVideo, useVisibilitySlot, type VideoEngineState } from "@repo/video-player";
+import { useVideoSoundPreference } from "@/lib/video-sound";
+import { ensureVideoTelemetry } from "@/lib/video-telemetry";
 
 function cx(...parts: (string | false | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
@@ -239,6 +242,73 @@ function CommentItem({
   );
 }
 
+/**
+ * One post video. It plays only while it is both the carousel's current slide and the
+ * page's most-visible video — so swiping away pauses it, a scrolled-away or backgrounded
+ * page pauses it, and the CSS-hidden duplicate layout (mobile and desktop trees are both
+ * rendered) never plays or even loads. It autoplays muted; native controls give sound, and
+ * the viewer's sound choice carries to the next post video in this tab.
+ */
+function PostVideo({ media, active }: { media: PostDetailMedia; active: boolean }) {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const slot = useVisibilitySlot(shellRef, { enabled: active });
+  const [soundOn, setSoundOn] = useVideoSoundPreference();
+  const source = media.video ?? { mp4: media.url };
+  useEffect(() => ensureVideoTelemetry(), []);
+
+  const onStateChange = useCallback(
+    (state: VideoEngineState) => {
+      // Follow what the viewer did with the native mute control. Ignore the idle state
+      // (no element attached) and an autoplay the browser forced back to muted.
+      if (state.phase === "idle" || state.failure === "autoplay-denied") return;
+      if (state.muted === soundOn) setSoundOn(!state.muted);
+    },
+    [soundOn, setSoundOn],
+  );
+
+  return (
+    <div ref={shellRef} className="relative h-full w-full">
+      <InlineVideo
+        source={source}
+        active={active && slot !== "idle"}
+        playing={active && slot === "active"}
+        muted={!soundOn}
+        loop
+        controls
+        surface="post-detail"
+        allowHls
+        objectFit="cover"
+        className="h-full w-full"
+        ariaLabel={media.alternativeText}
+        onStateChange={onStateChange}
+      >
+        {(state, controls) =>
+          state.failure === "decode-unsupported" ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/55 px-6 text-center">
+              <p className="rounded-full bg-black/70 px-4 py-2 font-peyda text-sm text-white">
+                {media.video?.processing
+                  ? "این ویدیو در حال آماده‌سازی است؛ کمی بعد دوباره سر بزنید."
+                  : "این ویدیو در این مرورگر پخش نمی‌شود."}
+              </p>
+            </div>
+          ) : state.failure === "autoplay-denied" ? (
+            <button
+              type="button"
+              onClick={() => void controls.play()}
+              className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-black/55 text-white"
+              aria-label="پخش ویدیو"
+            >
+              <svg viewBox="0 0 24 24" className="h-7 w-7 translate-x-0.5" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </button>
+          ) : null
+        }
+      </InlineVideo>
+    </div>
+  );
+}
+
 function MediaSlide({
   media,
   active,
@@ -257,14 +327,7 @@ function MediaSlide({
       aria-hidden={!active}
     >
       {isVideo ? (
-        <video
-          src={media.url}
-          className="h-full w-full object-cover"
-          controls
-          playsInline
-          preload="metadata"
-          draggable={false}
-        />
+        <PostVideo media={media} active={active} />
       ) : (
         <BlurImage
           src={media.url}

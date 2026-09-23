@@ -350,10 +350,7 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
     state.origins = [
       {
         origin: new URL(storefrontBaseURL()).origin,
-        localStorage: [
-          { name: "analytics-consent", value: "denied" },
-          { name: "pdp_debug", value: "0" },
-        ],
+        localStorage: [{ name: "pdp_debug", value: "0" }],
       },
     ];
 

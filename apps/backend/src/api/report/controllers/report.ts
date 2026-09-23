@@ -3,7 +3,7 @@
  */
 
 import { MANAGEMENT_ROLES } from "../../../utils/roles";
-import { hasCapability, type AdminCapability } from "@repo/auth-core";
+import { type AdminCapability } from "@repo/auth-core";
 import { requireCapability } from "../../../utils/adminAuthorization";
 import * as productAnalytics from "../services/product-analytics";
 import { buildStyledWorkbook, WorkbookColumn } from "../../../utils/styledWorkbook";
@@ -13,6 +13,7 @@ import {
   type SalesBreakdownDimension,
 } from "../analytics/semantic/salesBreakdown";
 import { METRIC_CATALOG } from "../analytics/metrics/catalog";
+import { DELIVERABLE_EVENT_TYPES } from "../analytics/outbox";
 import {
   getUmamiBehaviorReport,
   getUmamiRealtimeReport,
@@ -23,36 +24,6 @@ import {
   UMAMI_DEFINITION_VERSION,
   UMAMI_REPORT_TIMEZONE,
 } from "../services/umami";
-
-async function getProductBehavioralUmami(
-  slug: string,
-  range: { startDate: string; endDate: string },
-) {
-  if (!slug || !isUmamiConfigured()) return null;
-  try {
-    const report = await getUmamiBehaviorReport("content", range);
-    const rows = Array.isArray(report.sections.path) ? (report.sections.path as Array<any>) : [];
-    const needle = `/pdp/${slug}`.toLowerCase();
-    const match = rows.find((row) =>
-      String(row?.label || "")
-        .toLowerCase()
-        .includes(needle),
-    );
-    if (!match) return { pageviews: 0, uniquePageviews: 0, avgTimeOnPageSec: 0, bounceRate: 0 };
-    return {
-      pageviews: Number(match.pageviews || 0),
-      uniquePageviews: Number(match.visits || match.visitors || 0),
-      avgTimeOnPageSec:
-        Number(match.visits || 0) > 0 ? Number(match.totaltime || 0) / Number(match.visits) : 0,
-      bounceRate:
-        Number(match.visits || 0) > 0
-          ? (Number(match.bounces || 0) / Number(match.visits)) * 100
-          : 0,
-    };
-  } catch {
-    return null;
-  }
-}
 
 type Interval = "day" | "week" | "month";
 type AdminActivityResourceScope = "all" | "order" | "product";
@@ -116,7 +87,8 @@ function behaviorMeta(
     source: "umami",
     timezone: UMAMI_REPORT_TIMEZONE,
     unit: "count",
-    currency: "IRR",
+    // The only money in a behavior response is the commerce section, in Toman.
+    currency: "Toman",
     definitionVersion: UMAMI_DEFINITION_VERSION,
     dataStart: /^\d{4}-\d{2}-\d{2}$/.test(String(process.env.UMAMI_DATA_START_DATE || ""))
       ? String(process.env.UMAMI_DATA_START_DATE)
@@ -297,7 +269,9 @@ async function getAnalyticsDeliveryHealth(knex: any) {
          COUNT(*) FILTER (WHERE status = 'dead_letter')::bigint AS dead_letter,
          MIN(created_at) FILTER (WHERE status = 'pending') AS oldest_pending_at,
          MAX(sent_at) AS last_sent_at
-       FROM analytics_outbox`,
+       FROM analytics_outbox
+       WHERE event_type = ANY(?)`,
+      [[...DELIVERABLE_EVENT_TYPES]],
     );
     const row = rowsOf(result)[0] || {};
     const pending = Number(row.pending || 0);
@@ -504,79 +478,53 @@ async function applyAdminActivityResourceSearch(filters: any, ctx: any) {
 const PA = productAnalytics;
 
 /**
- * Visit-to-payment counts for the behaviour dashboard. Gates on
- * {@link productAnalytics.PAID_ORDER_STATUSES} — «سفارش پرداخت‌شده» means the money
- * landed, so status alone decides membership and no settlement gate applies. Money
- * figures use ELIGIBLE_ORDER_STATUSES, the same status list since D15 but additionally
- * gated on net-positive settlement; these two are deliberately different questions and
- * neither page shows the other's number.
+ * Storefront commerce beside the behavior report. Umami only sees the new
+ * storefront, so these figures exclude WooCommerce-imported legacy orders
+ * (`external_source IS DISTINCT FROM 'woocommerce'`; Mellat orders keep a NULL
+ * source). «سفارش پرداخت‌شده» uses {@link productAnalytics.PAID_ORDER_STATUSES};
+ * revenue is those orders' net successful settlement (Returns subtracted), IRR
+ * converted to Toman. The window is the order date, floored like every money
+ * report, and the effective window is returned so the page can say so.
  */
-async function getOrderStats(start: Date, end: Date) {
-  const knex = strapi.db.connection;
-
-  // Strapi usually maps attributes to snake_case lower-case columns.
-  try {
-    const primaryRes = await knex.raw(
-      `SELECT
-         COUNT(*)::bigint AS total_orders,
-         COUNT(*) FILTER (WHERE o.status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders
-       FROM orders o
-       WHERE o.date BETWEEN ? AND ?`,
-      [start, end],
-    );
-    const row = (primaryRes.rows || primaryRes[0] || [])[0] || {};
-    return {
-      totalOrders: Number(row.total_orders || 0),
-      paidOrders: Number(row.paid_orders || 0),
-    };
-  } catch {
-    // Some DBs may preserve legacy quoted column names.
-    const fallbackRes = await knex.raw(
-      `SELECT
-         COUNT(*)::bigint AS total_orders,
-         COUNT(*) FILTER (WHERE o."Status" IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders
-       FROM orders o
-       WHERE o."Date" BETWEEN ? AND ?`,
-      [start, end],
-    );
-    const row = (fallbackRes.rows || fallbackRes[0] || [])[0] || {};
-    return {
-      totalOrders: Number(row.total_orders || 0),
-      paidOrders: Number(row.paid_orders || 0),
-    };
-  }
-}
-
-async function getRevenueToman(start: Date, end: Date) {
-  const knex = strapi.db.connection;
-  const revenueRes = await knex.raw(
-    `SELECT
-       COALESCE(SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END), 0)::bigint AS total_irr
-     FROM contract_transactions ct
-     WHERE ct.status = 'Success' AND ct.date BETWEEN ? AND ?`,
-    [start, end],
-  );
-  const row = (revenueRes.rows || revenueRes[0] || [])[0] || {};
-  return Number(row.total_irr || 0) / 10;
-}
-
 async function getBehaviorCommerce(range: { startDate: string; endDate: string }) {
-  // Revenue and paid-order counts are money figures, so the comparison window
-  // the conversion report asks for is floored like every other report.
   const { start, end } = PA.clampToFinancialFloor({
     start: parseDate(range.startDate, 30, "start"),
     end: parseDate(range.endDate, 0, "end"),
   });
-  const [orderStats, revenueToman] = await Promise.all([
-    getOrderStats(start, end),
-    getRevenueToman(start, end),
-  ]);
+  const knex = strapi.db.connection;
+  const result = await knex.raw(
+    `WITH storefront_orders AS (
+       SELECT o.id, o.status
+         FROM orders o
+        WHERE o.date BETWEEN ? AND ?
+          AND o.external_source IS DISTINCT FROM 'woocommerce'
+     ),
+     settled AS (
+       SELECT so.id,
+              SUM(CASE WHEN lower(ct.type) = 'return' THEN -ct.amount ELSE ct.amount END) AS net_irr
+         FROM storefront_orders so
+         JOIN orders_contract_links ocl ON ocl.order_id = so.id
+         JOIN contract_transactions_contract_links ctcl ON ctcl.contract_id = ocl.contract_id
+         JOIN contract_transactions ct ON ct.id = ctcl.contract_transaction_id
+        WHERE lower(ct.status) = 'success'
+          AND so.status IN (${PA.PAID_STATUS_SQL})
+        GROUP BY so.id
+     )
+     SELECT
+       (SELECT COUNT(*) FROM storefront_orders)::bigint AS total_orders,
+       (SELECT COUNT(*) FROM storefront_orders WHERE status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders,
+       (SELECT COALESCE(SUM(net_irr), 0) FROM settled)::bigint AS revenue_irr`,
+    [start, end],
+  );
+  const row = rowsOf(result)[0] || {};
   return {
     source: "commerce",
+    scope: "storefront",
     currency: "Toman",
-    paidOrders: orderStats.paidOrders,
-    totalOrders: orderStats.totalOrders,
-    revenueToman,
+    range: effectiveRange(start, end),
+    paidOrders: Number(row.paid_orders || 0),
+    totalOrders: Number(row.total_orders || 0),
+    revenueToman: Math.round(Number(row.revenue_irr || 0) / 10),
   };
 }
 
@@ -2063,15 +2011,6 @@ const reportController = {
         { units: 0, gross: 0, discounts: 0, refunds: 0, net: 0, currentStock: 0 },
       );
 
-      // Optional Umami behavioral data for this product page. Fully graceful:
-      // `null` when Umami is unconfigured/unavailable — never blocks the report.
-      const behavioral = hasCapability(user.role, "report.traffic.read")
-        ? await getProductBehavioralUmami(String(info.slug || ""), {
-            startDate: start.toISOString().slice(0, 10),
-            endDate: end.toISOString().slice(0, 10),
-          })
-        : null;
-
       ctx.body = {
         data: {
           product: {
@@ -2088,7 +2027,6 @@ const reportController = {
           variations,
           trend,
           // Behavioral engagement from Umami (distinct from transactional truth above).
-          behavioral,
         },
       };
     } catch (error) {

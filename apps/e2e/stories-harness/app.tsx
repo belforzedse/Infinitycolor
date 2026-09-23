@@ -7,10 +7,20 @@
  * story list supplied through the URL, so every media response can be shaped by Playwright
  * route interception and the suite runs anywhere.
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { StoryRail } from "@repo/story-rail";
 import type { StoryRailStory } from "@repo/story-rail";
+// Relative path: the harness package does not depend on video-player directly; story-rail
+// does, and esbuild resolves both to the same React copy.
+import {
+  InlineVideo,
+  liveEngineCounts,
+  setVideoTelemetrySink,
+  type VideoEngineState,
+  type VideoSource,
+  type VideoTelemetryEvent,
+} from "../../../packages/video-player/src/index";
 import "react-instagram-stories/styles.css";
 import "./harness.css";
 
@@ -18,11 +28,65 @@ declare global {
   interface Window {
     __storyViews: number[];
     __storyItemViews: string[];
+    __videoEvents: VideoTelemetryEvent[];
+    __videoStates: Record<string, VideoEngineState>;
+    __liveEngines: () => { engines: number; hls: number };
+    __setPlayer: (id: string, patch: Partial<PlayerSpec>) => void;
   }
 }
 
 window.__storyViews = [];
 window.__storyItemViews = [];
+window.__videoEvents = [];
+window.__videoStates = {};
+window.__liveEngines = liveEngineCounts;
+setVideoTelemetrySink((event) => window.__videoEvents.push(event));
+
+interface PlayerSpec {
+  id: string;
+  source: VideoSource;
+  active: boolean;
+  playing: boolean;
+  allowHls: boolean;
+}
+
+/**
+ * Player mode (`?players=[...]`): bare InlineVideo instances, controlled from the test
+ * through `window.__setPlayer`, for engine behaviour that only a real media pipeline
+ * shows — hls.js over MSE, CORS fallback, teardown under rapid (de)activation.
+ */
+function PlayerHarness({ initial }: { initial: PlayerSpec[] }) {
+  const [players, setPlayers] = useState(initial);
+  useEffect(() => {
+    window.__setPlayer = (id, patch) =>
+      setPlayers((current) => current.map((player) => (player.id === id ? { ...player, ...patch } : player)));
+  }, []);
+  return (
+    <main>
+      <h1 data-testid="harness-ready">Player harness</h1>
+      {players.map((player) => (
+        <InlineVideo
+          key={player.id}
+          source={player.source}
+          active={player.active}
+          playing={player.playing}
+          muted
+          loop={false}
+          surface="harness"
+          allowHls={player.allowHls}
+          objectFit="contain"
+          style={{ width: 270, height: 480, marginBottom: 8 }}
+          onStateChange={(state) => {
+            window.__videoStates[player.id] = state;
+            document.querySelector(`[data-player="${player.id}"]`)?.setAttribute("data-engine", state.engine ?? "");
+          }}
+        >
+          {(state) => <span data-player={player.id} data-engine={state.engine ?? ""} data-phase={state.phase} data-first-frame={String(state.hasFirstFrame)} hidden />}
+        </InlineVideo>
+      ))}
+    </main>
+  );
+}
 
 function readStories(): StoryRailStory[] {
   const raw = new URLSearchParams(window.location.search).get("stories");
@@ -64,4 +128,7 @@ function Harness() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<Harness />);
+const playersParam = new URLSearchParams(window.location.search).get("players");
+createRoot(document.getElementById("root")!).render(
+  playersParam ? <PlayerHarness initial={JSON.parse(decodeURIComponent(playersParam)) as PlayerSpec[]} /> : <Harness />,
+);

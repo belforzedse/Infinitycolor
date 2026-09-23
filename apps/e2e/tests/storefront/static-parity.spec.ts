@@ -103,7 +103,6 @@ test("a frozen Enhanced home frame has the same static composition at the lowest
 }) => {
   const errors = collectRuntimeErrors(page);
   await page.addInitScript(() => {
-    localStorage.setItem("analytics-consent", "denied");
     localStorage.setItem("pdp_debug", "0");
   });
   await installLocalMediaFixture(page);

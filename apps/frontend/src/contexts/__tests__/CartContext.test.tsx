@@ -573,3 +573,118 @@ describe("CartProvider guest cart handover", () => {
     expect(mockCartService.mergeGuestCart).not.toHaveBeenCalled();
   });
 });
+
+const mockAnalytics = jest.requireMock("@/lib/analytics") as {
+  trackFunnelStep: jest.Mock;
+  trackAnalyticsEvent: jest.Mock;
+};
+
+function analyticsActions(): string[] {
+  return mockAnalytics.trackAnalyticsEvent.mock.calls.map(([event]) => event.action);
+}
+
+function SignedInCartProbe() {
+  const { cartItems, addToCart, removeFromCart, updateQuantity } = useCart();
+  const item = cartItems[0];
+  return (
+    <div>
+      <span data-testid="signed-in-count">{cartItems.length}</span>
+      <button type="button" disabled={!item} onClick={() => item && removeFromCart(item.id)}>
+        remove first
+      </button>
+      <button
+        type="button"
+        disabled={!item}
+        onClick={() => item && updateQuantity(item.id, item.quantity + 1)}
+      >
+        increase first
+      </button>
+      <button type="button" onClick={() => addToCart({ ...cartItem, variationId: "209" })}>
+        add
+      </button>
+    </div>
+  );
+}
+
+describe("CartProvider analytics outcomes", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue("account-a");
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation(() => jest.fn());
+    mockIsOnline.mockReturnValue(true);
+    mockCartService.getUserCart.mockResolvedValue(apiCart("محصول تست", 1, 5));
+    mockCartService.checkCartStock.mockResolvedValue({ valid: true });
+    mockCartService.updateCartItem.mockResolvedValue({});
+    mockCartService.removeCartItem.mockResolvedValue({});
+    mockCartService.addItemToCart.mockResolvedValue({});
+    localStorage.clear();
+  });
+
+  async function renderSignedIn() {
+    render(
+      <CartProvider>
+        <SignedInCartProbe />
+      </CartProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("signed-in-count")).toHaveTextContent("1"));
+  }
+
+  it("records update_quantity only after the server accepts it", async () => {
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "increase first" }));
+
+    await waitFor(() => expect(analyticsActions()).toContain("update_quantity"));
+    expect(mockCartService.updateCartItem).toHaveBeenCalledWith(101, 2);
+    expect(mockAnalytics.trackAnalyticsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "update_quantity",
+        properties: expect.objectContaining({ quantity: 2 }),
+      }),
+    );
+  });
+
+  it("records no update_quantity when the server rejects it", async () => {
+    mockCartService.updateCartItem.mockRejectedValueOnce(new Error("boom"));
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "increase first" }));
+
+    await waitFor(() => expect(mockNotify.error).toHaveBeenCalled());
+    expect(analyticsActions()).not.toContain("update_quantity");
+  });
+
+  it("records remove_from_cart only after the server accepts it", async () => {
+    await renderSignedIn();
+    mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
+    fireEvent.click(screen.getByRole("button", { name: "remove first" }));
+
+    await waitFor(() => expect(analyticsActions()).toEqual(["remove_from_cart"]));
+    expect(mockCartService.removeCartItem).toHaveBeenCalledWith(101);
+  });
+
+  it("records no remove_from_cart when the server rejects it", async () => {
+    mockCartService.removeCartItem.mockRejectedValueOnce(new Error("boom"));
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "remove first" }));
+
+    await waitFor(() =>
+      expect(mockNotify.error).toHaveBeenCalledWith("حذف کالا از سبد خرید با خطا مواجه شد"),
+    );
+    expect(analyticsActions()).not.toContain("remove_from_cart");
+  });
+
+  it("records add_to_cart once on success and never on failure", async () => {
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+    await waitFor(() => expect(mockAnalytics.trackFunnelStep).toHaveBeenCalledTimes(1));
+    expect(mockAnalytics.trackFunnelStep).toHaveBeenCalledWith("add_to_cart", expect.anything());
+
+    mockAnalytics.trackFunnelStep.mockClear();
+    mockCartService.addItemToCart.mockRejectedValueOnce(new Error("out of stock"));
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+    await waitFor(() => expect(mockCartService.addItemToCart).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockAnalytics.trackFunnelStep).not.toHaveBeenCalled();
+  });
+});

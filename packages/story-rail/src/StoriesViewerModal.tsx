@@ -32,6 +32,7 @@ import {
   type StoryPlaybackStore,
 } from "./media/playback-store";
 import { useMediaPrefetch, type PrefetchTarget } from "./media/useMediaPrefetch";
+import { readVideoDelivery, resolveVideoSource } from "@repo/video-player";
 
 const FALLBACK_AVATAR_URL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
@@ -47,6 +48,8 @@ const DEFAULT_LABELS: StoryViewerLabels = {
   retry: "Try again",
   mute: "Mute",
   unmute: "Play sound",
+  play: "Play",
+  processing: "This video is still being prepared.",
 };
 
 function getStaticAvatarUrl(
@@ -59,6 +62,8 @@ function getStaticAvatarUrl(
   if (itemThumbnail) return resolveMediaUrl(itemThumbnail);
   const image = items.find(isImageStory);
   if (image?.Media?.url) return resolveMediaUrl(image.Media.url);
+  const poster = items.map((item) => (isVideoStory(item) ? readVideoDelivery(item.Media)?.poster : null)).find(Boolean);
+  if (poster) return resolveMediaUrl(poster);
   return FALLBACK_AVATAR_URL;
 }
 
@@ -80,7 +85,6 @@ function toPayload(
   labels: StoryViewerLabels,
 ): StoryMediaPayload {
   const mediaUrl = hasUsableMediaUrl(item.Media?.url) ? resolveMediaUrl(item.Media.url) : "";
-  const poster = item.Thumbnail?.url ? resolveMediaUrl(item.Thumbnail.url) : undefined;
   const kind: StoryMediaPayload["kind"] = !mediaUrl
     ? "text"
     : isVideoStory(item)
@@ -88,12 +92,18 @@ function toPayload(
       : isImageStory(item)
         ? "image"
         : "text";
+  // The media worker's outputs for this upload: generated poster, and whether the file is
+  // still being converted. Stories play the progressive MP4 (see StoryMediaSurface).
+  const video = kind === "video" ? resolveVideoSource(readVideoDelivery(item.Media), resolveMediaUrl) : null;
+  const adminPoster = item.Thumbnail?.url ? resolveMediaUrl(item.Thumbnail.url) : undefined;
+  const poster = adminPoster || video?.poster || undefined;
   return {
     storyId: story.id,
     itemKey: item.Key,
     kind,
     src: mediaUrl,
     poster,
+    video: video ? { ...video, poster: poster ?? null } : undefined,
     title: story.Title,
     durationMs:
       Number.isFinite(item.DurationMs) && item.DurationMs > 0 ? item.DurationMs : 5000,
@@ -108,6 +118,8 @@ function toPayload(
       retry: labels.retry,
       mute: labels.mute,
       unmute: labels.unmute,
+      play: labels.play ?? DEFAULT_LABELS.play!,
+      processing: labels.processing ?? DEFAULT_LABELS.processing!,
     },
   };
 }
@@ -143,7 +155,7 @@ function prefetchTargetFor(item: User["stories"][number] | undefined): PrefetchT
   if (!payload) return undefined;
   return {
     posterUrl: payload.poster ?? (payload.kind === "image" ? payload.src : undefined),
-    videoUrl: payload.kind === "video" ? payload.src : undefined,
+    video: payload.kind === "video" ? (payload.video ?? { mp4: payload.src }) : undefined,
   };
 }
 
@@ -162,13 +174,12 @@ function adjacentItems(users: User[], userIndex: number, itemIndex: number) {
   };
 }
 
-function reportStoryMediaIssue(issue: StoryMediaIssue): void {
-  const sentry = (globalThis as { Sentry?: { captureMessage?: (m: string, c?: unknown) => void } })
-    .Sentry;
-  if (sentry?.captureMessage) {
-    sentry.captureMessage("story-media-failure", { level: "warning", extra: issue });
-    return;
-  }
+/**
+ * Used when the host app passes no `onMediaIssue`. Failures used to go to a global
+ * `Sentry` object that no app ever set, so every production report was dropped; apps now
+ * hand in their own reporter, and this only keeps development visible.
+ */
+function logStoryMediaIssue(issue: StoryMediaIssue): void {
   const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
   if (env?.env?.NODE_ENV !== "production") console.warn("[story-rail] media failure", issue);
 }
@@ -186,6 +197,7 @@ export function StoriesViewerModal<TStory extends StoryRailStory = StoryRailStor
   classNames,
   dir = "rtl",
   labels = DEFAULT_LABELS,
+  onMediaIssue,
 }: StoriesViewerModalProps<TStory>) {
   const users = useMemo(
     () => storiesToUsers({ stories, resolveMediaUrl, unavailableText, labels }),
@@ -220,8 +232,12 @@ export function StoriesViewerModal<TStory extends StoryRailStory = StoryRailStor
   const openingUserIndex = openingRef.current.userIndex;
   const openingItemIndex = openingRef.current.itemIndex;
 
+  const onMediaIssueRef = useRef(onMediaIssue);
+  onMediaIssueRef.current = onMediaIssue;
   const storeRef = useRef<StoryPlaybackStore | null>(null);
-  if (storeRef.current === null) storeRef.current = createPlaybackStore(reportStoryMediaIssue);
+  if (storeRef.current === null) {
+    storeRef.current = createPlaybackStore((issue) => (onMediaIssueRef.current ?? logStoryMediaIssue)(issue));
+  }
   const store = storeRef.current;
 
   const [activeUserIndex, setActiveUserIndex] = useState(openingUserIndex);
@@ -250,6 +266,9 @@ export function StoriesViewerModal<TStory extends StoryRailStory = StoryRailStor
     next: prefetchTargetFor(adjacent.next),
     afterNext: prefetchTargetFor(adjacent.afterNext),
     previous: prefetchTargetFor(adjacent.previous),
+    // Warm the next video only once the one being watched has enough buffered: on a slow
+    // link, warming earlier would steal the bandwidth the current story needs.
+    warmNextVideo: snapshot.readyForNext === activeItemId && activeItemId !== undefined,
   });
 
   useEffect(() => {

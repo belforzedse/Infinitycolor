@@ -99,6 +99,7 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
   emptyPreviewLabel = "Video",
   unavailableText = "Story unavailable",
   viewerLabels,
+  onMediaIssue,
   showPagination = false,
   paginationLabels,
 }: StoryRailProps<TStory>) {
@@ -278,6 +279,7 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
             classNames={viewerClassNames}
             dir={dir}
             labels={viewerLabels}
+            onMediaIssue={onMediaIssue}
           />
         </Suspense>
       ) : null}

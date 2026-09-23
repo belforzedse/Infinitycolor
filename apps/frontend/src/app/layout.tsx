@@ -15,7 +15,6 @@ import { SITE_URL } from "@/config/site";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { SiteIdentityProvider } from "@/components/providers/SiteIdentityProvider";
 import { getAdaptiveQualityBootstrapScript } from "@/lib/adaptive-quality/bootstrap-script";
-import { getAnalyticsConsentBootstrapScript } from "@/lib/analytics/consent-bootstrap";
 import { getLegacyRuntimePolyfillScript } from "@/lib/legacyRuntimePolyfills";
 import { cacheLife, cacheTag } from "next/cache";
 
@@ -161,7 +160,6 @@ export default async function RootLayout({
     new Set([apiOrigin, imageOrigin, mediaCdnOrigin].filter(Boolean)),
   ) as string[];
   const adaptiveQualityBootstrap = getAdaptiveQualityBootstrapScript();
-  const analyticsConsentBootstrap = getAnalyticsConsentBootstrapScript();
   const legacyRuntimePolyfills = getLegacyRuntimePolyfillScript();
 
   return (
@@ -184,14 +182,6 @@ export default async function RootLayout({
         <script
           id="infinity-adaptive-quality-bootstrap"
           dangerouslySetInnerHTML={{ __html: adaptiveQualityBootstrap }}
-        />
-        {/* After the adaptive bootstrap, so the tier attributes are never delayed.
-            Marks the stored analytics-consent choice on <html> before first paint
-            so the consent banner in the server HTML is hidden for a visitor who
-            already answered it. */}
-        <script
-          id="infinity-analytics-consent-bootstrap"
-          dangerouslySetInnerHTML={{ __html: analyticsConsentBootstrap }}
         />
         {/* Favicons */}
         <link rel="icon" href="/favicon.ico" sizes="any" />

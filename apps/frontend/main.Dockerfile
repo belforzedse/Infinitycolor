@@ -24,6 +24,7 @@ COPY packages/fonts/package.json ./packages/fonts/package.json
 COPY packages/social-posts/package.json ./packages/social-posts/package.json
 COPY packages/story-rail/package.json ./packages/story-rail/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
+COPY packages/video-player/package.json ./packages/video-player/package.json
 COPY tools/eslint/package.json ./tools/eslint/package.json
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=cache,id=infinity-pnpm-node22,target=/pnpm-store,sharing=shared \

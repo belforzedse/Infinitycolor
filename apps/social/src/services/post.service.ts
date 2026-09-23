@@ -2,7 +2,7 @@
  * Client for the social `api::post.post` collection.
  */
 
-import { IMAGE_BASE_URL } from "@repo/api";
+import { strapiMediaUrl as feedMediaUrl } from "@repo/social-posts";
 import type { ApiError } from "@repo/api/types";
 import {
   POST_SIZE_TO_STRAPI,
@@ -81,12 +81,9 @@ function unwrap<T>(value: unknown): T {
 }
 
 
+/** The feed's resolver: uploads come from the media CDN, not through the API origin. */
 function strapiMediaUrl(relativeOrAbsolute: string | undefined): string | null {
-  if (!relativeOrAbsolute?.trim()) return null;
-  const u = relativeOrAbsolute.trim();
-  if (u.startsWith("http://") || u.startsWith("https://")) return u;
-  const base = IMAGE_BASE_URL.replace(/\/$/, "");
-  return `${base}${u.startsWith("/") ? u : `/${u}`}`;
+  return feedMediaUrl(relativeOrAbsolute);
 }
 
 function readAttrs(entry: unknown): Record<string, unknown> {

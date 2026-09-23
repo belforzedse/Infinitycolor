@@ -1,15 +1,43 @@
 import type { Strapi } from "@strapi/strapi";
 import { getUmamiClient, getUmamiConfig, type UmamiCollectorEvent } from "../services/umami";
+import { summarizeSettledCharges } from "../../order/controllers/helpers/settledCharges";
+import { FINANCIAL_DATA_FLOOR } from "../services/product-analytics";
+
+/**
+ * Server-side commerce events for Umami.
+ *
+ * These are diagnostics, not the revenue-bearing funnel event. Umami 3.x keys a
+ * session on (website, IP, user agent, monthly salt); a distinct id links
+ * sessions for profiles but never merges them. An event posted from this server
+ * therefore always lands in the backend's own session and can never take part
+ * in a shopper's funnel, goal, attribution, or journey. The revenue-bearing
+ * `purchase` is emitted by the storefront result page once this backend reports
+ * the order paid (see docs/analytics.md).
+ *
+ * `order_paid` (one per storefront order) and `refund` (one per Return row) give
+ * Umami a settlement count to compare browser purchases against. Neither carries
+ * Umami's special `revenue` key or a distinct id.
+ */
 
 const MAX_ATTEMPTS = 8;
 const CLAIM_LIMIT = 50;
 const PROCESSING_LEASE_MS = 10 * 60 * 1000;
 
+/** Event types this module still delivers. Earlier `purchase` rows are retired in place. */
+export const DELIVERABLE_EVENT_TYPES = ["order_paid", "refund"] as const;
+
+/**
+ * The new storefront took the apex on 2026-09-14 (Tehran), the same boundary as
+ * every money report. Orders before that, and every WooCommerce-imported order,
+ * are legacy-site sales and never become storefront analytics events.
+ */
+export const STOREFRONT_ANALYTICS_FLOOR = FINANCIAL_DATA_FLOOR;
+
 type KnexLike = any;
 
 export type AnalyticsOutboxInput = {
   websiteId?: string;
-  eventType: "purchase" | "refund" | string;
+  eventType: (typeof DELIVERABLE_EVENT_TYPES)[number];
   sourceType: string;
   sourceId: string | number;
   payload: UmamiCollectorEvent;
@@ -29,13 +57,6 @@ function cleanSourceId(value: string | number): string | null {
   return normalized && normalized.length <= 160 ? normalized : null;
 }
 
-function cleanCorrelation(value: unknown): string | undefined {
-  const normalized = String(value ?? "").trim();
-  // Match the browser identity contract. The value is used only as Umami's
-  // distinct id and is never duplicated into event data.
-  return /^[A-Za-z0-9_-]{1,64}$/.test(normalized) ? normalized : undefined;
-}
-
 function toPositiveInteger(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
@@ -46,7 +67,7 @@ function toCollectorTimestamp(value: unknown): number | undefined {
   const milliseconds = value instanceof Date ? value.getTime() : new Date(String(value)).getTime();
   if (
     !Number.isFinite(milliseconds) ||
-    milliseconds < Date.UTC(2000, 0, 1) ||
+    milliseconds < STOREFRONT_ANALYTICS_FLOOR.getTime() ||
     milliseconds > Date.now() + 5 * 60 * 1000
   ) {
     return undefined;
@@ -103,44 +124,19 @@ export async function enqueueAnalyticsEvent(
 }
 
 function toCollectorEvent(params: {
-  eventName: string;
-  correlationId?: string;
-  revenueIrr?: number;
+  eventName: "order_paid" | "refund";
+  valueIrr?: number;
   refundIrr?: number;
-  quantity?: number;
-  productIds?: Array<string | number>;
-  variantIds?: Array<string | number>;
-  categoryIds?: Array<string | number>;
+  gateway?: string;
+  itemCount?: number;
   occurredAt?: unknown;
 }): UmamiCollectorEvent {
-  const identifiers = (values: Array<string | number> | undefined) =>
-    Array.from(
-      new Set(
-        (values || [])
-          .map((value) => String(value).trim())
-          .filter((value) => /^[A-Za-z0-9_-]{1,64}$/.test(value)),
-      ),
-    )
-      .slice(0, 50)
-      .join(",");
-  const productIds = identifiers(params.productIds);
-  const variantIds = identifiers(params.variantIds);
-  const categoryIds = identifiers(params.categoryIds);
+  const gateway = String(params.gateway || "").trim().toLowerCase();
   const data: Record<string, unknown> = {
-    ...(params.revenueIrr
-      ? {
-          // Umami's native revenue reports require these exact keys. The
-          // explicit revenue_irr field remains useful in event-data reports.
-          revenue: params.revenueIrr,
-          revenue_irr: params.revenueIrr,
-          value_irr: params.revenueIrr,
-        }
-      : {}),
+    ...(params.valueIrr ? { value_irr: params.valueIrr } : {}),
     ...(params.refundIrr ? { refund_irr: params.refundIrr } : {}),
-    ...(params.quantity ? { quantity: params.quantity } : {}),
-    ...(productIds ? { product_ids: productIds } : {}),
-    ...(variantIds ? { variant_ids: variantIds } : {}),
-    ...(categoryIds ? { category_ids: categoryIds } : {}),
+    ...(params.itemCount ? { item_count: params.itemCount } : {}),
+    ...(/^[a-z0-9_-]{1,40}$/.test(gateway) ? { gateway } : {}),
     currency: "IRR",
   };
   return {
@@ -150,88 +146,67 @@ function toCollectorEvent(params: {
       hostname: getUmamiConfig().hostname,
       url: `/commerce/${params.eventName}`,
       name: params.eventName,
-      id: params.correlationId,
       timestamp: toCollectorTimestamp(params.occurredAt),
       data,
     },
   };
 }
 
-async function loadOrderForAnalytics(strapi: Strapi, orderId: number): Promise<any | null> {
+type LoadedOrder = {
+  id: number;
+  createdAt?: string | Date;
+  external_source?: string | null;
+  PaymentGateway?: string | null;
+  order_items?: Array<{ Count?: number }>;
+  contract?: { contract_transactions?: unknown[] } | null;
+};
+
+async function loadOrderForAnalytics(strapi: Strapi, orderId: number): Promise<LoadedOrder | null> {
   return strapi.entityService.findOne("api::order.order", orderId, {
-    fields: ["id", "Date", "analytics_correlation_id"],
+    fields: ["id", "createdAt", "external_source", "PaymentGateway"],
     populate: {
-      order_items: {
-        fields: ["Count"],
-        populate: {
-          product_variation: {
-            fields: ["id"],
-            populate: {
-              product: {
-                fields: ["id"],
-                populate: { product_main_category: { fields: ["id"] } },
-              },
-            },
-          },
-        },
-      },
-      contract: { fields: ["id", "Amount"], populate: { contract_transactions: true } },
+      order_items: { fields: ["Count"] },
+      contract: { fields: ["id"], populate: { contract_transactions: true } },
     },
-  } as any);
+  } as any) as Promise<LoadedOrder | null>;
 }
 
-function successfulCharge(order: any, settlementTransactionId?: number): any | null {
-  const transactions = Array.isArray(order?.contract?.contract_transactions)
-    ? order.contract.contract_transactions
-    : [];
-  return (
-    transactions
-      .filter((tx: any) => String(tx?.Status || tx?.status).toLowerCase() === "success")
-      .filter((tx: any) => String(tx?.Type || tx?.type).toLowerCase() !== "return")
-      .filter(
-        (tx: any) => !settlementTransactionId || Number(tx?.id) === Number(settlementTransactionId),
-      )
-      .sort((a: any, b: any) => Number(b?.id || 0) - Number(a?.id || 0))[0] || null
-  );
+/** Legacy-site sales never become storefront analytics events. */
+function isStorefrontOrder(order: LoadedOrder | null): order is LoadedOrder {
+  if (!order) return false;
+  if (String(order.external_source || "").toLowerCase() === "woocommerce") return false;
+  const created = order.createdAt ? new Date(order.createdAt).getTime() : NaN;
+  return Number.isFinite(created) && created >= STOREFRONT_ANALYTICS_FLOOR.getTime();
 }
 
-/** Queue the sole purchase event for an order after a successful settlement. */
-export async function enqueuePurchaseForOrder(
-  strapi: Strapi,
-  orderId: number,
-  settlementTransactionId?: number,
-): Promise<number | null> {
+/**
+ * Queue the one `order_paid` diagnostic for a storefront order once it has a
+ * settled charge. Keyed per order, so a wallet + gateway split is one event.
+ */
+export async function enqueueOrderPaid(strapi: Strapi, orderId: number): Promise<number | null> {
   try {
     const order = await loadOrderForAnalytics(strapi, orderId);
-    if (!order) return null;
-    const charge = successfulCharge(order, settlementTransactionId);
-    if (!charge || !Number(charge.id)) return null;
-    const revenueIrr = toPositiveInteger(charge.Amount ?? charge.amount);
-    if (!revenueIrr) return null;
-    const correlationId = cleanCorrelation(order.analytics_correlation_id);
-    const items = (Array.isArray(order.order_items) ? order.order_items : []).slice(0, 50);
+    if (!isStorefrontOrder(order)) return null;
+    const settled = summarizeSettledCharges(order.contract?.contract_transactions);
+    if (!settled.amountIrr) return null;
+    const items = (Array.isArray(order.order_items) ? order.order_items : []).slice(0, 200);
     return enqueueAnalyticsEvent(strapi, {
-      eventType: "purchase",
-      sourceType: "settlement_transaction",
-      sourceId: Number(charge.id),
+      eventType: "order_paid",
+      sourceType: "order",
+      sourceId: Number(order.id),
       payload: toCollectorEvent({
-        eventName: "purchase",
-        correlationId,
-        revenueIrr,
-        quantity: items.reduce(
-          (sum: number, item: any) => sum + Math.max(1, Math.round(Number(item?.Count || 1))),
+        eventName: "order_paid",
+        valueIrr: settled.amountIrr,
+        gateway: order.PaymentGateway || undefined,
+        itemCount: items.reduce(
+          (sum, item) => sum + Math.max(1, Math.round(Number(item?.Count || 1))),
           0,
         ),
-        productIds: items.map((item: any) => item?.product_variation?.product?.id),
-        variantIds: items.map((item: any) => item?.product_variation?.id),
-        categoryIds: items.map(
-          (item: any) => item?.product_variation?.product?.product_main_category?.id,
-        ),
-        occurredAt: charge.SettledAt ?? charge.VerifiedAt ?? charge.Date ?? charge.createdAt,
+        occurredAt: settled.settledAt,
       }),
     });
   } catch (error) {
-    strapi.log?.warn?.("[analytics] purchase enqueue skipped", {
+    strapi.log?.warn?.("[analytics] order_paid enqueue skipped", {
       orderId,
       error: (error as Error)?.message || String(error),
     });
@@ -247,20 +222,18 @@ export async function enqueueRefundForReturn(
     contractTransactionId: number;
     amountIrr?: number;
     amountToman?: number;
-    correlationId?: string | null;
     occurredAt?: string | Date | null;
   },
 ): Promise<number | null> {
   const refundIrr = toPositiveInteger(input.amountIrr ?? Number(input.amountToman || 0) * 10);
   if (!refundIrr || !input.contractTransactionId) return null;
-  let correlationId = cleanCorrelation(input.correlationId);
   let occurredAt: unknown = input.occurredAt;
   try {
     const order = await loadOrderForAnalytics(strapi, input.orderId);
-    correlationId ||= cleanCorrelation(order?.analytics_correlation_id);
-    const transaction = (order?.contract?.contract_transactions || []).find(
+    if (!isStorefrontOrder(order)) return null;
+    const transaction = (order.contract?.contract_transactions || []).find(
       (candidate: any) => Number(candidate?.id) === Number(input.contractTransactionId),
-    );
+    ) as any;
     occurredAt ||=
       transaction?.SettledAt ??
       transaction?.VerifiedAt ??
@@ -268,7 +241,7 @@ export async function enqueueRefundForReturn(
       transaction?.createdAt;
   } catch {
     // The return transaction remains the durable source key even if optional
-    // correlation/timing enrichment cannot be loaded.
+    // timing enrichment cannot be loaded.
   }
   return enqueueAnalyticsEvent(strapi, {
     eventType: "refund",
@@ -276,7 +249,6 @@ export async function enqueueRefundForReturn(
     sourceId: input.contractTransactionId,
     payload: toCollectorEvent({
       eventName: "refund",
-      correlationId,
       refundIrr,
       occurredAt,
     }),
@@ -290,31 +262,34 @@ async function repairCommerceEvents(strapi: Strapi, limit: number): Promise<numb
   let repaired = 0;
   try {
     const result = await knex.raw(
-      `SELECT DISTINCT ON (ct.id) o.id AS order_id, ct.id AS transaction_id
-         FROM contract_transactions ct
-         JOIN contract_transactions_contract_links ctcl
-           ON ctcl.contract_transaction_id = ct.id
-         JOIN orders_contract_links ocl ON ocl.contract_id = ctcl.contract_id
-         JOIN orders o ON o.id = ocl.order_id
+      `SELECT o.id AS order_id
+         FROM orders o
+         JOIN orders_contract_links ocl ON ocl.order_id = o.id
+         JOIN contract_transactions_contract_links ctcl ON ctcl.contract_id = ocl.contract_id
+         JOIN contract_transactions ct ON ct.id = ctcl.contract_transaction_id
          LEFT JOIN analytics_outbox ao
            ON ao.website_id = ?
-          AND ao.event_type = 'purchase'
-          AND ao.source_type = 'settlement_transaction'
-          AND ao.source_id = ct.id::text
+          AND ao.event_type = 'order_paid'
+          AND ao.source_type = 'order'
+          AND ao.source_id = o.id::text
         WHERE lower(ct.status) = 'success'
           AND lower(COALESCE(ct.type, '')) <> 'return'
+          AND ct.amount > 0
+          AND o.external_source IS DISTINCT FROM 'woocommerce'
+          AND o.created_at >= ?
           AND ao.id IS NULL
-        ORDER BY ct.id DESC
+        GROUP BY o.id
+        ORDER BY o.id DESC
         LIMIT ?`,
-      [websiteId, limit],
+      [websiteId, STOREFRONT_ANALYTICS_FLOOR, limit],
     );
     for (const row of result?.rows || result?.[0] || []) {
-      if (await enqueuePurchaseForOrder(strapi, Number(row.order_id), Number(row.transaction_id))) {
+      if (await enqueueOrderPaid(strapi, Number(row.order_id))) {
         repaired += 1;
       }
     }
   } catch (error) {
-    strapi.log?.warn?.("[analytics] purchase repair scan failed", {
+    strapi.log?.warn?.("[analytics] order_paid repair scan failed", {
       error: (error as Error)?.message || String(error),
     });
   }
@@ -335,10 +310,12 @@ async function repairCommerceEvents(strapi: Strapi, limit: number): Promise<numb
         WHERE lower(ct.status) = 'success'
           AND lower(ct.type) = 'return'
           AND ct.amount > 0
+          AND o.external_source IS DISTINCT FROM 'woocommerce'
+          AND o.created_at >= ?
           AND ao.id IS NULL
         ORDER BY ct.id DESC
         LIMIT ?`,
-      [websiteId, limit],
+      [websiteId, STOREFRONT_ANALYTICS_FLOOR, limit],
     );
     for (const row of result?.rows || result?.[0] || []) {
       if (
@@ -367,6 +344,7 @@ async function claimDueRows(knex: KnexLike, limit: number): Promise<any[]> {
       .update({ status: "pending", processing_started_at: null, updated_at: new Date() });
     const rows = await trx("analytics_outbox")
       .whereIn("status", ["pending"])
+      .whereIn("event_type", DELIVERABLE_EVENT_TYPES as unknown as string[])
       .where("available_at", "<=", new Date())
       .orderBy("id", "asc")
       .forUpdate()
@@ -477,7 +455,8 @@ export async function runAnalyticsOutboxTick(
 }
 
 export const __private = {
-  cleanCorrelation,
+  STOREFRONT_ANALYTICS_FLOOR,
+  isStorefrontOrder,
   toCollectorTimestamp,
   toPositiveInteger,
   toCollectorEvent,

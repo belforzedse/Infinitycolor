@@ -1,6 +1,6 @@
 # Umami analytics — backend and reporting
 
-Infinity uses the shared private Umami service for behavioral analytics. Commerce
+Infinity uses the shared private Umami service (live version 3.3.1) for behavioral analytics. Commerce
 remains authoritative for orders, revenue, refunds, discounts, and product sales.
 The backend never exposes a generic provider proxy: each `/reports/behavior/*`
 handler calls a fixed, allowlisted Umami endpoint and returns a validated DTO.
@@ -20,20 +20,28 @@ handler calls a fixed, allowlisted Umami endpoint and returns a validated DTO.
 | `UMAMI_MAX_CONCURRENCY`              | Process-wide provider concurrency cap, default 6                    |
 | `QUEUE_CRON_ANALYTICS_OUTBOX_REPAIR` | Repair/delivery cadence, default every minute                       |
 
-## Delivery guarantees
+## Server events
 
-Successful settlement and Return transaction rows enqueue provider-neutral events
-in `analytics_outbox`. The unique key is
-`(website_id, event_type, source_type, source_id)`. Delivery is asynchronous,
-bounded, and retried with exponential backoff; exhausted rows become
-`dead_letter` and appear in server logs and the sales overview delivery-health
-panel. A scheduled repair scan finds committed commerce rows with no matching
-outbox record, covering the crash gap between settlement and enqueue.
+The contract and the reasons behind it are in [`docs/analytics.md`](../../../../../docs/analytics.md).
+The revenue-bearing `purchase` is emitted by the storefront result page, not
+here: Umami 3.3.1 keys sessions on IP + user agent, so a server event can never
+join a shopper's funnel.
 
-- `purchase` contains positive `revenue` and `revenue_irr`, with `currency=IRR`.
-- `refund` contains one positive `refund_irr` per successful Return row.
-- Product payloads contain stable ids/SKUs, quantity, and IRR values only.
-- Provider failure can never fail or delay payment, cancellation, or refund work.
+The outbox (`analytics/outbox.ts`) delivers two diagnostic events for storefront
+orders created on or after the storefront cutover (`FINANCIAL_DATA_FLOOR`),
+excluding WooCommerce-imported orders:
+
+- `order_paid`: one per order once it has a settled charge; `value_irr` is the
+  sum of its successful non-return legs. No `revenue` key and no distinct id.
+- `refund`: one positive `refund_irr` per successful Return row.
+
+The unique key is `(website_id, event_type, source_type, source_id)`. Delivery is
+asynchronous, bounded, and retried with exponential backoff; exhausted rows
+become `dead_letter` and appear in server logs and the traffic overview's
+delivery-health panel. A scheduled repair scan finds settled orders and Return
+rows with no outbox record. Rows of the retired server `purchase` type are left
+in place and are neither delivered nor counted in delivery health. Provider
+failure can never fail or delay payment, cancellation, or refund work.
 
 ## Reporting contract
 

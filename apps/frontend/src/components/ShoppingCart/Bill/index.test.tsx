@@ -118,6 +118,8 @@ jest.mock("@/lib/analytics", () => ({
   getAnalyticsCorrelationId: jest.fn(() => "guest-test-correlation"),
   trackFunnelStep: jest.fn(),
   trackAnalyticsEvent: jest.fn(),
+  trackCheckoutFailure: jest.fn(),
+  checkoutFailureCategoryForCode: jest.fn(() => "unknown"),
 }));
 
 jest.mock("./InformationForm", () => ({
@@ -2194,5 +2196,76 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(express.attemptId).not.toBe(first.attemptId);
     expect(express.quoteHash).toBe("sha256:express-shipping");
     expect(express.shipping).toBe(8);
+  });
+
+  describe("analytics", () => {
+    const analyticsMock = jest.requireMock("@/lib/analytics") as {
+      trackFunnelStep: jest.Mock;
+      trackAnalyticsEvent: jest.Mock;
+      trackCheckoutFailure: jest.Mock;
+    };
+    const actions = () =>
+      analyticsMock.trackAnalyticsEvent.mock.calls.map(([event]) => event.action);
+
+    async function renderSignedIn() {
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      render(
+        <Provider store={store}>
+          <ShoppingCartBillForm />
+        </Provider>,
+      );
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+    }
+
+    it("counts begin_checkout once per visit and add_payment_info only for an explicit choice", async () => {
+      (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+        gateways: ["samankish", "mellat"],
+        paymentCapabilities: {
+          walletEnabled: false,
+          splitEnabled: false,
+          splitDisabledReason: "disabled",
+          splitGateways: [],
+          gatewayMinimumsToman: {},
+        },
+      });
+      await renderSignedIn();
+      await waitFor(() => expect(screen.getByTestId("select-mellat")).toBeInTheDocument());
+
+      const beginCheckouts = analyticsMock.trackFunnelStep.mock.calls.filter(
+        ([step]) => step === "begin_checkout",
+      );
+      expect(beginCheckouts).toHaveLength(1);
+      // The default gateway is not the shopper's action.
+      expect(actions()).not.toContain("add_payment_info");
+
+      fireEvent.click(screen.getByTestId("select-mellat"));
+      fireEvent.click(screen.getByTestId("select-mellat"));
+      expect(analyticsMock.trackAnalyticsEvent.mock.calls.filter(([e]) => e.action === "add_payment_info"))
+        .toEqual([[expect.objectContaining({ properties: { gateway: "mellat" } })]]);
+
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      await waitFor(() => expect(actions()).toContain("add_shipping_info"));
+      expect(analyticsMock.trackFunnelStep.mock.calls.filter(([step]) => step === "begin_checkout"))
+        .toHaveLength(1);
+    });
+
+    it("reports a validation failure and emits no later checkout event", async () => {
+      await renderSignedIn();
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+
+      await waitFor(() =>
+        expect(analyticsMock.trackCheckoutFailure).toHaveBeenCalledWith("validation", "samankish"),
+      );
+      expect(actions()).not.toContain("place_order_attempt");
+      expect(actions()).not.toContain("payment_redirect");
+      expect(CartService.finalizeCart).not.toHaveBeenCalled();
+      // A fixable form error is analytics only, never a Sentry event.
+      expect(captureCheckoutMessage).not.toHaveBeenCalled();
+    });
   });
 });

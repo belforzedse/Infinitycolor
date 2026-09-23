@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { StoryMediaIssueReporter } from "./media/playback-store";
 
 export type StoryRailMediaType = "image" | "video";
 
@@ -9,6 +10,10 @@ export interface StoryRailMediaAsset {
   width?: number;
   height?: number;
   mime?: string;
+  /** Generated video poster (set by the media worker). */
+  previewUrl?: string | null;
+  /** Upload-row metadata; `video` carries the media worker's delivery outputs. */
+  provider_metadata?: unknown;
   formats?: {
     large?: { url: string };
     medium?: { url: string };
@@ -117,6 +122,8 @@ export interface StoriesViewerModalProps<TStory extends StoryRailStory = StoryRa
   classNames?: StoryViewerClassNames;
   dir?: "rtl" | "ltr";
   labels?: StoryViewerLabels;
+  /** Where playback failures go (Sentry, analytics). Unset: logged in development only. */
+  onMediaIssue?: StoryMediaIssueReporter;
 }
 
 export interface StoryViewerLabels {
@@ -129,6 +136,10 @@ export interface StoryViewerLabels {
   retry: string;
   mute: string;
   unmute: string;
+  /** Tap-to-play control shown when the browser refuses even muted autoplay. */
+  play?: string;
+  /** Shown over the poster while a just-uploaded video is still being converted. */
+  processing?: string;
 }
 
 export interface StoryRailProps<TStory extends StoryRailStory = StoryRailStory> {
@@ -148,6 +159,8 @@ export interface StoryRailProps<TStory extends StoryRailStory = StoryRailStory> 
   emptyPreviewLabel?: string;
   unavailableText?: string;
   viewerLabels?: StoryViewerLabels;
+  /** Where playback failures go (Sentry, analytics). Unset: logged in development only. */
+  onMediaIssue?: StoryMediaIssueReporter;
   /**
    * Show previous/next buttons over the rail when it overflows. Opt-in so the
    * existing rails keep their current look. Pointer-only: touch users swipe,

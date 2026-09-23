@@ -57,6 +57,8 @@ jest.mock("@/lib/analytics", () => ({
   getAnalyticsCorrelationId: jest.fn(() => "test-correlation"),
   trackFunnelStep: jest.fn(),
   trackAnalyticsEvent: jest.fn(),
+  trackCheckoutFailure: jest.fn(),
+  checkoutFailureCategoryForCode: jest.fn(() => "unknown"),
 }));
 
 jest.mock("./InformationForm", () => ({

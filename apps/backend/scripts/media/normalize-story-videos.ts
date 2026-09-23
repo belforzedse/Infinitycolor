@@ -56,8 +56,10 @@ function describe(result: NormalizeResult): string {
       result.probe.fastStart ? "faststart" : "moov-at-end",
     );
   }
-  if (result.fromBytes) parts.push(`${formatBytes(result.fromBytes)} → ${formatBytes(result.toBytes)}`);
-  if (result.decision?.reasons.length) parts.push(`[${result.decision.reasons.join("; ")}]`);
+  const output = result.video?.output;
+  const sourceBytes = result.video?.source?.size ? result.video.source.size * 1024 : undefined;
+  if (output) parts.push(`${formatBytes(sourceBytes)} → ${formatBytes(output.mp4.bytes)}`);
+  if (result.reasons?.length) parts.push(`[${result.reasons.join("; ")}]`);
   if (result.detail) parts.push(result.detail);
   return parts.join(" | ");
 }

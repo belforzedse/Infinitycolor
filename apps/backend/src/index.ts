@@ -1444,6 +1444,10 @@ export default {
         const result = event?.result;
         if (!result?.id || !isVideoUpload(result)) return;
         try {
+          // Status first, so a client that reads the row before the worker starts sees
+          // "queued" (still processing) rather than an unprocessed legacy upload.
+          const { markQueued } = await import("./services/media/video-metadata");
+          await markQueued(strapi.db.connection as any, result.id);
           const { enqueueUploadedFileNormalization } = await import("./queue/media");
           await enqueueUploadedFileNormalization(result.id);
         } catch (error) {

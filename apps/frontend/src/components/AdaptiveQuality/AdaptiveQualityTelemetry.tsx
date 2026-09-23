@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useReportWebVitals } from "next/web-vitals";
 import {
@@ -15,18 +15,10 @@ import {
 } from "@/lib/adaptive-quality";
 import type { AdaptiveQualityChange } from "@/lib/adaptive-quality";
 import { getAdaptiveRouteGroup } from "@/lib/adaptive-quality/route-group";
-import { ANALYTICS_CONSENT_EVENT, getAnalyticsConsent, trackAnalyticsEvent } from "@/lib/analytics";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 const ROUTE_SUMMARY_DELAY_MS = 8_500;
 type WebVitalsMetric = Parameters<Parameters<typeof useReportWebVitals>[0]>[0];
-
-function hasAnalyticsConsent(): boolean {
-  try {
-    return getAnalyticsConsent() === "granted";
-  } catch {
-    return false;
-  }
-}
 
 function tierName(value: { rendering: string; media: string; motion: string }) {
   return `r:${value.rendering}|m:${value.media}|o:${value.motion}`;
@@ -42,7 +34,6 @@ export default function AdaptiveQualityTelemetry() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const quality = useAdaptiveQuality();
-  const [consentGranted, setConsentGranted] = useState(hasAnalyticsConsent);
   const routeGroup = useMemo(
     () =>
       getAdaptiveRouteGroup(
@@ -51,20 +42,14 @@ export default function AdaptiveQualityTelemetry() {
       ),
     [pathname, searchParams],
   );
-  const contextRef = useRef({ consentGranted, quality, routeGroup });
+  const contextRef = useRef({ quality, routeGroup });
 
   useEffect(() => {
-    contextRef.current = { consentGranted, quality, routeGroup };
-  }, [consentGranted, quality, routeGroup]);
+    contextRef.current = { quality, routeGroup };
+  }, [quality, routeGroup]);
 
   useEffect(() => {
-    const handleConsent = () => setConsentGranted(hasAnalyticsConsent());
-    window.addEventListener(ANALYTICS_CONSENT_EVENT, handleConsent);
-    return () => window.removeEventListener(ANALYTICS_CONSENT_EVENT, handleConsent);
-  }, []);
-
-  useEffect(() => {
-    if (!ADAPTIVE_QUALITY_FLAGS.telemetry || !consentGranted) return;
+    if (!ADAPTIVE_QUALITY_FLAGS.telemetry) return;
 
     const handleChange = (event: Event) => {
       const context = contextRef.current;
@@ -117,10 +102,10 @@ export default function AdaptiveQualityTelemetry() {
       window.removeEventListener(ADAPTIVE_QUALITY_EVENT, handleChange);
       window.removeEventListener(ADAPTIVE_QUALITY_PROMOTION_EVENT, handleRecovery);
     };
-  }, [consentGranted]);
+  }, []);
 
   useEffect(() => {
-    if (!ADAPTIVE_QUALITY_FLAGS.telemetry || !consentGranted || !quality.enabled) {
+    if (!ADAPTIVE_QUALITY_FLAGS.telemetry || !quality.enabled) {
       return;
     }
     const samplePercent = routeGroup === "cart" || routeGroup === "checkout" ? 100 : 25;
@@ -140,17 +125,12 @@ export default function AdaptiveQualityTelemetry() {
     }, ROUTE_SUMMARY_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [consentGranted, quality, routeGroup]);
+  }, [quality, routeGroup]);
 
   const reportWebVital = useCallback((metric: WebVitalsMetric) => {
-    const {
-      consentGranted: currentConsent,
-      quality: currentQuality,
-      routeGroup: currentRouteGroup,
-    } = contextRef.current;
+    const { quality: currentQuality, routeGroup: currentRouteGroup } = contextRef.current;
     if (
       !ADAPTIVE_QUALITY_FLAGS.telemetry ||
-      !currentConsent ||
       !currentQuality.enabled ||
       !shouldSample(currentRouteGroup === "cart" || currentRouteGroup === "checkout" ? 100 : 25)
     ) {

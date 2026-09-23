@@ -69,6 +69,8 @@ jest.mock("@/lib/analytics", () => ({
   getAnalyticsCorrelationId: jest.fn(() => "test-correlation"),
   trackFunnelStep: jest.fn(),
   trackAnalyticsEvent: jest.fn(),
+  trackCheckoutFailure: jest.fn(),
+  checkoutFailureCategoryForCode: jest.fn(() => "unknown"),
 }));
 
 // Kept as a stub so the `hideAddressFields` contract is observable; the real

@@ -36,7 +36,14 @@ import { holdsAreReconciling } from "@/utils/walletHolds";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
-import { getAnalyticsCorrelationId, trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
+import {
+  checkoutFailureCategoryForCode,
+  getAnalyticsCorrelationId,
+  trackAnalyticsEvent,
+  trackCheckoutFailure,
+  trackFunnelStep,
+  type CheckoutFailureCategory,
+} from "@/lib/analytics";
 import { faNum, normalizeDigits } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { isExpectedCheckoutSentryCode } from "@/lib/expected-checkout-sentry";
@@ -917,15 +924,13 @@ function ShoppingCartBillForm({}: Props) {
     }
   };
 
-  const trackCheckoutError = (errorCode?: string) => {
-    // Analytics stays dimensionless per the storefront telemetry contract, so the
-    // code goes to Sentry instead — without it every failed checkout looks alike
-    // and the generic Persian banner cannot be traced back to a cause.
-    trackAnalyticsEvent({
-      category: "checkout",
-      action: "error",
-    });
-    if (isExpectedCheckoutSentryCode(errorCode)) {
+  const trackCheckoutError = (errorCode?: string, category?: CheckoutFailureCategory) => {
+    // Umami gets a stable, low-cardinality category; the raw code goes to Sentry
+    // so the generic Persian banner can still be traced back to a cause.
+    trackCheckoutFailure(category ?? checkoutFailureCategoryForCode(errorCode), gateway);
+    // Codeless failures are client-side validation the shopper can fix; they
+    // are analytics only, never Sentry noise.
+    if (!errorCode || isExpectedCheckoutSentryCode(errorCode)) {
       return;
     }
     try {
@@ -1190,22 +1195,26 @@ function ShoppingCartBillForm({}: Props) {
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
     if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !continuationCandidate) {
+      trackCheckoutError(undefined, "validation");
       failPayment("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
       return;
     }
 
     if (!continuationCandidate && !isMergeMode) {
       if (!selectedAddressId && !inlineAddressFieldsFilled) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
         return;
       }
       if (!data.shippingMethod) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً روش ارسال را انتخاب کنید");
         return;
       }
     }
 
     if (!continuationCandidate && (!data.phoneNumber || data.phoneNumber.trim() === "")) {
+      trackCheckoutError(undefined, "validation");
       failPayment("لطفاً شماره تماس خود را وارد کنید");
       return;
     }
@@ -1217,21 +1226,25 @@ function ShoppingCartBillForm({}: Props) {
       ? ""
       : normalizeDigits(data.phoneNumber || "").replace(/\D/g, "");
     if (!continuationCandidate && cleanPhone.length < 10) {
+      trackCheckoutError(undefined, "validation");
       failPayment("شماره تماس وارد شده معتبر نیست");
       return;
     }
 
     if (!continuationCandidate && !isMergeMode && !selectedAddressId) {
       if (!watchProvince || !watchCity) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً استان و شهر را انتخاب کنید");
         return;
       }
       const postal = normalizeDigits(watchPostalCode || "").replace(/\D/g, "");
       if (postal.length !== 10) {
+        trackCheckoutError(undefined, "validation");
         failPayment("کد پستی باید ۱۰ رقم باشد");
         return;
       }
       if (!watchFullAddress || watchFullAddress.trim().length < 5) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً آدرس دقیق را وارد کنید");
         return;
       }
@@ -1240,6 +1253,7 @@ function ShoppingCartBillForm({}: Props) {
     // Validate total price is positive unless we are continuing a held unpaid order
     // whose mutable cart was emptied by the reservation-unaware stock check.
     if (totalPrice <= 0 && !continuationCandidate) {
+      trackCheckoutError(undefined, "validation");
       failPayment("مبلغ سفارش باید بیشتر از صفر باشد");
       return;
     }
@@ -1255,11 +1269,13 @@ function ShoppingCartBillForm({}: Props) {
       !walletContribution.coversTotal &&
       (selectableGateways.length === 0 || !selectableGateways.includes(gateway))
     ) {
+      trackCheckoutError(undefined, "gateway_unavailable");
       failPayment("درگاه پرداخت انتخاب شده در دسترس نیست");
       return;
     }
 
     if (!data.acceptTerms) {
+      trackCheckoutError(undefined, "validation");
       failPayment(TERMS_ACCEPTANCE_ERROR);
       return;
     }
@@ -1282,7 +1298,13 @@ function ShoppingCartBillForm({}: Props) {
         category: "checkout",
         action: "place_order_attempt",
         valueToman: totalToman,
-        properties: { gateway: resumeGateway, quantity: totalItems },
+        properties: {
+          // Credit covering the whole total settles from the wallet (see
+          // `submittedGateway` below), whatever bank happens to be selected.
+          gateway:
+            !continuationCandidate && walletContribution.coversTotal ? "wallet" : resumeGateway,
+          quantity: totalItems,
+        },
       });
 
       // Always re-checked: the shopper's previous attempt may itself be what
@@ -1292,6 +1314,7 @@ function ShoppingCartBillForm({}: Props) {
       );
 
       if (stockValid.errorCode === "RESERVATION_LOOKUP_FAILED") {
+        trackCheckoutError("RESERVATION_LOOKUP_FAILED");
         failPayment(checkoutErrorPresentation("RESERVATION_LOOKUP_FAILED")!.displayError);
         return;
       }
@@ -1301,9 +1324,11 @@ function ShoppingCartBillForm({}: Props) {
         if (isDeadCheckoutHold(stockValid.reservationOutcome)) {
           abandonDeadCheckoutHold(resumeIdentity?.attemptId);
           setLiveCheckoutHold(false);
+          trackCheckoutError(undefined, "reservation_expired");
           failPayment(RESERVATION_EXPIRED_COPY);
           return;
         }
+        trackCheckoutError(undefined, "empty_cart");
         failPayment(EMPTY_CART_ERROR);
         return;
       }
@@ -1315,6 +1340,7 @@ function ShoppingCartBillForm({}: Props) {
 
       if (!stockValid.valid && !canContinuePendingCheckout) {
         const applied = await applyCheckoutStockCorrection(stockValid, { announce: true });
+        trackCheckoutError(undefined, "stock_changed");
         if (applied) return;
         failPayment("موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.");
         return;
@@ -1422,6 +1448,7 @@ function ShoppingCartBillForm({}: Props) {
 
       if (quoteTotal !== shopperVisibleTotal && !quoteWasReviewed) {
         setReviewedServerQuote({ quoteHash: quote.quoteHash, total: quoteTotal });
+        trackCheckoutError(undefined, "quote_changed");
         failPayment(
           `مبلغ نهایی توسط فروشگاه به ${quoteTotal.toLocaleString("fa-IR")} تومان به‌روزرسانی شد. لطفاً مبلغ را بررسی و دوباره ثبت سفارش را انتخاب کنید.`,
         );
@@ -1473,19 +1500,21 @@ function ShoppingCartBillForm({}: Props) {
         const lateAdjusted = lateStock.itemsAdjusted ?? [];
         const lateRemoved = lateStock.itemsRemoved ?? [];
         if (lateAdjusted.length || lateRemoved.length || lateStock.cartIsEmpty) {
-          trackCheckoutError("STOCK_CHANGED");
           const applied = await applyCheckoutStockCorrection(lateStock, { announce: true });
-          if (applied) return;
+          if (applied) {
+            trackCheckoutError("STOCK_CHANGED");
+            return;
+          }
         }
 
         // Map error codes to user-friendly messages
         let displayError = "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.";
 
         if (errorCode) {
-          trackCheckoutError(String(errorCode));
           if (recoverInFlightPayment(String(errorCode), cartResponse, checkoutAttemptId)) {
             return;
           }
+          trackCheckoutError(String(errorCode));
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
@@ -1630,7 +1659,7 @@ function ShoppingCartBillForm({}: Props) {
           category: "checkout",
           action: "payment_redirect",
           valueToman: totalToman,
-          properties: { gateway },
+          properties: { gateway: resumeGateway },
         });
         toast.success("در حال انتقال به درگاه پرداخت...");
         localStorage.setItem("pendingOrderId", cartResponse.orderId.toString());
@@ -1643,12 +1672,6 @@ function ShoppingCartBillForm({}: Props) {
         }
 
         if (gateway === "wallet") {
-          trackAnalyticsEvent({
-            category: "checkout",
-            action: "payment_completed",
-            valueToman: totalToman,
-            properties: { gateway: "wallet" },
-          });
           // Wallet settles immediately; show the same authoritative result surface
           // used by provider callbacks so fulfillment details stay consistent.
           await clearCartSafely();
@@ -1671,16 +1694,13 @@ function ShoppingCartBillForm({}: Props) {
             formFields: cartResponse.formFields || fallbackFields,
             refId: cartResponse.refId,
           })) {
+            trackCheckoutError("HANDOFF_FAILED", "handoff_failed");
             failPayment("اطلاعات انتقال به درگاه کامل نیست. لطفاً دوباره تلاش کنید.");
           }
         }
       } else {
-        trackAnalyticsEvent({
-          category: "checkout",
-          action: "payment_completed",
-          valueToman: totalToman,
-          properties: { gateway: "direct" },
-        });
+        // Settled without a gateway (wallet credit). `purchase` is emitted by the
+        // result page once the backend reports the order paid.
         await clearCartSafely();
         if (gateway !== "snappay") {
           clearCheckoutIdentity();
@@ -1703,10 +1723,10 @@ function ShoppingCartBillForm({}: Props) {
         const errorMessage = responseData.message || err?.message;
 
         if (errorCode) {
-          trackCheckoutError(String(errorCode));
           if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId())) {
             return;
           }
+          trackCheckoutError(String(errorCode));
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
@@ -1828,34 +1848,47 @@ function ShoppingCartBillForm({}: Props) {
 
   const submitOrderStep = useAtomValue(submitOrderStepAtom);
 
+  // One begin_checkout per checkout page visit, once the signed-in shopper's
+  // cart is known; later cart corrections on this page are not a new checkout.
+  const beginCheckoutTrackedRef = React.useRef(false);
   useEffect(() => {
+    if (beginCheckoutTrackedRef.current) return;
     if (!currentUser || totalItems <= 0 || totalPrice <= 0) return;
+    beginCheckoutTrackedRef.current = true;
     trackFunnelStep("begin_checkout", {
       valueToman: totalToman,
       properties: { quantity: totalItems },
-      onceKey: `begin-checkout:${Math.round(totalPrice)}:${totalItems}`,
     });
   }, [currentUser, totalItems, totalPrice, totalToman]);
 
+  // Shipping info counts once per shipping + address combination per visit.
+  const shippingInfoTrackedRef = React.useRef(new Set<string>());
   useEffect(() => {
     if (!shippingId) return;
+    const key = `${shippingId}:${addressId || "new"}`;
+    if (shippingInfoTrackedRef.current.has(key)) return;
+    shippingInfoTrackedRef.current.add(key);
     trackAnalyticsEvent({
       category: "checkout",
       action: "add_shipping_info",
-      valueToman: shippingCost || 0,
-      onceKey: `shipping-info:${shippingId}:${addressId || "new"}`,
+      valueToman: totalToman,
+      properties: { shipping_method: String(shippingId) },
     });
-  }, [shippingId, shippingCost, addressId]);
+  }, [shippingId, addressId, totalToman]);
 
-  useEffect(() => {
-    if (!gateway) return;
+  // Payment info is the shopper's own gateway choice: the default selection and
+  // availability-driven auto-switches are not an action.
+  const paymentInfoTrackedRef = React.useRef(new Set<string>());
+  const handleGatewayChange = (next: CheckoutGatewayCode) => {
+    setGateway(next);
+    if (!next || paymentInfoTrackedRef.current.has(next)) return;
+    paymentInfoTrackedRef.current.add(next);
     trackAnalyticsEvent({
       category: "checkout",
       action: "add_payment_info",
-      properties: { gateway },
-      onceKey: `payment-info:${gateway}:${shippingId || "none"}`,
+      properties: { gateway: next },
     });
-  }, [gateway, shippingId]);
+  };
 
   const isMergeMode = mergeChoice === "merge";
 
@@ -2031,7 +2064,7 @@ function ShoppingCartBillForm({}: Props) {
           />
           <ShoppingCartBillPaymentGateway
             selected={gateway}
-            onChange={setGateway}
+            onChange={handleGatewayChange}
             availableGateways={availableGateways}
             snappEligible={snappEligible}
             snappTitle={snappTitle}

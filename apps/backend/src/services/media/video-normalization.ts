@@ -1,105 +1,100 @@
-import { spawn } from "node:child_process";
 import { open } from "node:fs/promises";
+import {
+  FFMPEG,
+  FFPROBE,
+  FfmpegUnavailableError,
+  MediaProcessingError,
+  runMediaProcess,
+} from "./media-process";
 
 /**
- * Web-safe video normalization.
+ * Probing and validation for uploaded video.
  *
- * Story media is uploaded as-is, and in practice that means whatever a phone produced:
- * the production catalogue is almost entirely HEVC in a QuickTime container at ~11 Mbps,
- * with the `moov` atom at the end of the file. Chromium builds without platform HEVC
- * parse those happily and then decode nothing — a black frame with audio and no `error`
- * event — so no amount of client-side handling can make them play.
+ * Uploads are whatever a phone or browser produced: HEVC in QuickTime, rotation stored as
+ * a display matrix, variable frame rate, HLG/PQ HDR, non-square pixels, odd dimensions.
+ * The production catalogue was almost entirely HEVC `.mov` at ~11 Mbps with the `moov`
+ * atom at the end, which Chromium builds without platform HEVC parse and then decode
+ * nothing — a black frame with audio and no `error` event.
  *
- * This module is the ffmpeg half of the fix: probe a file, decide whether it is safe to
- * serve directly, and if not, transcode it to progressive H.264/AAC MP4 with the moov
- * atom at the front. It is intentionally free of Strapi so the queue job, the backfill
- * script and the unit tests can all share it.
+ * Nothing here trusts the extension or the browser-supplied MIME type: the encode plan is
+ * derived from what ffprobe reports about the actual streams.
  */
 
-/** Video codecs every current browser can decode from a progressive MP4/WebM. */
-const WEB_SAFE_VIDEO_CODECS = new Set(["h264", "vp8", "vp9", "av1"]);
-/** Containers browsers will accept for progressive playback. */
-const WEB_SAFE_CONTAINERS = new Set(["mp4", "webm", "matroska,webm", "mov,mp4,m4a,3gp,3g2,mj2"]);
-/** Container brands that are really QuickTime rather than MP4, despite the shared demuxer. */
-const QUICKTIME_MIMES = new Set(["video/quicktime", "video/x-quicktime"]);
+export { FfmpegUnavailableError, MediaProcessingError } from "./media-process";
 
-const FFPROBE = process.env.FFPROBE_PATH || "ffprobe";
-const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
+export type HdrTransfer = "hlg" | "pq";
 
 export interface VideoProbe {
   containerFormats: string[];
   videoCodec: string | null;
+  videoProfile: string | null;
   audioCodec: string | null;
+  /** Coded frame size as stored in the stream. */
   width: number | null;
   height: number | null;
+  /** Size as the viewer sees it: rotation applied and non-square pixels expanded. */
+  displayWidth: number | null;
+  displayHeight: number | null;
+  /** Clockwise display rotation normalised to 0/90/180/270. */
+  rotation: number;
+  /** Sample (pixel) aspect ratio as a number; 1 for square pixels. */
+  sampleAspectRatio: number;
+  frameRate: number | null;
+  averageFrameRate: number | null;
+  variableFrameRate: boolean;
+  pixelFormat: string | null;
+  bitDepth: number | null;
+  colorPrimaries: string | null;
+  colorTransfer: string | null;
+  colorSpace: string | null;
+  colorRange: string | null;
+  hdr: HdrTransfer | null;
+  dolbyVisionProfile: number | null;
+  hasAudio: boolean;
+  audioChannels: number | null;
   durationMs: number | null;
   bitRate: number | null;
   /** True when the `moov` atom precedes `mdat`, i.e. playback can start before download. */
   fastStart: boolean;
 }
 
-export interface NormalizationDecision {
-  needed: boolean;
-  /** Human-readable reasons, surfaced by the backfill script's dry run. */
-  reasons: string[];
+export interface ProbeLimits {
+  minDurationMs: number;
+  maxDurationMs: number;
+  maxDimension: number;
 }
 
-export class FfmpegUnavailableError extends Error {
-  constructor(binary: string) {
-    super(
-      `${binary} is not available. The backend image installs it in the runner stage; ` +
-        `set FFMPEG_PATH/FFPROBE_PATH when running outside that image.`,
-    );
-    this.name = "FfmpegUnavailableError";
-  }
-}
-
-function run(
-  binary: string,
-  args: string[],
-  { timeoutMs = 15 * 60_000 }: { timeoutMs?: number } = {},
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    // Bound the wall time: a malformed file can otherwise keep ffmpeg spinning forever
-    // and wedge the worker.
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`${binary} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        reject(new FfmpegUnavailableError(binary));
-        return;
-      }
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`${binary} exited with ${code}: ${stderr.slice(-2000)}`));
-    });
-  });
+export function readProbeLimits(env: NodeJS.ProcessEnv = process.env): ProbeLimits {
+  const maxSeconds = Number(env.MEDIA_MAX_DURATION_S);
+  return {
+    minDurationMs: 300,
+    maxDurationMs: (Number.isFinite(maxSeconds) && maxSeconds > 0 ? maxSeconds : 600) * 1000,
+    maxDimension: 8192,
+  };
 }
 
 export async function isFfmpegAvailable(): Promise<boolean> {
   try {
-    await run(FFMPEG, ["-version"], { timeoutMs: 10_000 });
-    await run(FFPROBE, ["-version"], { timeoutMs: 10_000 });
+    await runMediaProcess(FFMPEG, ["-version"], { timeoutMs: 10_000 });
+    await runMediaProcess(FFPROBE, ["-version"], { timeoutMs: 10_000 });
     return true;
   } catch {
     return false;
   }
+}
+
+let filterList: Promise<string> | null = null;
+
+/** Whether this ffmpeg build has a filter (e.g. `zscale`, needed for HDR tone mapping). */
+export async function hasFfmpegFilter(name: string): Promise<boolean> {
+  filterList ??= runMediaProcess(FFMPEG, ["-hide_banner", "-filters"], { timeoutMs: 10_000 })
+    .then(({ stdout }) => stdout)
+    .catch((error) => {
+      filterList = null;
+      throw error;
+    });
+  const list = await filterList;
+  return new RegExp(`^\\s*\\S+\\s+${name}\\s`, "m").test(list);
 }
 
 /**
@@ -134,137 +129,191 @@ export async function hasFastStart(filePath: string): Promise<boolean> {
   }
 }
 
-export async function probeVideo(filePath: string): Promise<VideoProbe> {
-  const { stdout } = await run(
-    FFPROBE,
-    [
-      "-hide_banner",
-      "-v", "error",
-      "-print_format", "json",
-      "-show_format",
-      "-show_streams",
-      filePath,
-    ],
-    { timeoutMs: 60_000 },
+interface FfprobeStream {
+  codec_type?: string;
+  codec_name?: string;
+  profile?: string;
+  width?: number;
+  height?: number;
+  pix_fmt?: string;
+  bits_per_raw_sample?: string;
+  color_primaries?: string;
+  color_transfer?: string;
+  color_space?: string;
+  color_range?: string;
+  r_frame_rate?: string;
+  avg_frame_rate?: string;
+  sample_aspect_ratio?: string;
+  channels?: number;
+  duration?: string;
+  tags?: Record<string, string>;
+  side_data_list?: Array<{ side_data_type?: string; rotation?: number; dv_profile?: number }>;
+  disposition?: { attached_pic?: number };
+}
+
+export interface FfprobeOutput {
+  format?: { format_name?: string; duration?: string; bit_rate?: string };
+  streams?: FfprobeStream[];
+}
+
+export function parseRational(value: string | undefined | null): number | null {
+  if (!value) return null;
+  const [num, den] = value.split(/[/:]/).map(Number);
+  if (!Number.isFinite(num)) return null;
+  if (den === undefined) return num > 0 ? num : null;
+  if (!Number.isFinite(den) || den === 0 || num === 0) return null;
+  const result = num / den;
+  return result > 0 ? result : null;
+}
+
+function normaliseRotation(stream: FfprobeStream): number {
+  const fromSideData = stream.side_data_list?.find((entry) => typeof entry.rotation === "number")?.rotation;
+  // ffmpeg < 5 exposed rotation as a `rotate` tag instead of display-matrix side data.
+  const raw = fromSideData ?? Number(stream.tags?.rotate ?? 0);
+  if (!Number.isFinite(raw)) return 0;
+  const quarter = Math.round(raw / 90) * 90;
+  return ((quarter % 360) + 360) % 360;
+}
+
+function hdrTransfer(transfer: string | null): HdrTransfer | null {
+  if (transfer === "arib-std-b67") return "hlg";
+  if (transfer === "smpte2084") return "pq";
+  return null;
+}
+
+function bitDepthOf(stream: FfprobeStream): number | null {
+  const raw = Number(stream.bits_per_raw_sample);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  const match = stream.pix_fmt?.match(/p(\d{2})(?:le|be)?$/);
+  if (match) return Number(match[1]);
+  return stream.pix_fmt ? 8 : null;
+}
+
+/** Pure half of {@link probeVideo}; exported for unit tests. */
+export function interpretProbe(parsed: FfprobeOutput, fastStart: boolean): VideoProbe {
+  const streams = parsed.streams ?? [];
+  // Cover art in audio files and some phone exports shows up as a single-frame "video"
+  // stream; it is not the video.
+  const video = streams.find(
+    (stream) => stream.codec_type === "video" && !stream.disposition?.attached_pic,
+  );
+  const audio = streams.find((stream) => stream.codec_type === "audio");
+
+  const rotation = video ? normaliseRotation(video) : 0;
+  const sampleAspectRatio = parseRational(video?.sample_aspect_ratio) ?? 1;
+  let displayWidth: number | null = null;
+  let displayHeight: number | null = null;
+  if (video?.width && video?.height) {
+    displayWidth = Math.round(video.width * sampleAspectRatio);
+    displayHeight = video.height;
+    if (rotation === 90 || rotation === 270) {
+      [displayWidth, displayHeight] = [displayHeight, displayWidth];
+    }
+  }
+
+  const frameRate = parseRational(video?.r_frame_rate);
+  const averageFrameRate = parseRational(video?.avg_frame_rate);
+  const variableFrameRate = Boolean(
+    frameRate && averageFrameRate && Math.abs(frameRate - averageFrameRate) / averageFrameRate > 0.02,
   );
 
-  const parsed = JSON.parse(stdout) as {
-    format?: { format_name?: string; duration?: string; bit_rate?: string };
-    streams?: Array<{
-      codec_type?: string;
-      codec_name?: string;
-      width?: number;
-      height?: number;
-    }>;
-  };
+  const colorTransfer = video?.color_transfer ?? null;
+  const dolbyVision = video?.side_data_list?.find(
+    (entry) => typeof entry.dv_profile === "number",
+  )?.dv_profile;
 
-  const streams = parsed.streams ?? [];
-  const video = streams.find((stream) => stream.codec_type === "video");
-  const audio = streams.find((stream) => stream.codec_type === "audio");
-  const durationSeconds = Number(parsed.format?.duration);
+  const formatDuration = Number(parsed.format?.duration);
+  const streamDuration = Number(video?.duration);
+  const durationSeconds =
+    Number.isFinite(formatDuration) && formatDuration > 0 ? formatDuration : streamDuration;
 
   return {
     containerFormats: (parsed.format?.format_name ?? "").split(",").filter(Boolean),
     videoCodec: video?.codec_name ?? null,
+    videoProfile: video?.profile ?? null,
     audioCodec: audio?.codec_name ?? null,
     width: video?.width ?? null,
     height: video?.height ?? null,
+    displayWidth,
+    displayHeight,
+    rotation,
+    sampleAspectRatio,
+    frameRate,
+    averageFrameRate,
+    variableFrameRate,
+    pixelFormat: video?.pix_fmt ?? null,
+    bitDepth: video ? bitDepthOf(video) : null,
+    colorPrimaries: video?.color_primaries ?? null,
+    colorTransfer,
+    colorSpace: video?.color_space ?? null,
+    colorRange: video?.color_range ?? null,
+    hdr: hdrTransfer(colorTransfer),
+    dolbyVisionProfile: typeof dolbyVision === "number" ? dolbyVision : null,
+    hasAudio: Boolean(audio),
+    audioChannels: audio?.channels ?? null,
     durationMs:
       Number.isFinite(durationSeconds) && durationSeconds > 0
         ? Math.round(durationSeconds * 1000)
         : null,
     bitRate: Number(parsed.format?.bit_rate) || null,
-    fastStart: await hasFastStart(filePath),
+    fastStart,
   };
 }
 
-export function decideNormalization(
-  probe: VideoProbe,
-  { mime, extension }: { mime?: string | null; extension?: string | null } = {},
-): NormalizationDecision {
-  const reasons: string[] = [];
-
-  if (!probe.videoCodec) {
-    reasons.push("no video stream detected");
-  } else if (!WEB_SAFE_VIDEO_CODECS.has(probe.videoCodec)) {
-    reasons.push(`video codec ${probe.videoCodec} is not decodable in all browsers`);
+export async function probeVideo(filePath: string): Promise<VideoProbe> {
+  let stdout: string;
+  try {
+    ({ stdout } = await runMediaProcess(
+      FFPROBE,
+      [
+        "-hide_banner",
+        "-v", "error",
+        "-print_format", "json",
+        "-show_format",
+        "-show_streams",
+        filePath,
+      ],
+      { timeoutMs: 60_000 },
+    ));
+  } catch (error) {
+    if (error instanceof MediaProcessingError && error.code !== "decode_failed" && error.code !== "encode_failed") {
+      throw error;
+    }
+    // ffprobe failing on the file itself means the upload is not a readable video.
+    throw new MediaProcessingError(
+      "probe_failed",
+      "the file could not be read as a video",
+      error instanceof MediaProcessingError ? error.detail : String(error),
+    );
   }
 
-  if (probe.audioCodec && !["aac", "opus", "vorbis", "mp3"].includes(probe.audioCodec)) {
-    reasons.push(`audio codec ${probe.audioCodec} is not playable in all browsers`);
+  let parsed: FfprobeOutput;
+  try {
+    parsed = JSON.parse(stdout) as FfprobeOutput;
+  } catch {
+    throw new MediaProcessingError("probe_failed", "ffprobe returned unreadable output");
   }
-
-  // A QuickTime container is served as video/quicktime, which no browser advertises
-  // support for even when the codecs inside are fine.
-  if (mime && QUICKTIME_MIMES.has(mime.toLowerCase())) {
-    reasons.push(`container is served as ${mime}`);
-  }
-  if (extension && extension.toLowerCase() === ".mov") {
-    reasons.push("file extension is .mov");
-  }
-  if (probe.containerFormats.length && !probe.containerFormats.some((format) =>
-    WEB_SAFE_CONTAINERS.has(format) || format === "mp4" || format === "webm")) {
-    reasons.push(`container ${probe.containerFormats.join(",")} is not a progressive web container`);
-  }
-
-  if (!probe.fastStart && probe.videoCodec !== "vp9" && probe.videoCodec !== "vp8") {
-    reasons.push("moov atom is not at the front (no fast start)");
-  }
-
-  return { needed: reasons.length > 0, reasons };
+  return interpretProbe(parsed, await hasFastStart(filePath));
 }
 
-export interface TranscodeOptions {
-  /** Longest edge of the output; portrait story media ends up 720x1280. */
-  maxHeight?: number;
-  crf?: number;
-  maxBitrateKbps?: number;
-}
-
-/**
- * Transcodes to the baseline every browser handles: progressive MP4, H.264 High, yuv420p,
- * AAC audio, `moov` at the front. Deliberately not HLS/DASH — story clips are seconds
- * long and a normalized progressive MP4 removes the actual defect.
- */
-export function buildTranscodeArgs(
-  inputPath: string,
-  outputPath: string,
-  { maxHeight = 1280, crf = 23, maxBitrateKbps = 3000 }: TranscodeOptions = {},
-): string[] {
-  return [
-    "-hide_banner",
-    "-nostdin",
-    "-y",
-    "-i", inputPath,
-    "-map", "0:v:0",
-    // Keep audio only when the source has it; `?` makes the mapping optional.
-    "-map", "0:a:0?",
-    "-c:v", "libx264",
-    "-profile:v", "high",
-    "-level", "4.0",
-    "-pix_fmt", "yuv420p",
-    // -2 keeps the width even (H.264 requires it) while preserving the aspect ratio, and
-    // `min(ih,maxHeight)` avoids upscaling anything already smaller.
-    "-vf", `scale=-2:'min(ih,${maxHeight})'`,
-    "-crf", String(crf),
-    "-maxrate", `${maxBitrateKbps}k`,
-    "-bufsize", `${maxBitrateKbps * 2}k`,
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-ac", "2",
-    "-movflags", "+faststart",
-    // Explicit container: ffmpeg otherwise picks the muxer from the output file
-    // extension, and the caller writes to a temporary `*.partial` name before renaming
-    // atomically — which ffmpeg cannot map to a format.
-    "-f", "mp4",
-    outputPath,
-  ];
-}
-
-export async function transcodeToWebSafeMp4(
-  inputPath: string,
-  outputPath: string,
-  options: TranscodeOptions = {},
-): Promise<void> {
-  await run(FFMPEG, buildTranscodeArgs(inputPath, outputPath, options));
+/** Rejects inputs the product should not accept, before any CPU is spent on them. */
+export function validateProbe(probe: VideoProbe, limits: ProbeLimits = readProbeLimits()): void {
+  if (!probe.videoCodec || !probe.displayWidth || !probe.displayHeight) {
+    throw new MediaProcessingError("no_video_stream", "the file has no video stream");
+  }
+  if (probe.durationMs === null || probe.durationMs < limits.minDurationMs) {
+    throw new MediaProcessingError("probe_failed", "the video has no usable duration");
+  }
+  if (probe.durationMs > limits.maxDurationMs) {
+    throw new MediaProcessingError(
+      "duration_exceeded",
+      `the video is longer than ${Math.round(limits.maxDurationMs / 1000)}s`,
+    );
+  }
+  if (Math.max(probe.displayWidth, probe.displayHeight) > limits.maxDimension) {
+    throw new MediaProcessingError(
+      "dimensions_exceeded",
+      `the video is larger than ${limits.maxDimension}px`,
+    );
+  }
 }

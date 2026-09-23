@@ -8,16 +8,14 @@ import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "r
 import { useDrag } from "@use-gesture/react";
 import { hapticNavigation } from "@/utils/haptics";
 import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
-import {
-  hasDecodableVideoTrack,
-  isUnsupportedMediaError,
-  VIDEO_DECODE_PROBE_ATTEMPTS,
-  VIDEO_DECODE_PROBE_MS,
-} from "./video-decode";
+import { useVideoEngine, useVisibilitySlot, type VideoSource } from "@repo/video-player";
+import { ensureVideoTelemetry } from "@/lib/video-telemetry";
 
 type Props = {
   type: "video" | "image";
   src: string;
+  /** Media-worker delivery (HLS ladder, normalized MP4, poster) for video assets. */
+  video?: VideoSource;
   thumb?: string;
   alt?: string;
   priority?: boolean;
@@ -26,7 +24,7 @@ type Props = {
 };
 
 export default function PDPHeroGallerySingleImage(props: Props) {
-  const { type, src, thumb, alt, priority = false, goToNextImage, goToPreviousImage } = props;
+  const { type, src, video, thumb, alt, priority = false, goToNextImage, goToPreviousImage } = props;
   const [isLoading, setIsLoading] = useState(true);
   const [broken, setBroken] = useState(false);
   const [zoomScale, setZoomScale] = useState(1);
@@ -53,10 +51,29 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoRequested, setVideoRequested] = useState(false);
-  const [videoInView, setVideoInView] = useState(false);
-  const [videoUndecodable, setVideoUndecodable] = useState(false);
+  /** The shopper asked for playback (overlay or native control) and has not paused. */
+  const [wantsPlay, setWantsPlay] = useState(false);
   const allowsZoom = type !== "video";
+  // Near the viewport: attach the source (metadata only) so a tap starts fast. Visible:
+  // allowed to play. Scrolled away or tab hidden: paused, so an off-screen clip never
+  // keeps downloading or playing sound.
+  const visibility = useVisibilitySlot(containerRef, { threshold: 0.35, enabled: type === "video" });
+  const videoInView = visibility !== "idle";
   const shouldAttachVideoSource = videoRequested || (quality.media !== "economy" && videoInView);
+  const videoSource: VideoSource | null =
+    type === "video" && src ? (video ?? { mp4: src, poster: thumb || null }) : null;
+  const { state: videoState, play: playVideo } = useVideoEngine(videoRef, videoSource, {
+    active: shouldAttachVideoSource,
+    playing: wantsPlay && visibility === "active",
+    // Playback only ever starts from the shopper's tap, so sound is allowed.
+    muted: false,
+    loop: true,
+    surface: "pdp",
+    allowHls: true,
+    preload: quality.media === "economy" ? "none" : "metadata",
+  });
+  // Chromium without HEVC ("plays", zero frames) and unsupported sources both land here.
+  const videoUndecodable = videoState.failure === "decode-unsupported";
 
   const isDesktopZoom = () => {
     if (typeof window === "undefined") return false;
@@ -201,80 +218,12 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   }, []);
 
   useEffect(() => {
-    if (
-      type !== "video" ||
-      quality.media === "economy" ||
-      !videoRef.current ||
-      typeof IntersectionObserver === "undefined"
-    ) {
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        setVideoInView(true);
-        observer.disconnect();
-      },
-      { rootMargin: "160px", threshold: 0.1 },
-    );
-    observer.observe(videoRef.current);
-    return () => observer.disconnect();
-  }, [quality.media, src, type]);
-
-  useEffect(() => {
-    if (!videoRequested || !videoRef.current) return;
-    noteEnhancementLoaded("optional-video");
-    void videoRef.current.play().catch(() => {
-      // The native controls remain available when autoplay policies reject play().
-    });
+    if (videoRequested) noteEnhancementLoaded("optional-video");
   }, [videoRequested]);
 
   useEffect(() => {
-    setVideoUndecodable(false);
-    setIsVideoPlaying(false);
-  }, [src]);
-
-  useEffect(() => {
-    if (type !== "video" || videoUndecodable || !shouldAttachVideoSource) return;
-    const video = videoRef.current;
-    if (!video) return;
-
-    let cancelled = false;
-    let probeTimer: number | undefined;
-    let decodeChecks = 0;
-
-    const verifyDecodable = () => {
-      if (cancelled) return;
-      if (hasDecodableVideoTrack(video)) return;
-      // currentTime moving with zero frames is the Chromium HEVC signature.
-      // A clip that has not advanced yet is still buffering.
-      if (video.currentTime < 0.2) {
-        probeTimer = window.setTimeout(verifyDecodable, VIDEO_DECODE_PROBE_MS);
-        return;
-      }
-      decodeChecks += 1;
-      if (decodeChecks < VIDEO_DECODE_PROBE_ATTEMPTS) {
-        probeTimer = window.setTimeout(verifyDecodable, VIDEO_DECODE_PROBE_MS);
-        return;
-      }
-      video.pause();
-      setIsVideoPlaying(false);
-      setVideoUndecodable(true);
-    };
-
-    const onPlaying = () => {
-      window.clearTimeout(probeTimer);
-      probeTimer = window.setTimeout(verifyDecodable, VIDEO_DECODE_PROBE_MS);
-    };
-
-    video.addEventListener("playing", onPlaying);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(probeTimer);
-      video.removeEventListener("playing", onPlaying);
-    };
-  }, [shouldAttachVideoSource, src, type, videoUndecodable]);
+    if (type === "video") ensureVideoTelemetry();
+  }, [type]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -449,32 +398,29 @@ export default function PDPHeroGallerySingleImage(props: Props) {
 
               {/* Video player with luxury styling */}
               <div className="group/video-container relative h-full w-full overflow-hidden rounded-3xl">
+                {/* Source, HLS/MP4 choice, recovery and teardown belong to the playback
+                    engine (useVideoEngine), so there is no `src`/`preload` here. */}
                 <video
                   ref={videoRef}
                   className={`h-full w-full object-contain ${
                     isLoading ? "opacity-0" : "opacity-100"
                   }`}
-                  src={shouldAttachVideoSource ? src : undefined}
                   controls
                   loop
                   playsInline
-                  preload={
-                    shouldAttachVideoSource && quality.media !== "economy" ? "metadata" : "none"
-                  }
+                  preload="none"
                   onLoadedData={() => setIsLoading(false)}
                   onCanPlay={() => setIsLoading(false)}
-                  onError={() => {
-                    setIsLoading(false);
-                    if (videoRef.current && isUnsupportedMediaError(videoRef.current)) {
-                      setIsVideoPlaying(false);
-                      setVideoUndecodable(true);
-                    }
-                  }}
+                  onError={() => setIsLoading(false)}
                   onPlay={() => {
                     setVideoRequested(true);
+                    setWantsPlay(true);
                     setIsVideoPlaying(true);
                   }}
-                  onPause={() => setIsVideoPlaying(false)}
+                  onPause={() => {
+                    setIsVideoPlaying(false);
+                    setWantsPlay(false);
+                  }}
                   poster={thumb || undefined}
                 />
 
@@ -483,15 +429,13 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!shouldAttachVideoSource) {
-                        setVideoRequested(true);
-                      } else {
-                        noteEnhancementLoaded("optional-video");
-                        // Safari rejects interrupted/autoplay play() with
-                        // undefined; leave that uncaught and it becomes the
-                        // FRONTEND-22 "Non-Error promise rejection" group on
-                        // /pdp/:slug. Native controls remain if play() fails.
-                        void videoRef.current?.play().catch(() => undefined);
+                      setVideoRequested(true);
+                      setWantsPlay(true);
+                      if (shouldAttachVideoSource) {
+                        // Inside the tap, so it counts as user-initiated. The engine
+                        // settles every play() promise (FRONTEND-22: Safari rejects
+                        // interrupted play() with `undefined`); native controls remain.
+                        void playVideo();
                       }
                     }}
                     className={`pointer-events-auto absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300 ${

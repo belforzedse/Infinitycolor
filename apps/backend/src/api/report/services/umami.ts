@@ -505,6 +505,41 @@ function normalizeNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/** Missing provider values stay null so reports show «—», never a fake zero. */
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * The storefront funnels, shared by this report and `deploy/umami/bin/provision`
+ * (docs/analytics.md). `window` is Umami's maximum gap in minutes between two
+ * consecutive steps, chosen from observed production step gaps.
+ */
+export const UMAMI_FUNNELS = {
+  discovery: { window: 24 * 60, steps: ["view_item", "add_to_cart", "begin_checkout"] },
+  checkout: {
+    window: 60,
+    steps: ["begin_checkout", "add_shipping_info", "place_order_attempt", "purchase"],
+  },
+  payment: { window: 60, steps: ["payment_redirect", "purchase"] },
+} as const;
+
+/**
+ * Server-origin diagnostics. They live in the backend's own Umami session (see
+ * report/analytics/outbox.ts), so they are kept out of every visitor-level view:
+ * journeys, realtime, and path tables. `/commerce/purchase` is the retired
+ * server purchase, still present in history until it is purged.
+ */
+const SERVER_EVENT_NAMES = new Set(["order_paid", "refund"]);
+const SERVER_PATH_PREFIX = "/commerce/";
+
+function isServerStep(value: unknown): boolean {
+  const raw = String(value ?? "").trim();
+  return SERVER_EVENT_NAMES.has(raw) || raw.startsWith(SERVER_PATH_PREFIX);
+}
+
 function rows(value: unknown): Array<Record<string, any>> {
   return Array.isArray(value)
     ? value.filter((row): row is Record<string, any> => isRecord(row))
@@ -512,19 +547,88 @@ function rows(value: unknown): Array<Record<string, any>> {
 }
 
 function rowLabel(row: Record<string, any>): string {
-  return String(row.name ?? row.label ?? row.value ?? "Unknown").trim() || "Unknown";
+  return String(row.name ?? row.label ?? row.utm ?? row.value ?? "Unknown").trim() || "Unknown";
 }
 
-function metricRows(value: unknown) {
-  return rows(value).map((row) => ({
-    label: rowLabel(row),
-    pageviews: normalizeNumber(row.pageviews ?? row.views),
-    visitors: normalizeNumber(row.visitors),
-    visits: normalizeNumber(row.visits),
-    bounces: normalizeNumber(row.bounces),
-    totaltime: normalizeNumber(row.totaltime ?? row.totalTime),
-    value: normalizeNumber(row.value ?? row.count ?? row.events),
-  }));
+function withoutNulls<T extends Record<string, unknown>>(row: T): T {
+  return Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as T;
+}
+
+/**
+ * Normalizes a `metrics/expanded` table. Event tables report how often each
+ * event fired (`count`, which Umami returns in `pageviews`) plus the visitors
+ * and visits that fired it; page-only fields such as bounces and time are not
+ * meaningful per event and are dropped. Missing values are omitted, not zeroed.
+ */
+function metricRows(value: unknown, type?: string) {
+  return rows(value).map((row) => {
+    if (type === "event") {
+      return withoutNulls({
+        label: rowLabel(row),
+        count: numberOrNull(row.pageviews ?? row.views ?? row.count),
+        visitors: numberOrNull(row.visitors),
+        visits: numberOrNull(row.visits),
+      });
+    }
+    return withoutNulls({
+      label: rowLabel(row),
+      pageviews: numberOrNull(row.pageviews ?? row.views),
+      visitors: numberOrNull(row.visitors),
+      visits: numberOrNull(row.visits),
+      bounces: numberOrNull(row.bounces),
+      totaltime: numberOrNull(row.totaltime ?? row.totalTime),
+      value: numberOrNull(row.value ?? row.count ?? row.events),
+    });
+  });
+}
+
+/** `{label, value}` rows from a report group, dropping rows without a count. */
+function countRows(value: unknown) {
+  return rows(value).flatMap((row) => {
+    const count = numberOrNull(row.value ?? row.visitors ?? row.views ?? row.count);
+    return count === null ? [] : [{ label: rowLabel(row), value: count }];
+  });
+}
+
+/** Umami's UTM report groups rows per parameter as `{utm, views}`. */
+function utmGroups(value: unknown) {
+  const record = isRecord(value) ? value : {};
+  return Object.fromEntries(
+    ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"].map((key) => [
+      key,
+      countRows(record[key]),
+    ]),
+  );
+}
+
+/** Umami's attribution report groups sessions per source dimension. */
+function attributionGroups(value: unknown) {
+  const record = isRecord(value) ? value : {};
+  const total = isRecord(record.total) ? record.total : {};
+  return {
+    referrer: countRows(record.referrer),
+    paidAds: countRows(record.paidAds),
+    utm_source: countRows(record.utm_source),
+    utm_medium: countRows(record.utm_medium),
+    utm_campaign: countRows(record.utm_campaign),
+    total: withoutNulls({
+      visitors: numberOrNull(total.visitors),
+      visits: numberOrNull(total.visits),
+    }),
+  };
+}
+
+/** Visitor journeys only: a path through a server diagnostic is not a visitor path. */
+function visitorJourneys(value: unknown) {
+  return rows(value).filter(
+    (row) => !Object.keys(row).some((key) => /^e\d+$/.test(key) && isServerStep(row[key])),
+  );
+}
+
+/** A report filter narrowing to one event would zero every other funnel/goal step. */
+function withoutEventFilter(filters: Record<string, string>): Record<string, string> {
+  const { event: _event, ...rest } = filters;
+  return rest;
 }
 
 export type UmamiBehaviorPayload = {
@@ -690,13 +794,13 @@ export async function getUmamiBehaviorReport(
   const errors: Record<string, string> = {};
   try {
     const summary = await client.statistics(range, undefined, filters);
-    sections.summary = {
-      pageviews: normalizeNumber(summary.pageviews ?? summary.views),
-      visitors: normalizeNumber(summary.visitors),
-      visits: normalizeNumber(summary.visits),
-      bounces: normalizeNumber(summary.bounces),
-      totaltime: normalizeNumber(summary.totaltime),
-    };
+    sections.summary = withoutNulls({
+      pageviews: numberOrNull(summary.pageviews ?? summary.views),
+      visitors: numberOrNull(summary.visitors),
+      visits: numberOrNull(summary.visits),
+      bounces: numberOrNull(summary.bounces),
+      totaltime: numberOrNull(summary.totaltime),
+    });
   } catch (error: any) {
     errors.summary = String(error?.message || error).slice(0, 80);
   }
@@ -704,7 +808,7 @@ export async function getUmamiBehaviorReport(
   const settled = await Promise.allSettled(
     types.map(
       async (type) =>
-        [type, metricRows(await client.metrics(type, range, undefined, 100, filters))] as const,
+        [type, metricRows(await client.metrics(type, range, undefined, 100, filters), type)] as const,
     ),
   );
   settled.forEach((result, index) => {
@@ -712,58 +816,58 @@ export async function getUmamiBehaviorReport(
     if (result.status === "fulfilled") sections[type] = result.value[1];
     else errors[type] = String(result.reason?.message || result.reason).slice(0, 80);
   });
-  if (options.advanced && !sections.series) {
-    try {
-      const series = await client.metrics("path", range, undefined, 500, filters);
-      sections.series = metricRows(series);
-    } catch (error: any) {
-      errors.series = String(error?.message || error).slice(0, 80);
-    }
-  }
-
   const dates = reportParameters(range);
+  // Goal, funnel, and attribution are defined by their own steps; a report-level
+  // event filter would silently zero every other step.
+  const stepFilters = withoutEventFilter(filters);
   if (kind === "acquisition") {
     await Promise.all([
-      captureSection(sections, errors, "utm", () => client.report("utm", dates, filters)),
-      captureSection(sections, errors, "firstAttribution", () =>
-        client.report(
-          "attribution",
-          { ...dates, model: "first-click", type: "event", step: "purchase" },
-          filters,
+      captureSection(sections, errors, "utm", async () =>
+        utmGroups(await client.report("utm", dates, filters)),
+      ),
+      captureSection(sections, errors, "firstAttribution", async () =>
+        attributionGroups(
+          await client.report(
+            "attribution",
+            { ...dates, model: "first-click", type: "event", step: "purchase" },
+            stepFilters,
+          ),
         ),
       ),
-      captureSection(sections, errors, "lastAttribution", () =>
-        client.report(
-          "attribution",
-          { ...dates, model: "last-click", type: "event", step: "purchase" },
-          filters,
+      captureSection(sections, errors, "lastAttribution", async () =>
+        attributionGroups(
+          await client.report(
+            "attribution",
+            { ...dates, model: "last-click", type: "event", step: "purchase" },
+            stepFilters,
+          ),
         ),
       ),
     ]);
   } else if (kind === "conversion") {
+    sections.funnelDefinitions = UMAMI_FUNNELS;
+    const funnel = (definition: { window: number; steps: readonly string[] }) =>
+      client.report(
+        "funnel",
+        {
+          ...dates,
+          window: definition.window,
+          steps: definition.steps.map((value) => ({ type: "event", value })),
+        },
+        stepFilters,
+      );
     await Promise.all([
       captureSection(sections, errors, "purchaseGoal", () =>
-        client.report("goal", { ...dates, type: "event", value: "purchase" }, filters),
+        client.report("goal", { ...dates, type: "event", value: "purchase" }, stepFilters),
       ),
-      captureSection(sections, errors, "checkoutFunnel", () =>
-        client.report(
-          "funnel",
-          {
-            ...dates,
-            window: 24 * 60,
-            steps: ["view_item", "add_to_cart", "begin_checkout", "purchase"].map((value) => ({
-              type: "event",
-              value,
-            })),
-          },
-          filters,
-        ),
-      ),
+      captureSection(sections, errors, "discoveryFunnel", () => funnel(UMAMI_FUNNELS.discovery)),
+      captureSection(sections, errors, "checkoutFunnel", () => funnel(UMAMI_FUNNELS.checkout)),
+      captureSection(sections, errors, "paymentFunnel", () => funnel(UMAMI_FUNNELS.payment)),
     ]);
   } else if (kind === "content") {
     await Promise.all([
-      captureSection(sections, errors, "journeys", () =>
-        client.report("journey", { ...dates, steps: 4 }, filters),
+      captureSection(sections, errors, "journeys", async () =>
+        visitorJourneys(await client.report("journey", { ...dates, steps: 4 }, filters)),
       ),
       ...(Object.keys(propertyFilters).length
         ? [
@@ -812,11 +916,21 @@ export async function getUmamiRealtimeReport(): Promise<{
   }
   try {
     const raw = await getUmamiClient().realtime();
+    const events = rows(raw.events);
+    // The backend's own session (server diagnostics) is not a visitor.
+    const serverSessions = new Set(
+      events
+        .filter((event) => isServerStep(event.urlPath) || isServerStep(event.eventName))
+        .map((event) => String(event.sessionId || "").trim()),
+    );
     const visitorsByPath = new Map<string, Set<string>>();
-    for (const event of rows(raw.events)) {
+    const activeSessions = new Set<string>();
+    for (const event of events) {
       const path = String(event.urlPath || "").trim();
       const sessionId = String(event.sessionId || "").trim();
       if (!path || path.length > 500 || /[\u0000-\u001f\u007f]/.test(path) || !sessionId) continue;
+      if (serverSessions.has(sessionId)) continue;
+      activeSessions.add(sessionId);
       const sessions = visitorsByPath.get(path) || new Set<string>();
       sessions.add(sessionId);
       visitorsByPath.set(path, sessions);
@@ -828,15 +942,22 @@ export async function getUmamiRealtimeReport(): Promise<{
       visitorsByPath.size
         ? Array.from(visitorsByPath, ([path, sessions]) => ({ path, visitors: sessions.size }))
         : Object.entries(fallbackUrls).flatMap(([path, value]) =>
-            path && path.length <= 500 && !/[\u0000-\u001f\u007f]/.test(path)
+            path && path.length <= 500 && !/[\u0000-\u001f\u007f]/.test(path) && !isServerStep(path)
               ? [{ path, visitors: normalizeNumber(value) }]
               : [],
           )
     )
       .sort((a, b) => b.visitors - a.visitors)
       .slice(0, 20);
+    // Totals cover every active session even when the events list is capped;
+    // subtract only the backend's own diagnostic session(s).
+    const totalVisitors = numberOrNull(raw.totals?.visitors ?? raw.visitors ?? raw.activeVisitors);
+    const serverSessionCount = Array.from(serverSessions).filter(Boolean).length;
     return {
-      activeVisitors: normalizeNumber(raw.totals?.visitors ?? raw.visitors ?? raw.activeVisitors),
+      activeVisitors:
+        totalVisitors !== null
+          ? Math.max(0, totalVisitors - serverSessionCount)
+          : activeSessions.size,
       topPages,
     };
   } catch (error: any) {
@@ -852,6 +973,9 @@ export const __private = {
   validBaseUrl,
   decodeJwtExpiry,
   metricRows,
+  utmGroups,
+  attributionGroups,
+  visitorJourneys,
   toTimestamp,
   normalizeUmamiFilters,
 };

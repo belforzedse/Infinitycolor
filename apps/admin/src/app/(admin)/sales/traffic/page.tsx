@@ -55,10 +55,14 @@ import { faNum } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import {
   type BehaviorDimension,
+  CHECKOUT_EVENT_NAMES,
+  FILTERABLE_EVENTS,
   measuredPerformanceRows,
   performanceP75,
   presentAnalyticsMessage,
   presentBehaviorValue,
+  presentJourneyStep,
+  presentWindow,
 } from "./presentation";
 
 const TABS: ReadonlyArray<{ id: BehaviorView; label: string; hint: string }> = [
@@ -67,7 +71,7 @@ const TABS: ReadonlyArray<{ id: BehaviorView; label: string; hint: string }> = [
   { id: "conversion", label: "مسیر خرید", hint: "از مشاهده محصول تا خرید" },
   { id: "content", label: "صفحات و محصولات", hint: "محتوای محبوب و مسیر حرکت" },
   { id: "audience", label: "شناخت کاربران", hint: "مکان، دستگاه و بازگشت" },
-  { id: "performance", label: "سرعت و تجربه کاربری", hint: "Core Web Vitals" },
+  { id: "performance", label: "سرعت و تجربه کاربری", hint: "سرعت بارگذاری و پاسخ صفحه" },
   { id: "realtime", label: "اکنون در سایت", hint: "کاربران و صفحات فعال" },
 ];
 
@@ -410,15 +414,24 @@ const DIMENSION_HEADINGS: Partial<Record<BehaviorDimension, string>> = {
   tag: "نسخه یا آزمایش",
 };
 
+const VISIBLE_ROWS = 30;
+
 function primaryRowValue(row: Row): number {
   return (
     finite(row.pageviews) ??
+    finite(row.count) ??
     finite(row.visitors) ??
     finite(row.visits) ??
-    finite(row.count) ??
     finite(row.value) ??
     0
   );
+}
+
+/** «۳۰ مورد از ۱۰۰» when the table shows only the top rows. */
+function rowCountText(total: number): string {
+  return total > VISIBLE_ROWS
+    ? `${faNum(VISIBLE_ROWS)} مورد برتر از ${faNum(total)}`
+    : `${faNum(total)} مورد`;
 }
 
 function MetricTable({
@@ -452,7 +465,7 @@ function MetricTable({
     },
     {
       key: "count",
-      label: "تعداد",
+      label: dimension === "event" ? "تعداد رخداد" : "تعداد",
       available: rows.some((row) => finite(row.count) !== null),
       render: (row: Row) => numberText(row.count, 0),
     },
@@ -482,7 +495,7 @@ function MetricTable({
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
-        <span className="text-[11px] text-slate-400">{faNum(rows.length)} مورد</span>
+        <span className="text-[11px] text-slate-400">{rowCountText(rows.length)}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] text-right text-xs">
@@ -499,7 +512,7 @@ function MetricTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700">
-            {rows.slice(0, 30).map((row, index) => {
+            {rows.slice(0, VISIBLE_ROWS).map((row, index) => {
               const width = Math.max(0, Math.min(100, (primaryRowValue(row) / maximum) * 100));
               return (
                 <tr
@@ -557,10 +570,10 @@ function SimpleTable({
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
-        <span className="text-[11px] text-slate-400">{faNum(rows.length)} مورد</span>
+        <span className="text-[11px] text-slate-400">{rowCountText(rows.length)}</span>
       </div>
       <div className="divide-y divide-slate-100">
-        {rows.slice(0, 30).map((row, index) => {
+        {rows.slice(0, VISIBLE_ROWS).map((row, index) => {
           const numeric = metricValue(row);
           return (
             <div
@@ -605,6 +618,13 @@ function advancedRows(value: unknown): Row[] {
   return scalarRows(value);
 }
 
+function dateOnlyText(value: unknown): string | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  return new Date(`${value}T12:00:00+03:30`).toLocaleDateString("fa-IR", {
+    timeZone: "Asia/Tehran",
+  });
+}
+
 function CommerceCards({
   current,
   previous,
@@ -614,10 +634,19 @@ function CommerceCards({
 }) {
   const values = [
     { key: "paidOrders", label: "سفارش پرداخت‌شده", format: numberText },
-    { key: "totalOrders", label: "کل سفارش‌ها", format: numberText },
-    { key: "revenueToman", label: "درآمد قطعی", format: tomanText },
+    { key: "totalOrders", label: "کل سفارش‌های ثبت‌شده", format: numberText },
+    { key: "revenueToman", label: "درآمد خالص پرداخت‌شده", format: tomanText },
   ];
+  const range = asRecord(current.range);
+  const start = dateOnlyText(range.start);
+  const end = dateOnlyText(range.end);
   return (
+    <div className="space-y-3">
+    {start && end ? (
+      <p className="text-xs text-slate-500">
+        سفارش‌های فروشگاه جدید از {start} تا {end}؛ سفارش‌های واردشده از سایت قدیم در این عددها نیستند.
+      </p>
+    ) : null}
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {values.map(({ key, label, format }) => {
         const change = comparisonChange(current[key], previous?.[key]);
@@ -641,6 +670,7 @@ function CommerceCards({
         );
       })}
     </div>
+    </div>
   );
 }
 
@@ -654,15 +684,15 @@ function GoalCard({ value }: { value: unknown }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <div className="rounded-xl bg-slate-50 p-4">
-        <p className="text-xs text-slate-500">بازدیدهای منجر به خرید</p>
+        <p className="text-xs text-slate-500">بازدیدکنندگانی که خرید کرده‌اند</p>
         <p className="mt-2 text-xl font-semibold">{numberText(completed, 0)}</p>
       </div>
       <div className="rounded-xl bg-slate-50 p-4">
-        <p className="text-xs text-slate-500">کل بازدیدهای قابل سنجش</p>
+        <p className="text-xs text-slate-500">همه بازدیدکنندگان</p>
         <p className="mt-2 text-xl font-semibold">{numberText(total, 0)}</p>
       </div>
       <div className="rounded-xl bg-slate-50 p-4">
-        <p className="text-xs text-slate-500">نرخ تبدیل به خرید</p>
+        <p className="text-xs text-slate-500">نرخ تبدیل بازدیدکننده به خریدار</p>
         <p className="mt-2 text-xl font-semibold">{percentText(rate)}</p>
       </div>
     </div>
@@ -679,9 +709,18 @@ function funnelStepCount(row: Row): number {
   );
 }
 
-function FunnelVisualization({ value }: { value: unknown }) {
+function FunnelVisualization({
+  value,
+  title,
+  windowMinutes,
+}: {
+  value: unknown;
+  title: string;
+  windowMinutes?: unknown;
+}) {
   const steps = asRows(value);
-  if (!steps.length) return <CompactEmptyState title="برای مسیر خرید" />;
+  if (!steps.length) return <CompactEmptyState title={`برای «${title}»`} />;
+  const windowText = presentWindow(windowMinutes);
   const firstCount = Math.max(funnelStepCount(steps[0]), 1);
   const lastCount = funnelStepCount(steps[steps.length - 1]);
   const overallRate = (lastCount / firstCount) * 100;
@@ -705,22 +744,24 @@ function FunnelVisualization({ value }: { value: unknown }) {
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
       <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-slate-800">مسیر خرید کاربران</h3>
+          <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
           <p className="mt-1 text-xs text-slate-500">
-            هر مرحله باید حداکثر تا ۲۴ ساعت پس از مرحله قبل انجام شده باشد.
+            {windowText
+              ? `هر مرحله باید حداکثر ${windowText} پس از مرحله قبل، در همان نشست، انجام شده باشد.`
+              : "مراحل به ترتیب و در همان نشست شمرده می‌شوند."}
           </p>
         </div>
         <div className="shrink-0 rounded-xl bg-infinity-primary/5 px-3 py-2 text-xs text-slate-600">
-          تبدیل از ابتدا تا خرید: <strong className="text-infinity-primary">{percentText(overallRate)}</strong>
+          تبدیل از ابتدا تا انتها: <strong className="text-infinity-primary">{percentText(overallRate)}</strong>
         </div>
       </div>
       {biggestDropoff ? (
         <p className="border-b border-slate-100 bg-rose-50/60 px-4 py-2.5 text-xs text-rose-800 md:px-5">
           بیشترین ریزش در مرحله «{biggestDropoff.label}» بوده است؛{" "}
-          {numberText(biggestDropoff.count, 0)} کاربر ({percentText(biggestDropoff.rate)}) ادامه نداده‌اند.
+          {numberText(biggestDropoff.count, 0)} بازدیدکننده ({percentText(biggestDropoff.rate)}) ادامه نداده‌اند.
         </p>
       ) : null}
-      <ol className="space-y-3 p-4 md:p-5" aria-label="مراحل مسیر خرید">
+      <ol className="space-y-3 p-4 md:p-5" aria-label={`مراحل ${title}`}>
         {steps.map((row, index) => {
           const count = funnelStepCount(row);
           const previousCount = index ? funnelStepCount(steps[index - 1]) : count;
@@ -728,7 +769,8 @@ function FunnelVisualization({ value }: { value: unknown }) {
           const retainedRate = previousCount ? (count / previousCount) * 100 : null;
           const dropoffRate = previousCount ? (dropoffCount / previousCount) * 100 : null;
           const overallWidth = Math.max(0, Math.min(100, (count / firstCount) * 100));
-          const visibleWidth = count > 0 ? Math.max(8, overallWidth) : 0;
+          // True proportion; a hairline keeps a tiny non-zero step visible.
+          const visibleWidth = count > 0 ? Math.max(1, overallWidth) : 0;
           const label = presentBehaviorValue(row.value ?? row.label ?? row.name, "event");
           return (
             <li key={`${label}-${index}`} className="grid gap-2 md:grid-cols-[minmax(150px,0.8fr)_minmax(280px,2fr)] md:items-center">
@@ -739,7 +781,7 @@ function FunnelVisualization({ value }: { value: unknown }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-slate-700">{label}</p>
                   <p className="mt-0.5 text-[11px] text-slate-400">
-                    {numberText(count, 0)} کاربر
+                    {numberText(count, 0)} بازدیدکننده
                   </p>
                 </div>
               </div>
@@ -763,7 +805,7 @@ function FunnelVisualization({ value }: { value: unknown }) {
                 </div>
                 {index > 0 ? (
                   <p className="mt-1.5 text-[11px] text-rose-700">
-                    ریزش این مرحله: {numberText(dropoffCount, 0)} کاربر ({percentText(dropoffRate)})
+                    ریزش این مرحله: {numberText(dropoffCount, 0)} بازدیدکننده ({percentText(dropoffRate)})
                   </p>
                 ) : null}
               </div>
@@ -794,7 +836,7 @@ function RetentionTable({ value }: { value: unknown }) {
           {rows.slice(0, 100).map((row, index) => (
             <tr key={`${row.date}-${row.day}-${index}`}>
               <td className="px-4 py-3">
-                {String(row.date ?? "—").slice(0, 10)}
+                {dateOnlyText(String(row.date ?? "").slice(0, 10)) ?? "—"}
               </td>
               <td className="px-4 py-3">{numberText(row.day, 0)}</td>
               <td className="px-4 py-3">{numberText(row.visitors, 0)}</td>
@@ -806,6 +848,41 @@ function RetentionTable({ value }: { value: unknown }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const ATTRIBUTION_GROUPS = [
+  ["referrer", "سایت ارجاع‌دهنده", "domain"],
+  ["paidAds", "تبلیغات کلیکی", "generic"],
+  ["utm_source", "منبع تبلیغ", "generic"],
+  ["utm_medium", "روش انتشار", "generic"],
+  ["utm_campaign", "نام کمپین", "generic"],
+] as const;
+
+/**
+ * Umami attribution: for sessions that reached `purchase`, the first or last
+ * source seen in that session, one table per source dimension.
+ */
+function AttributionGroups({ value, title }: { value: unknown; title: string }) {
+  const groups = asRecord(value);
+  const visible = ATTRIBUTION_GROUPS.filter(([key]) => asRows(groups[key]).length);
+  if (!visible.length) {
+    return (
+      <CompactEmptyState title={`برای «${title}»؛ خریدها از نسخه جدید آمار به مسیر بازدیدکننده متصل می‌شوند`} />
+    );
+  }
+  return (
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      {visible.map(([key, label, dimension]) => (
+        <SimpleTable
+          key={key}
+          title={`${title}: ${label}`}
+          rows={asRows(groups[key])}
+          dimension={dimension}
+          value={(row) => `${numberText(row.value, 0)} خریدار`}
+        />
+      ))}
     </div>
   );
 }
@@ -857,7 +934,7 @@ function PerformanceContent({ value }: { value: unknown }) {
   const performanceValue = (row: Row) => performanceP75(row);
   const renderPerformanceValue = (row: Row) => (
     <span>
-      {numberText(performanceP75(row), 0)} ms
+      {numberText(performanceP75(row), 0)} میلی‌ثانیه
       {finite(row.count) !== null ? (
         <span className="mr-1 font-normal text-slate-400">
           · {numberText(row.count, 0)} سنجش
@@ -880,7 +957,7 @@ function PerformanceContent({ value }: { value: unknown }) {
               <p className="mt-2 text-xl font-semibold text-slate-900">
                 {metric.key === "cls"
                   ? numberText(metric.value, 3)
-                  : `${numberText(metric.value, 0)} ms`}
+                  : `${numberText(metric.value, 0)} میلی‌ثانیه`}
               </p>
               <p className="mt-2 text-[11px] leading-4 text-slate-400">
                 {metric.description}؛ ۷۵٪ بازدیدها سریع‌تر از این مقدار بوده‌اند
@@ -889,13 +966,13 @@ function PerformanceContent({ value }: { value: unknown }) {
           ))}
         </div>
       ) : (
-        <CompactEmptyState title="برای خلاصه Core Web Vitals" />
+        <CompactEmptyState title="برای خلاصه سرعت صفحه" />
       )}
       {pageRows.length || deviceRows.length || titleRows.length || browserRows.length ? (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {pageRows.length ? (
             <SimpleTable
-              title="LCP صفحه‌ها"
+              title="نمایش محتوای اصلی (LCP) در صفحه‌ها"
               rows={pageRows}
               dimension="path"
               numericValue={performanceValue}
@@ -904,7 +981,7 @@ function PerformanceContent({ value }: { value: unknown }) {
           ) : null}
           {deviceRows.length ? (
             <SimpleTable
-              title="LCP بر اساس دستگاه"
+              title="نمایش محتوای اصلی (LCP) بر اساس دستگاه"
               rows={deviceRows}
               dimension="device"
               numericValue={performanceValue}
@@ -913,7 +990,7 @@ function PerformanceContent({ value }: { value: unknown }) {
           ) : null}
           {titleRows.length ? (
             <SimpleTable
-              title="LCP بر اساس عنوان صفحه"
+              title="نمایش محتوای اصلی (LCP) بر اساس عنوان صفحه"
               rows={titleRows}
               numericValue={performanceValue}
               value={renderPerformanceValue}
@@ -921,7 +998,7 @@ function PerformanceContent({ value }: { value: unknown }) {
           ) : null}
           {browserRows.length ? (
             <SimpleTable
-              title="LCP بر اساس مرورگر"
+              title="نمایش محتوای اصلی (LCP) بر اساس مرورگر"
               rows={browserRows}
               dimension="browser"
               numericValue={performanceValue}
@@ -930,7 +1007,7 @@ function PerformanceContent({ value }: { value: unknown }) {
           ) : null}
         </div>
       ) : (
-        <CompactEmptyState title="برای جزئیات LCP صفحه‌ها و دستگاه‌ها" />
+        <CompactEmptyState title="برای جزئیات سرعت صفحه‌ها و دستگاه‌ها" />
       )}
     </div>
   );
@@ -941,19 +1018,19 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-violet-100 bg-gradient-to-l from-violet-50 to-white p-5">
-          <p className="text-xs text-violet-700">کاربران فعال اکنون</p>
+          <p className="text-xs text-violet-700">بازدیدکنندگان فعال در ۳۰ دقیقه اخیر</p>
           <p className="mt-2 text-4xl font-semibold text-violet-950">
             {numberText(data.activeVisitors, 0)}
           </p>
           <p className="mt-2 text-xs text-violet-600">
-            هر ۳۰ ثانیه، فقط وقتی این صفحه دیده می‌شود
+            هر ۳۰ ثانیه بروز می‌شود، فقط وقتی این صفحه باز است
           </p>
         </div>
         <SimpleTable
-          title="صفحات فعال"
+          title="صفحات فعال در ۳۰ دقیقه اخیر"
           rows={asRows(data.topPages)}
           dimension="path"
-          value={(row) => `${numberText(row.visitors, 0)} کاربر`}
+          value={(row) => `${numberText(row.visitors, 0)} بازدیدکننده`}
         />
       </div>
     );
@@ -981,7 +1058,7 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
             className={`rounded-xl border px-4 py-3 text-xs ${delivery.status === "healthy" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : delivery.status === "attention" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}
           >
             <p className="font-semibold">
-              وضعیت ثبت آمار خرید و مرجوعی:{" "}
+              ارسال پرداخت‌های تأییدشده و مرجوعی‌ها از سرور به آمار:{" "}
               {delivery.status === "healthy"
                 ? "سالم"
                 : delivery.status === "attention"
@@ -1041,22 +1118,23 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
         >
           <UtmSections value={sections.utm} />
         </ReportBlock>
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <SimpleTable
-            title="اولین منبع ورود خریداران"
-            rows={advancedRows(sections.firstAttribution)}
-            dimension="channel"
-          />
-          <SimpleTable
-            title="آخرین منبع پیش از خرید"
-            rows={advancedRows(sections.lastAttribution)}
-            dimension="channel"
-          />
-        </div>
+        <ReportBlock
+          title="منبع ورود خریداران"
+          description="برای نشست‌هایی که به خرید تأییدشده رسیده‌اند: اولین و آخرین منبعی که در همان نشست دیده شده است."
+        >
+          <div className="space-y-4">
+            <AttributionGroups value={sections.firstAttribution} title="اولین منبع" />
+            <AttributionGroups value={sections.lastAttribution} title="آخرین منبع پیش از خرید" />
+          </div>
+        </ReportBlock>
       </div>
     );
   }
   if (view === "conversion") {
+    const definitions = asRecord(sections.funnelDefinitions);
+    const checkoutEvents = asRows(sections.event).filter((row) =>
+      CHECKOUT_EVENT_NAMES.has(String(rawRowLabel(row) ?? "")),
+    );
     return (
       <div className="space-y-4">
         <SummaryGrid
@@ -1065,7 +1143,7 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
         />
         <ReportBlock
           title="فروش قطعی فروشگاه"
-          description="مبلغ‌ها مستقیماً از سفارش‌ها و پرداخت‌های فروشگاه محاسبه می‌شوند."
+          description="مرجع عددهای مالی: مستقیماً از سفارش‌ها و پرداخت‌های فروشگاه محاسبه می‌شوند."
         >
           <CommerceCards
             current={asRecord(sections.commerce)}
@@ -1078,14 +1156,28 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
         </ReportBlock>
         <ReportBlock
           title="تبدیل بازدید به خرید"
-          description="این بخش برای شناخت رفتار خریداران است؛ مبلغ دقیق فروش در کارت‌های بالا نمایش داده می‌شود."
+          description="خرید وقتی شمرده می‌شود که پرداخت در سرور تأیید شده و خریدار صفحه نتیجه پرداخت را دیده باشد. به‌خاطر مسدودکننده‌های تبلیغ یا بستن مرورگر، این عدد کمی کمتر از سفارش‌های پرداخت‌شده بالاست."
         >
           <GoalCard value={sections.purchaseGoal} />
         </ReportBlock>
-        <FunnelVisualization value={sections.checkoutFunnel} />
+        <FunnelVisualization
+          title="از مشاهده محصول تا شروع ثبت سفارش"
+          value={sections.discoveryFunnel}
+          windowMinutes={asRecord(definitions.discovery).window}
+        />
+        <FunnelVisualization
+          title="از شروع ثبت سفارش تا خرید"
+          value={sections.checkoutFunnel}
+          windowMinutes={asRecord(definitions.checkout).window}
+        />
+        <FunnelVisualization
+          title="از انتقال به درگاه تا خرید"
+          value={sections.paymentFunnel}
+          windowMinutes={asRecord(definitions.payment).window}
+        />
         <MetricTable
-          title="اقدام‌های مرتبط با خرید"
-          rows={asRows(sections.event)}
+          title="اقدام‌های ثبت سفارش و پرداخت"
+          rows={checkoutEvents}
           dimension="event"
         />
       </div>
@@ -1102,7 +1194,7 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
         {Object.keys(productFilter).length ? (
           <ReportBlock
             title="نتیجه فیلتر محصول، دسته یا مدل"
-            description="فقط بازدیدها و اقدام‌هایی شمارش می‌شوند که به همان مورد انتخابی مربوط باشند."
+            description="فقط این بخش فیلتر شده است: اقدام‌هایی که شناسه همان محصول، دسته یا مدل را دارند. پیش از نسخه جدید آمار، این شناسه‌ها فقط برای بازدیدکنندگانی ثبت می‌شد که «پذیرش» را زده بودند."
           >
             <div className="mb-4 grid grid-cols-2 gap-3">
               <div className="rounded-xl bg-slate-50 p-4">
@@ -1112,7 +1204,7 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
                 </p>
               </div>
               <div className="rounded-xl bg-slate-50 p-4">
-                <p className="text-xs text-slate-500">کل اقدام‌های بررسی‌شده</p>
+                <p className="text-xs text-slate-500">نمونه‌های بررسی‌شده (حداکثر ۱۰٬۰۰۰)</p>
                 <p className="mt-2 text-xl font-semibold">
                   {numberText(productFilter.sampledEvents, 0)}
                 </p>
@@ -1136,7 +1228,7 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
           />
           <MetricTable title="نسخه‌ها و آزمایش‌ها" rows={asRows(sections.tag)} dimension="tag" />
         </div>
-        <JourneyFlow rows={asRows(sections.journeys)} label={(v) => presentBehaviorValue(v, "event")} />
+        <JourneyFlow rows={asRows(sections.journeys)} label={presentJourneyStep} />
       </div>
     );
   }
@@ -1172,8 +1264,8 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
         comparison={payload.comparison ? previousSummary : undefined}
       />
       <ReportBlock
-        title="Core Web Vitals و عملکرد صفحه"
-        description="فقط بازدیدهایی نمایش داده می‌شوند که سنجش سرعت در آن‌ها انجام شده است."
+        title="سرعت صفحه (Core Web Vitals)"
+        description="عددها صدک ۷۵ هستند: ۷۵٪ بازدیدها سریع‌تر از این مقدار بوده‌اند. فقط بازدیدهایی شمرده می‌شوند که مرورگرشان سنجش سرعت را پشتیبانی می‌کند."
       >
         <PerformanceContent value={sections.performance} />
       </ReportBlock>
@@ -1200,8 +1292,8 @@ const FILTER_LABELS: Record<keyof BehaviorFilters, string> = {
   utmCampaign: "نام کمپین",
   utmContent: "نسخه محتوای تبلیغ",
   utmTerm: "عبارت تبلیغاتی",
-  segment: "شناسه بخش کاربران",
-  cohort: "شناسه گروه زمانی کاربران",
+  segment: "بخش کاربران (شناسه از پنل Umami)",
+  cohort: "گروه زمانی کاربران (شناسه از پنل Umami)",
   excludeBounce: "حذف بازدیدهای تک‌صفحه‌ای",
   match: "روش ترکیب شرط‌ها",
   productId: "شناسه محصول",
@@ -1249,7 +1341,9 @@ function fieldsForView(view: BehaviorView): (keyof BehaviorFilters)[] {
       ...common,
     ];
   if (view === "performance") return ["device", "browser", "path", "tag"];
-  if (view === "conversion") return ["event", "path", "tag"];
+  // Funnels and the purchase goal are defined by their own steps, so an event
+  // filter is not offered here (the backend ignores it for those reports).
+  if (view === "conversion") return ["device", "browser", "utmSource", "path", "tag"];
   return common;
 }
 
@@ -1315,6 +1409,34 @@ function FilterPanel({
         </label>
       );
     }
+    if (key === "event") {
+      return (
+        <label key={key} className="space-y-1 text-xs text-slate-600">
+          <span>{FILTER_LABELS[key]}</span>
+          <select
+            aria-label={FILTER_LABELS[key]}
+            value={draft[key] ?? ""}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                [key]: event.target.value || undefined,
+              }))
+            }
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+          >
+            <option value="">همه اقدام‌ها</option>
+            {FILTERABLE_EVENTS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {validation.errors[key] ? (
+            <span className="text-rose-600">{validation.errors[key]}</span>
+          ) : null}
+        </label>
+      );
+    }
     return (
       <label key={key} className="space-y-1 text-xs text-slate-600">
         <span>{FILTER_LABELS[key]}</span>
@@ -1328,7 +1450,11 @@ function FilterPanel({
             }))
           }
           placeholder={
-            key === "path" ? "/plp" : key === "event" ? "view_item" : ""
+            key === "path"
+              ? "مثلاً /plp یا /pdp/نام-محصول"
+              : key === "segment" || key === "cohort"
+                ? "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                : ""
           }
           className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm"
           dir="ltr"

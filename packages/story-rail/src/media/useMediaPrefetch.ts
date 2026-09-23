@@ -1,127 +1,67 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { warmVideo, type VideoSource } from "@repo/video-player";
 
 /**
- * Conservative adjacent-media warming.
+ * Adjacent-media warming for the story viewer.
  *
- * Story videos in this catalogue are 14–51 MB, so pulling the next story's body ahead of
- * time would cost more than the stall it saves. What actually removes the black flash is
- * having the *poster* ready, and what removes the metadata round-trip is having the moov
- * atom — which for these files sits at the end, so `preload="metadata"` costs two small
- * range requests rather than the whole body.
+ * Posters around the active story are always warmed: they are small and are exactly what
+ * keeps a story change from flashing black. The *next* video additionally gets its first
+ * seconds pulled into the HTTP cache — normalized story MP4s are faststart at ~2.5 Mbps,
+ * so three seconds is ~1 MB and turns the next story's startup into a cache read — but
+ * only once the story being watched is buffered well ahead (`warmNextVideo`), so warming
+ * never competes with current playback on a slow link.
  *
- * A URL is only recorded as warm once the browser says it is ready; a request that fails
- * is forgotten so it can be retried, rather than being cached as permanently broken.
+ * Only one video is ever warmed, and a story change aborts it: rapid tapping never leaves
+ * a queue of background downloads.
  */
-
-type Warmth = "pending" | "warm";
 
 export interface PrefetchTarget {
   posterUrl?: string;
-  videoUrl?: string;
+  video?: VideoSource;
 }
 
-interface PrefetchCache {
-  state: Map<string, Warmth>;
-  release: Map<string, () => void>;
-}
-
-function createCache(): PrefetchCache {
-  return { state: new Map(), release: new Map() };
-}
-
-function warmImage(cache: PrefetchCache, url: string): void {
-  if (!url || cache.state.has(url)) return;
-  cache.state.set(url, "pending");
-
+function warmImage(warmed: Set<string>, url: string): void {
+  if (!url || warmed.has(url)) return;
+  warmed.add(url);
   const image = new Image();
-  const done = (warm: boolean) => {
-    image.onload = null;
-    image.onerror = null;
-    cache.release.delete(url);
-    if (warm) cache.state.set(url, "warm");
-    else cache.state.delete(url);
+  image.onerror = () => {
+    // Forget it so a later attempt can retry instead of inheriting a permanent failure.
+    warmed.delete(url);
   };
-  image.onload = () => done(true);
-  image.onerror = () => done(false);
-  cache.release.set(url, () => {
-    done(false);
-    image.src = "";
-  });
+  image.decoding = "async";
   image.src = url;
 }
 
-function warmVideoMetadata(cache: PrefetchCache, url: string): void {
-  if (!url || cache.state.has(url)) return;
-  cache.state.set(url, "pending");
-
-  const video = document.createElement("video");
-  video.preload = "metadata";
-  video.muted = true;
-
-  const cleanup = () => {
-    video.removeEventListener("loadedmetadata", onLoaded);
-    video.removeEventListener("error", onError);
-    cache.release.delete(url);
-    // removeAttribute + load(), never `src = ""`: an empty string resolves against the
-    // document URL and makes the browser fetch the page itself as media.
-    video.removeAttribute("src");
-    video.load();
-  };
-  function onLoaded() {
-    cache.state.set(url, "warm");
-    cleanup();
-  }
-  function onError() {
-    // Forget it so a later attempt can retry instead of inheriting a permanent failure.
-    cache.state.delete(url);
-    cleanup();
-  }
-
-  video.addEventListener("loadedmetadata", onLoaded);
-  video.addEventListener("error", onError);
-  cache.release.set(url, () => {
-    cache.state.delete(url);
-    cleanup();
-  });
-  video.src = url;
-  video.load();
-}
-
-/**
- * Warms the posters around the active story and, at most, the metadata of the single
- * next video. Everything else stays lazy.
- */
 export function useMediaPrefetch(targets: {
   next?: PrefetchTarget;
   afterNext?: PrefetchTarget;
   previous?: PrefetchTarget;
+  warmNextVideo?: boolean;
 }): void {
-  const cacheRef = useRef<PrefetchCache | null>(null);
-  if (cacheRef.current === null) cacheRef.current = createCache();
-
-  const { next, afterNext, previous } = targets;
+  const postersRef = useRef(new Set<string>());
+  const videosRef = useRef(new Set<string>());
+  const { next, afterNext, previous, warmNextVideo = false } = targets;
 
   useEffect(() => {
-    const cache = cacheRef.current;
-    if (!cache || typeof window === "undefined") return;
-
-    // Posters are small and are exactly what prevents a black frame on advance.
+    if (typeof window === "undefined") return;
     [next?.posterUrl, afterNext?.posterUrl, previous?.posterUrl].forEach((url) => {
-      if (url) warmImage(cache, url);
+      if (url) warmImage(postersRef.current, url);
     });
-    // Only one video ahead, metadata only.
-    if (next?.videoUrl) warmVideoMetadata(cache, next.videoUrl);
-  }, [next?.posterUrl, next?.videoUrl, afterNext?.posterUrl, previous?.posterUrl]);
+  }, [next?.posterUrl, afterNext?.posterUrl, previous?.posterUrl]);
 
+  const nextVideo = next?.video;
+  const nextKey = nextVideo ? `${nextVideo.mp4}|${nextVideo.hls ?? ""}` : "";
   useEffect(() => {
-    const cache = cacheRef.current;
-    return () => {
-      if (!cache) return;
-      cache.release.forEach((release) => release());
-      cache.release.clear();
-      cache.state.clear();
-    };
-  }, []);
+    if (!nextVideo || !warmNextVideo || videosRef.current.has(nextKey)) return;
+    const controller = new AbortController();
+    videosRef.current.add(nextKey);
+    void warmVideo(nextVideo, { signal: controller.signal, seconds: 3 }).then(() => {
+      // An aborted warm read little or nothing; allow a later attempt.
+      if (controller.signal.aborted) videosRef.current.delete(nextKey);
+    });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextKey, warmNextVideo]);
 }

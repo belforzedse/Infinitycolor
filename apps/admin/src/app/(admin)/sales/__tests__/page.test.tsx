@@ -144,36 +144,11 @@ describe("OverviewReportPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the durable commerce delivery health", async () => {
+  it("leaves analytics delivery health to the traffic report", async () => {
     getOverviewMock.mockResolvedValue(makeResponse());
     render(<OverviewReportPage />);
-    await screen.findByText("همه خریدها و مرجوعی‌ها در آمار ثبت شده‌اند");
-  });
-
-  it("shows dead-letter delivery as requiring attention", async () => {
-    getOverviewMock.mockResolvedValue(
-      makeResponse({
-        analyticsDelivery: {
-          status: "attention",
-          total: 3,
-          pending: 0,
-          processing: 0,
-          deadLetter: 1,
-          oldestPendingAt: null,
-          lastSentAt: null,
-        },
-      }),
-    );
-    render(<OverviewReportPage />);
-    await screen.findByText("ثبت بعضی خریدها یا مرجوعی‌ها نیازمند بررسی است");
-  });
-
-  it("does not fabricate delivery health when the queue table is unavailable", async () => {
-    getOverviewMock.mockResolvedValue(
-      makeResponse({ analyticsDelivery: null }),
-    );
-    render(<OverviewReportPage />);
-    await screen.findByText("وضعیت ثبت آمار خرید و مرجوعی در دسترس نیست.");
+    await screen.findAllByText(/تومان/);
+    expect(screen.queryByText(/وضعیت ثبت آمار خرید و مرجوعی/)).not.toBeInTheDocument();
   });
 
   it("shows an error message when the fetch fails", async () => {

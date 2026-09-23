@@ -13,7 +13,7 @@ const TERMINAL_OVERFLOW_COLOR = "#94a3b8";
 const LINK_COLOR = "#94a3b8";
 const MOBILE_BREAKPOINT = 640;
 const SANKEY_HEIGHT = 420;
-const MAX_LABEL_CHARS = 14;
+const MAX_LABEL_CHARS = 24;
 
 type JourneyFlowProps = {
   rows: unknown[];
@@ -122,21 +122,21 @@ function nodeSentence(node: FlowNodePayload, value: number, totalPaths: number):
   const share = totalPaths > 0 ? Math.min(100, (value / totalPaths) * 100) : 0;
   const shareText = `${faNum(Math.round(share))}٪ از کل مسیرهای این نمودار`;
   if (node.isTerminal) {
-    return `«${node.label}»: ${faNum(value)} کاربر در این مرحله ادامه نداده‌اند (${shareText}).`;
+    return `«${node.label}»: ${faNum(value)} بازدید در این مرحله ادامه نیافته است (${shareText}).`;
   }
   if (node.isOverflow) {
-    return `«${node.label}»: مجموع ${faNum(value)} کاربر در مسیرهای کم‌تکرارتر (${shareText}).`;
+    return `«${node.label}»: مجموع ${faNum(value)} بازدید در مسیرهای کم‌تکرارتر (${shareText}).`;
   }
-  return `«${node.label}»: ${faNum(value)} کاربر از این مرحله عبور کرده‌اند (${shareText}).`;
+  return `«${node.label}»: ${faNum(value)} بازدید از این مرحله عبور کرده است (${shareText}).`;
 }
 
 function linkSentence(payload: SankeyLinkRenderProps["payload"], totalPaths: number): string {
   const shareText =
     totalPaths > 0 ? `${faNum(Math.round((payload.value / totalPaths) * 100))}٪ از کل مسیرهای این نمودار` : "";
   const targetClause = payload.target.isTerminal
-    ? "و در همین مرحله ادامه نداده‌اند"
+    ? "و در همین مرحله پایان یافته"
     : `به «${payload.target.label}»`;
-  return `از «${payload.source.label}» ${targetClause}: ${faNum(payload.value)} کاربر${shareText ? `؛ ${shareText}` : ""}.`;
+  return `از «${payload.source.label}» ${targetClause}: ${faNum(payload.value)} بازدید${shareText ? `؛ ${shareText}` : ""}.`;
 }
 
 export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
@@ -209,8 +209,8 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
   }, [activeId, flow]);
 
   const description = flow.truncatedAtCap
-    ? "این نمودار رایج‌ترین زنجیره‌های اقدام کاربران را نشان می‌دهد؛ حداکثر ۴ اقدام از هر بازدید ثبت شده است، بنابراین آنچه پس از اقدام چهارم رخ داده، در این داده دیده نمی‌شود."
-    : "این نمودار رایج‌ترین زنجیره‌های اقدام کاربران را از نخستین قدم ثبت‌شده تا پایان مسیر نشان می‌دهد.";
+    ? "رایج‌ترین زنجیره‌های صفحه و اقدام در هر بازدید، از راست به چپ. حداکثر ۴ قدم از هر بازدید ثبت شده است، بنابراین آنچه پس از قدم چهارم رخ داده، در این داده دیده نمی‌شود."
+    : "رایج‌ترین زنجیره‌های صفحه و اقدام در هر بازدید، از نخستین قدم (راست) تا پایان مسیر (چپ).";
 
   const sankeyData = useMemo(
     () => ({ nodes: flow.nodes, links: flow.links }),
@@ -268,6 +268,9 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
           fontSize={10}
           fill="#334155"
           opacity={isDim ? 0.35 : 1}
+          // The chart is mirrored for right-to-left reading (see below); flip
+          // each label back around its own centre so the text stays readable.
+          transform={`translate(${2 * (props.x + props.width / 2)} 0) scale(-1 1)`}
         >
           {truncateLabel(node.label)}
         </text>
@@ -313,7 +316,7 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
       <div className="border-b border-slate-100 px-4 py-3 md:px-5">
-        <h3 className="text-sm font-semibold text-slate-800">پرتکرارترین توالی اقدام‌های کاربران</h3>
+        <h3 className="text-sm font-semibold text-slate-800">پرتکرارترین مسیرهای بازدید</h3>
         <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
       </div>
       <div className="p-4 md:p-5" ref={containerRef}>
@@ -323,7 +326,10 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
           <RankedPathsList rows={journeyRows} label={label} />
         ) : (
           <>
-            <div dir="ltr">
+            {/* Recharts lays a Sankey out left-to-right; mirroring the whole chart
+                makes it read right-to-left like the list view and the rest of
+                the page. Labels are flipped back individually. */}
+            <div dir="ltr" style={{ transform: "scaleX(-1)" }} data-journey-direction="rtl">
               <ResponsiveContainer width="100%" height={SANKEY_HEIGHT}>
                 <Sankey
                   data={sankeyData}

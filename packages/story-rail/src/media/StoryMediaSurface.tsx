@@ -21,6 +21,7 @@ import {
 import { describeMediaUrl, useStoryPlaybackStore, type StoryPlaybackStore } from "./playback-store";
 import { getSafeStoryCtaUrl } from "../story-utils";
 import type { StoryRailOverlay } from "../types";
+import { createVideoEngine, type VideoSource } from "@repo/video-player";
 
 /** Payload we attach to each package story item; the package passes it through untouched. */
 export interface StoryMediaPayload {
@@ -29,6 +30,8 @@ export interface StoryMediaPayload {
   kind: "image" | "video" | "text";
   src: string;
   poster?: string;
+  /** Media-worker delivery for video items (resolved URLs); absent for legacy media. */
+  video?: VideoSource;
   title: string;
   durationMs: number;
   text?: string;
@@ -39,6 +42,8 @@ export interface StoryMediaPayload {
     retry: string;
     mute: string;
     unmute: string;
+    play?: string;
+    processing?: string;
   };
 }
 
@@ -56,11 +61,6 @@ export interface StoryMediaSurfaceProps {
 
 /** A stall shorter than this is invisible; showing a spinner for it only adds flicker. */
 const SPINNER_DELAY_MS = 400;
-/** How long a video may claim to be playing with no decoded frames before we re-check. */
-const DECODE_PROBE_MS = 600;
-/** Two strikes before falling back: a wrong fallback replaces a playing video with a
- *  still, so it is worth one more frame's grace on a slow device. */
-const DECODE_PROBE_ATTEMPTS = 2;
 /** Progress is published to the viewer at this rate; the fill has a 0.1s CSS transition,
  *  so sampling faster only re-renders the whole viewer for nothing. */
 const PROGRESS_PUBLISH_HZ = 15;
@@ -98,35 +98,6 @@ function SpeakerIcon({ muted }: { muted: boolean }) {
       )}
     </svg>
   );
-}
-
-function classifyMediaError(video: HTMLVideoElement): MediaFailureKind {
-  // Numeric literals rather than the MediaError constants: jsdom does not expose that
-  // global, and these codes are fixed by the HTML spec.
-  switch (video.error?.code) {
-    case 1:
-      return "abort";
-    case 2:
-      return "network";
-    case 3:
-    case 4:
-      return "decode-unsupported";
-    default:
-      return "unknown";
-  }
-}
-
-/**
- * Chromium without platform HEVC support parses a `video/quicktime` HEVC file, reports
- * `readyState 4`, fires `playing`, advances `currentTime` — and decodes zero frames, with
- * no `error` event. The only observable signal is that the video track has no dimensions.
- * Production story media is exactly that shape, so this check is load-bearing, not defensive.
- */
-function hasDecodableVideoTrack(video: HTMLVideoElement): boolean {
-  if (video.videoWidth > 0 && video.videoHeight > 0) return true;
-  const quality = video.getVideoPlaybackQuality?.();
-  if (quality && quality.totalVideoFrames > 0) return true;
-  return false;
 }
 
 function OverlayLayer({ overlays }: { overlays?: StoryRailOverlay[] }) {
@@ -211,6 +182,10 @@ function StoryMedia({
   const stateRef = useRef<PlaybackState>(state);
   const nextRef = useRef(next);
   const [showSpinner, setShowSpinner] = useState(false);
+  /** A decoded frame is actually on screen; until then the poster stays on top. */
+  const [firstFrame, setFirstFrame] = useState(false);
+  /** Even muted autoplay was refused (Low Power Mode, data saver): offer tap-to-play. */
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
   useLayoutEffect(() => {
     stateRef.current = state;
@@ -278,44 +253,44 @@ function StoryMedia({
     if (!video) return;
 
     let disposed = false;
-    let decodeProbe: number | undefined;
     let retriedMuted = false;
+    let failureReported = false;
+    let lastTime = 0;
 
     const held = () => isHeld(stateRef.current.holds);
-
-    let decodeChecks = 0;
-    const verifyDecodable = () => {
-      if (disposed) return;
-      if (hasDecodableVideoTrack(video)) return;
-      // Only conclude "undecodable" once the pipeline has demonstrably run: currentTime
-      // moving with zero frames is the signature of the Chromium HEVC case, whereas a
-      // video that has not advanced at all is stalled, which the buffering path owns.
-      if (video.currentTime < 0.2) {
-        decodeProbe = window.setTimeout(verifyDecodable, DECODE_PROBE_MS);
-        return;
-      }
-      decodeChecks += 1;
-      if (decodeChecks < DECODE_PROBE_ATTEMPTS) {
-        decodeProbe = window.setTimeout(verifyDecodable, DECODE_PROBE_MS);
-        return;
-      }
-      // Nothing decoded. Without a cover image there is nothing to fall back to, so
-      // surface it as an error the user can retry or navigate past.
-      video.pause();
-      if (payload.poster) {
-        dispatch({
-          type: "fallback",
-          generation,
-          durationMs: payload.durationMs,
-        });
-      } else {
-        dispatch({ type: "failed", generation, failure: "decode-unsupported" });
-      }
-      report("decode-unsupported", video.error?.code ?? null);
+    const reportOnce = (failure: MediaFailureKind, code: number | null) => {
+      if (failureReported) return;
+      failureReported = true;
+      report(failure, code);
     };
+
+    // The shared engine owns the source, first-frame detection, the "plays but decodes
+    // nothing" probe (Chromium without HEVC), error classification and teardown. Stories
+    // stay on the progressive MP4: clips are seconds long and the next one is pre-warmed,
+    // so HLS would add playlist round trips without room for adaptation to pay them back.
+    const source: VideoSource = payload.video ?? { mp4: payload.src, poster: payload.poster ?? null };
+    const engine = createVideoEngine(video, source, {
+      surface: "story",
+      allowHls: false,
+      preload: "auto",
+      onFirstFrame: () => {
+        if (!disposed) setFirstFrame(true);
+      },
+      onFatal: (failure) => {
+        if (disposed || stateRef.current.generation !== generation) return;
+        if (failure === "decode-unsupported" && payload.poster) {
+          // Nothing decoded; show the cover as a still for the configured duration.
+          dispatch({ type: "fallback", generation, durationMs: payload.durationMs });
+        } else {
+          dispatch({ type: "failed", generation, failure });
+        }
+        reportOnce(failure, video.error?.code ?? null);
+      },
+    });
 
     const attemptPlay = () => {
       if (disposed || held()) return;
+      engine.markPlayRequested();
       const playPromise = video.play();
       if (!playPromise || typeof playPromise.catch !== "function") return;
       playPromise.catch((error: unknown) => {
@@ -337,21 +312,19 @@ function StoryMedia({
             attemptPlay();
             return;
           }
-          // Genuinely blocked. Stay out of `playing` — the UI must not pretend otherwise.
-          report("autoplay-denied", null);
+          // Genuinely blocked (Low Power Mode, data saver). Stay out of `playing` — the UI
+          // must not pretend otherwise — and let the viewer start it with a tap.
+          setAutoplayBlocked(true);
+          reportOnce("autoplay-denied", null);
           return;
         }
         if (name === "NotSupportedError") {
-          dispatch({
-            type: "failed",
-            generation,
-            failure: "decode-unsupported",
-          });
-          report("decode-unsupported", video.error?.code ?? null);
+          dispatch({ type: "failed", generation, failure: "decode-unsupported" });
+          reportOnce("decode-unsupported", video.error?.code ?? null);
           return;
         }
         dispatch({ type: "failed", generation, failure: "network" });
-        report("network", video.error?.code ?? null);
+        reportOnce("network", video.error?.code ?? null);
       });
     };
 
@@ -367,28 +340,27 @@ function StoryMedia({
       attemptPlay();
     };
     const onPlaying = () => {
+      lastTime = video.currentTime;
+      setAutoplayBlocked(false);
       dispatch({ type: "playing", generation });
-      window.clearTimeout(decodeProbe);
-      decodeProbe = window.setTimeout(verifyDecodable, DECODE_PROBE_MS);
     };
     const onWaiting = () => dispatch({ type: "waiting", generation });
+    // `stalled` is deliberately not treated as buffering: it reports a slow network, not a
+    // stopped video. When playback carries on from buffer no `playing` follows, and the
+    // old mapping froze the progress bar until `ended`. Time moving again ends buffering.
+    const onTimeUpdate = () => {
+      if (
+        stateRef.current.phase === "buffering" &&
+        !video.paused &&
+        video.currentTime > lastTime + 0.01
+      ) {
+        dispatch({ type: "playing", generation });
+      }
+      lastTime = video.currentTime;
+    };
     const onEnded = () => {
       dispatch({ type: "ended", generation });
       dispatch({ type: "advance-requested", generation });
-    };
-    const onError = () => {
-      const failure = classifyMediaError(video);
-      if (failure === "abort") return;
-      if (failure === "decode-unsupported" && payload.poster) {
-        dispatch({
-          type: "fallback",
-          generation,
-          durationMs: payload.durationMs,
-        });
-      } else {
-        dispatch({ type: "failed", generation, failure });
-      }
-      report(failure, video.error?.code ?? null);
     };
 
     dispatch({ type: "loading", generation });
@@ -401,9 +373,10 @@ function StoryMedia({
     video.addEventListener("canplay", onReady);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("waiting", onWaiting);
-    video.addEventListener("stalled", onWaiting);
+    video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("ended", onEnded);
-    video.addEventListener("error", onError);
+
+    engine.load();
 
     // The element may already be past these by the time the effect runs.
     if (video.readyState >= 1) onLoadedMetadata();
@@ -412,25 +385,51 @@ function StoryMedia({
 
     return () => {
       disposed = true;
-      window.clearTimeout(decodeProbe);
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       video.removeEventListener("loadeddata", onReady);
       video.removeEventListener("canplay", onReady);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("waiting", onWaiting);
-      video.removeEventListener("stalled", onWaiting);
+      video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("ended", onEnded);
-      video.removeEventListener("error", onError);
-      // Silence first, then let React drop the element. No load()/removeAttribute("src")
-      // here: those abort outstanding operations and are unnecessary when the element is
-      // being unmounted anyway.
+      // Silence first, then release: the engine pauses, and detaches the source so the
+      // decoder and any in-flight range request are freed now, not at garbage collection
+      // (WebKit keeps downloading for a merely detached element).
       video.muted = true;
-      video.pause();
+      engine.dispose();
+      // The next element (a re-activation or a retry) starts without a presented frame.
+      setFirstFrame(false);
     };
     // `payload.poster`/`durationMs`/`src` are fixed for this mount (the surface remounts
     // per story), so this effect runs exactly once per media element.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showingVideoElement, generation]);
+
+  // ── Tell the viewer when warming the next story is safe ──────────────────────
+  useEffect(() => {
+    if (!store || !isActive) return;
+    if (payload.kind !== "video" || state.phase === "fallback") {
+      if (state.hasPresented) store.publishReadyForNext(item.id);
+      return;
+    }
+    const video = videoRef.current;
+    if (!video || !showingVideoElement) return;
+    const check = () => {
+      const { buffered, currentTime, duration } = video;
+      if (!buffered || buffered.length === 0) return;
+      const end = buffered.end(buffered.length - 1);
+      if (end - currentTime >= 4 || (Number.isFinite(duration) && duration > 0 && end >= duration - 0.25)) {
+        store.publishReadyForNext(item.id);
+      }
+    };
+    video.addEventListener("progress", check);
+    video.addEventListener("timeupdate", check);
+    check();
+    return () => {
+      video.removeEventListener("progress", check);
+      video.removeEventListener("timeupdate", check);
+    };
+  }, [store, isActive, item.id, payload.kind, state.phase, state.hasPresented, showingVideoElement]);
 
   // ── Follow holds: only the live, unheld story may play ───────────────────────
   const held = isHeld(state.holds);
@@ -581,7 +580,12 @@ function StoryMedia({
   }, []);
 
   const posterUrl = payload.kind === "video" ? payload.poster : undefined;
-  const showPoster = Boolean(posterUrl) && (state.phase === "fallback" || !state.hasPresented);
+  // For video, the poster covers everything but a live element with a presented frame. That
+  // includes an inactive face mid cube-turn, whose element is already gone: without the
+  // poster, the story being left would turn black for the whole rotation.
+  const showPoster =
+    Boolean(posterUrl) &&
+    (state.phase === "fallback" || (isVideo ? !showingVideoElement || !firstFrame : !state.hasPresented));
   const ctaUrl = getSafeStoryCtaUrl(payload.ctaUrl);
   const opensNewTab = Boolean(ctaUrl && /^https?:\/\//i.test(ctaUrl));
 
@@ -594,17 +598,6 @@ function StoryMedia({
       data-held={held ? "true" : "false"}
       className="relative flex h-full w-full items-center justify-center overflow-hidden bg-black"
     >
-      {posterUrl ? (
-        <img
-          src={posterUrl}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="absolute inset-0 h-full w-full object-contain"
-          style={{ opacity: showPoster ? 1 : 0 }}
-        />
-      ) : null}
-
       {payload.kind === "image" ? (
         <img
           src={payload.src}
@@ -624,18 +617,43 @@ function StoryMedia({
       ) : null}
 
       {showingVideoElement ? (
+        // `src` is declarative so the fetch starts when React creates the element. When the
+        // viewer opens, that is during the render React holds back before revealing the lazy
+        // viewer (~300 ms before any effect runs). The engine adopts the source rather than
+        // re-attaching it, which is safe because stories are MP4-only and every item gets
+        // its own keyed element. No opacity trick: the poster is layered above instead,
+        // because some engines do not present frames for a fully transparent element, and
+        // a presented frame is what the poster waits for.
         <video
           ref={videoRef}
-          src={payload.src}
-          poster={posterUrl}
+          src={payload.video?.mp4 ?? payload.src}
           className="relative h-full w-full object-contain"
           playsInline
           preload="auto"
           controls={false}
           disablePictureInPicture
           controlsList="nodownload noplaybackrate noremoteplayback"
-          style={{ opacity: state.hasPresented ? 1 : 0 }}
         />
+      ) : null}
+
+      {posterUrl ? (
+        <img
+          src={posterUrl}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+          style={{ opacity: showPoster ? 1 : 0 }}
+        />
+      ) : null}
+
+      {isVideo && state.phase === "fallback" && payload.video?.processing ? (
+        <p
+          data-testid="story-media-processing"
+          className="pointer-events-none absolute inset-x-6 bottom-24 z-10 rounded-full bg-black/55 px-4 py-2 text-center font-peyda text-sm text-white"
+        >
+          {payload.labels?.processing ?? "This video is still being prepared."}
+        </p>
       ) : null}
 
       {state.phase !== "error" ? <OverlayLayer overlays={payload.overlays} /> : null}
@@ -677,7 +695,38 @@ function StoryMedia({
         </button>
       ) : null}
 
-      {showSpinner ? (
+      {isVideo && isActive && autoplayBlocked && state.phase !== "error" ? (
+        <button
+          type="button"
+          data-testid="story-tap-to-play"
+          onClick={(event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            const video = videoRef.current;
+            if (!video) return;
+            // Inside the tap, so the browser treats it as user-initiated.
+            setAutoplayBlocked(false);
+            const playPromise = video.play();
+            if (playPromise && typeof playPromise.catch === "function") {
+              playPromise.catch(() => setAutoplayBlocked(true));
+            }
+          }}
+          onPointerDown={stopTap}
+          onPointerUp={stopTap}
+          onMouseDown={stopTap}
+          onMouseUp={stopTap}
+          onTouchStart={stopTap}
+          onTouchEnd={stopTap}
+          aria-label={payload.labels?.play ?? "Play"}
+          className="absolute inset-0 z-20 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+        >
+          <svg viewBox="0 0 24 24" className="h-7 w-7 translate-x-0.5" fill="currentColor" aria-hidden="true">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </button>
+      ) : null}
+
+      {showSpinner && !autoplayBlocked ? (
         <div
           data-testid="story-media-spinner"
           className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20"

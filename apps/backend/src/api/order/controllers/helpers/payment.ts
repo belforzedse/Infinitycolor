@@ -4,7 +4,7 @@ import { consumeOrderReservation } from "../../../../utils/stockReservations";
 import { cancelOrderAndRelease } from "../../../cart/controllers/handlers/gateway-helpers";
 import { orderHoldsDiscountClaim } from "../../../cart/services/lib/discount-claim";
 import { consumeCheckoutCartLinesSafely } from "../../../cart/services/lib/order-cart-cleanup";
-import { enqueuePurchaseForOrder } from "../../../report/analytics/outbox";
+import { enqueueOrderPaid } from "../../../report/analytics/outbox";
 import {
   findOrderPaymentAttempt,
   findPaymentAttemptByProviderReference,
@@ -228,9 +228,10 @@ async function clearCartAfterPayment(strapi: Strapi, orderId?: number, gateway?:
     return;
   }
 
-  // Insert the durable analytics event only after payment is confirmed. The
-  // scheduled repair sweep reconstructs this event if the process exits here.
-  void enqueuePurchaseForOrder(strapi as any, orderId).catch(() => {});
+  // Durable `order_paid` diagnostic, only after payment is confirmed. The
+  // scheduled repair sweep reconstructs it if the process exits here. The
+  // revenue-bearing `purchase` comes from the storefront result page.
+  void enqueueOrderPaid(strapi as any, orderId).catch(() => {});
 
   await consumeCheckoutCartLinesSafely(strapi, orderId, { gateway });
 }

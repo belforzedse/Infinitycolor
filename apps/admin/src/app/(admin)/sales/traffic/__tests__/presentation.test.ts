@@ -3,7 +3,9 @@ import {
   performanceP75,
   presentAnalyticsMessage,
   presentBehaviorValue,
+  presentJourneyStep,
   presentPath,
+  presentWindow,
 } from "../presentation";
 
 describe("behavior analytics presentation", () => {
@@ -52,7 +54,7 @@ describe("behavior analytics presentation", () => {
       "دریافت آمار بیش از حد معمول طول کشید. دوباره تلاش کنید.",
     );
     expect(presentAnalyticsMessage("بخش checkoutFunnel در دسترس نیست")).toBe(
-      "مسیر خرید موقتاً در دسترس نیست.",
+      "مسیر ثبت سفارش تا خرید موقتاً در دسترس نیست.",
     );
     expect(presentAnalyticsMessage("Umami API returned an invalid payload")).toBe(
       "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.",
@@ -68,5 +70,21 @@ describe("behavior analytics presentation", () => {
     expect(presentAnalyticsMessage("UMAMI_UNAVAILABLE")).toBe(
       "سامانه آمار بازدید موقتاً در دسترس نیست.",
     );
+  });
+});
+
+describe("journey and funnel presentation", () => {
+  it("presents a page step as a page and an event step as an action", () => {
+    expect(presentJourneyStep("/pdp/red-shirt")).toBe("محصول: red shirt");
+    expect(presentJourneyStep("/")).toBe("صفحه اصلی");
+    expect(presentJourneyStep("add_to_cart")).toBe("افزودن به سبد خرید");
+    expect(presentJourneyStep("payment_failed")).toBe("پرداخت ناموفق");
+  });
+
+  it("writes funnel windows in Persian hours or minutes", () => {
+    expect(presentWindow(60)).toBe("۱ ساعت");
+    expect(presentWindow(1440)).toBe("۲۴ ساعت");
+    expect(presentWindow(30)).toBe("۳۰ دقیقه");
+    expect(presentWindow(undefined)).toBeNull();
   });
 });
