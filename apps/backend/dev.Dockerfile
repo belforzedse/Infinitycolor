@@ -45,11 +45,14 @@ RUN --mount=type=cache,target=/root/.cache/node/corepack \
 
 # Materialize production dependencies before application source is copied. This
 # keeps the expensive pnpm deploy layer reusable for source-only changes.
+# The workspace patches storefront-only packages that the backend closure never
+# installs, and a deploy treats an unused patch as fatal (ERR_PNPM_UNUSED_PATCH).
+# Allow it here only, so full-workspace installs still catch a stale patch.
 RUN --mount=type=cache,id=infinity-pnpm-node20,target=/pnpm-store,sharing=shared \
     --mount=type=cache,target=/root/.cache/node/corepack \
     echo "starting cacheable production dependency deploy..." \
     && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm --store-dir /pnpm-store --filter @repo/backend deploy --legacy --prod /app \
+    pnpm --store-dir /pnpm-store --config.allow-unused-patches=true --filter @repo/backend deploy --legacy --prod /app \
     && cd /app \
     && echo "rebuilding sharp for musl runtime..." \
     && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \
