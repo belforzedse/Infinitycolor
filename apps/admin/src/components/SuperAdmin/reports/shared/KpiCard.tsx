@@ -4,6 +4,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Clock, Info } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { CARD, FOCUS_RING, SkeletonBlock } from "@/components/admin";
+import { DeltaBadge } from "./DeltaBadge";
 import { Sparkline } from "./Sparkline";
 import { ENTER, SWAP, useCountUp } from "./motion";
 
@@ -157,4 +158,44 @@ export default function KpiCard({
       )}
     </div>
   );
+}
+
+/** A server-computed period delta: `changePct` is a percent, null without a base. */
+export type PeriodDelta = { current: number; previous: number; change: number; changePct: number | null };
+
+/**
+ * KpiCard props for a period delta. When the previous window was clipped by
+ * the data floor (`comparable: false`) the card says why there is no
+ * comparison instead of showing a change over unequal spans.
+ */
+export function periodFigure(
+  delta: PeriodDelta | undefined,
+  {
+    format,
+    comparable,
+    noComparisonText,
+    lowerIsBetter,
+    neutral,
+  }: {
+    format: (value: number) => string;
+    comparable: boolean;
+    noComparisonText: string;
+    lowerIsBetter?: boolean;
+    neutral?: boolean;
+  },
+): { amount: number | null; format: (value: number) => string; delta: ReactNode; previous: ReactNode } {
+  if (!delta) return { amount: null, format, delta: null, previous: null };
+  return {
+    amount: delta.current,
+    format,
+    delta: (
+      <DeltaBadge
+        change={comparable ? delta.changePct : null}
+        lowerIsBetter={lowerIsBetter}
+        neutral={neutral}
+        noComparisonText={comparable ? "بدون مبنای مقایسه" : noComparisonText}
+      />
+    ),
+    previous: comparable ? format(delta.previous) : null,
+  };
 }

@@ -1,32 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { faNum } from "@/utils/faNum";
-import { priceFormatter } from "@/utils/price";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip as RTooltip,
-  XAxis,
-  YAxis,
-} from "@/components/SuperAdmin/reports/shared/charts";
+import { useEffect, useId, useMemo, useState } from "react";
+import { AdminCard, ErrorState } from "@/components/admin";
 import {
   getProductTrends,
   type ProductTrends,
   type TrendGrouping,
+  type TrendPoint,
 } from "@/services/super-admin/reports/products";
+import { ChartTableToggle } from "../shared/ChartTableToggle";
+import TimeSeriesChart, { SeriesLegend } from "../shared/TimeSeriesChart";
+import { numberText, rangeText, tehranToday, tomanText } from "../shared/format";
+import { salesSeriesRows } from "../shared/salesSeries";
+import { Notice, SectionHeader, Segmented } from "../shared/ui";
 
 type Metric = "net" | "gross" | "units" | "orders" | "discounts" | "refunds";
 
-const METRICS: Array<{ key: Metric; label: string; money: boolean }> = [
-  { key: "net", label: "خالص فروش", money: true },
-  { key: "gross", label: "فروش ناخالص", money: true },
-  { key: "units", label: "تعداد فروش", money: false },
-  { key: "orders", label: "سفارش‌ها", money: false },
-  { key: "discounts", label: "تخفیف‌ها", money: true },
-  { key: "refunds", label: "مرجوعی‌ها", money: true },
+const METRICS: Array<{ id: Metric; label: string; money: boolean; description: string }> = [
+  { id: "net", label: "خالص فروش", money: true, description: "فروش اقلام منهای تخفیف و مرجوعی، به تومان." },
+  { id: "gross", label: "فروش ناخالص", money: true, description: "مجموع قیمت اقلام فروخته‌شده، بدون هزینه ارسال." },
+  { id: "units", label: "تعداد فروش", money: false, description: "تعداد کالاهای فروخته‌شده." },
+  { id: "orders", label: "سفارش‌ها", money: false, description: "سفارش‌های پرداخت‌شده، به تاریخ ثبت سفارش." },
+  { id: "discounts", label: "تخفیف‌ها", money: true, description: "تخفیف در سطح سفارش." },
+  { id: "refunds", label: "مرجوعی‌ها", money: true, description: "تراکنش‌های بازگشتی موفق." },
 ];
 
 const GROUPINGS: Array<{ key: TrendGrouping; label: string }> = [
@@ -35,9 +31,14 @@ const GROUPINGS: Array<{ key: TrendGrouping; label: string }> = [
   { key: "month", label: "ماهانه" },
 ];
 
-function faDate(s: string) {
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? s : d.toLocaleDateString("fa-IR", { month: "short", day: "numeric" });
+/**
+ * With no gateway settlement in the window the report counts delivered
+ * orders instead, and none of them has a payment record, so their refunds
+ * are unknown. Everything else (items, units, orders, discounts) comes from
+ * the orders themselves and is real.
+ */
+function refundsUnknown(data: ProductTrends | null, point: TrendPoint) {
+  return data?.ordersDefinition === "completed" && point.orders > 0;
 }
 
 export default function TrendsTab({ start, end }: { start: string; end: string }) {
@@ -47,6 +48,8 @@ export default function TrendsTab({ start, end }: { start: string; end: string }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [showTable, setShowTable] = useState(false);
+  const tableId = useId();
 
   useEffect(() => {
     let active = true;
@@ -61,116 +64,105 @@ export default function TrendsTab({ start, end }: { start: string; end: string }
     };
   }, [start, end, grouping, reloadKey]);
 
-  const metricMeta = METRICS.find((m) => m.key === metric)!;
-  const chartData = useMemo(
-    () => (data?.series || []).map((p) => ({ ...p, label: faDate(p.bucket) })),
-    [data],
-  );
-
-  const Tip = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    const v = payload[0].value as number;
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-white p-3 text-sm shadow" dir="rtl">
-        <p className="mb-1 font-medium text-neutral-700">{label}</p>
-        <p className="text-infinity-primary">
-          {metricMeta.label}: {metricMeta.money ? priceFormatter(v, " تومان") : faNum(v)}
-        </p>
-      </div>
-    );
-  };
+  const definition = METRICS.find((m) => m.id === metric) ?? METRICS[0];
+  const completed = data?.ordersDefinition === "completed";
+  const rows = useMemo(() => {
+    if (!data?.series?.length) return null;
+    return salesSeriesRows({
+      points: data.series,
+      grouping: data.grouping,
+      // The requested window; the server sends its bounds as UTC instants.
+      range: { start, end },
+      today: tehranToday(),
+      value: (point) => point[metric],
+      unknownReason: (point) =>
+        metric === "refunds" && refundsUnknown(data, point)
+          ? `${numberText(point.orders)} سفارش بدون ثبت پرداخت؛ مرجوعی نامعلوم`
+          : null,
+      note: (point) =>
+        metric === "net" && refundsUnknown(data, point) ? "مرجوعی ثبت نشده؛ خالص بدون کسر مرجوعی" : null,
+    });
+  }, [data, metric, start, end]);
 
   return (
-    <div className="space-y-4" dir="rtl">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-neutral-600">شاخص:</span>
-          <div className="flex flex-wrap gap-1 rounded-lg bg-neutral-100 p-1">
-            {METRICS.map((m) => (
-              <button
-                key={m.key}
-                onClick={() => setMetric(m.key)}
-                className={`rounded-md px-3 py-1 text-sm ${
-                  metric === m.key ? "bg-white text-infinity-primary shadow-sm" : "text-neutral-600"
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-neutral-600">گروه‌بندی:</span>
-          <select
-            className="h-9 rounded-lg border border-neutral-300 px-2 text-sm"
-            value={grouping}
-            onChange={(e) => setGrouping(e.target.value as TrendGrouping | "")}
-          >
-            <option value="">خودکار</option>
-            {GROUPINGS.map((g) => (
-              <option key={g.key} value={g.key}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+    <AdminCard>
+      <div className="space-y-4" dir="rtl">
+        <SectionHeader
+          title="روند فروش"
+          description={definition.description}
+          actions={
+            <>
+              <Segmented
+                label="شاخص نمودار روند"
+                value={metric}
+                options={METRICS.map(({ id, label }) => ({ id, label }))}
+                onChange={setMetric}
+                size="sm"
+              />
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                گروه‌بندی
+                <select
+                  className="h-9 rounded-control border border-slate-200 bg-white px-2 text-sm text-slate-800"
+                  value={grouping}
+                  onChange={(e) => setGrouping(e.target.value as TrendGrouping | "")}
+                >
+                  <option value="">خودکار</option>
+                  {GROUPINGS.map((g) => (
+                    <option key={g.key} value={g.key}>
+                      {g.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {rows ? (
+                <ChartTableToggle
+                  showing={showTable}
+                  onToggle={() => setShowTable((shown) => !shown)}
+                  controls={tableId}
+                />
+              ) : null}
+            </>
+          }
+        />
 
-      <div className="rounded-2xl border border-neutral-100 bg-white p-4">
-        {loading ? (
-          <div className="flex h-[420px] items-center justify-center">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-300 border-t-infinity-primary" />
-          </div>
-        ) : error ? (
-          <div className="flex h-[420px] flex-col items-center justify-center gap-3">
-            <p className="text-red-600">{error}</p>
-            <button
-              onClick={() => setReloadKey((k) => k + 1)}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white"
-            >
-              تلاش مجدد
-            </button>
-          </div>
-        ) : chartData.length === 0 ? (
-          <div className="flex h-[420px] flex-col items-center justify-center text-center text-neutral-500">
-            <p>داده‌ای برای این بازه ثبت نشده است.</p>
-            <p className="mt-1 text-xs text-neutral-400">بازه زمانی دیگری انتخاب کنید.</p>
-          </div>
+        {error ? (
+          <ErrorState description={error} onRetry={() => setReloadKey((k) => k + 1)} />
         ) : (
           <>
-            {data?.ordersDefinition === "completed" && (
-              <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                در این بازه هیچ تراکنش موفق درگاهی ثبت نشده است، بنابراین نمودار بر پایه سفارش‌های
-                «تحویل شده» محاسبه شده و مبالغ تسویه‌نشده صفر در نظر گرفته شده‌اند.
-              </p>
-            )}
-            {chartData.length === 1 && (
-              <p className="mb-3 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
-                فقط یک بازه زمانی داده دارد، به همین دلیل نمودار تنها یک نقطه نشان می‌دهد. بازه
-                بزرگ‌تری انتخاب کنید یا گروه‌بندی را تغییر دهید.
-              </p>
-            )}
-            <div className="h-[420px]" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="label" fontSize={11} stroke="#64748b" />
-                <YAxis fontSize={11} stroke="#64748b" width={70} tickFormatter={(v) => faNum(v)} />
-                <RTooltip content={<Tip />} />
-                <Area
-                  type="monotone"
-                  dataKey={metric}
-                  stroke="#6366F1"
-                  strokeWidth={2}
-                  fill="#6366F1"
-                  fillOpacity={0.12}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-            </div>
+            {completed ? (
+              <Notice tone="warning">
+                در این بازه هیچ پرداخت موفقی از درگاه ثبت نشده است؛ نمودار بر پایه سفارش‌های «تحویل‌شده»
+                است. فروش، تعداد، سفارش و تخفیف واقعی‌اند، اما مرجوعی این سفارش‌ها ثبت نشده: در نمودار
+                مرجوعی خالی مانده و «خالص» بدون کسر مرجوعی است.
+              </Notice>
+            ) : null}
+            {rows?.length === 1 ? (
+              <Notice>
+                فقط یک بازه زمانی داده دارد، به همین دلیل نمودار تنها یک نقطه نشان می‌دهد. بازه بزرگ‌تری
+                انتخاب کنید یا گروه‌بندی را تغییر دهید.
+              </Notice>
+            ) : null}
+            {rows ? (
+              <SeriesLegend
+                current={`${definition.label}: ${rangeText(start, end)}`}
+                incomplete={rows.some((row) => row.incomplete)}
+              />
+            ) : null}
+            <TimeSeriesChart
+              rows={rows}
+              seriesLabel={definition.label}
+              valueText={definition.money ? tomanText : (value) => numberText(value)}
+              loading={loading}
+              view={showTable ? "table" : "chart"}
+              tableId={tableId}
+              heightClass="h-[300px] md:h-[380px]"
+              yAxisWidth={definition.money ? 76 : 48}
+              gradientId="product-trend-fill"
+              emptyText="داده‌ای برای این بازه ثبت نشده است. بازه زمانی دیگری انتخاب کنید."
+            />
           </>
         )}
       </div>
-    </div>
+    </AdminCard>
   );
 }
