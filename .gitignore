@@ -173,3 +173,4 @@ apps/frontend/public/sw-version.js
 /.playwright-cli/
 /output/
 *.bak
+__pycache__/

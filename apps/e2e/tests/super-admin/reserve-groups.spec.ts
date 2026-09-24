@@ -17,7 +17,7 @@ import { prepareStorefrontPage } from "../../helpers/page";
 test.describe("super-admin reserve groups", () => {
   test.use({ storageState: authStorageStatePath("admin") });
 
-  test.beforeEach(async (_, testInfo) => {
+  test.beforeEach(async ({}, testInfo) => {
     testInfo.skip(
       testInfo.project.name.includes("mobile"),
       "Reserve group operations coverage is desktop-only.",
