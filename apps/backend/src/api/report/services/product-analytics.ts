@@ -1828,6 +1828,11 @@ export function tzBucketExpr(column: string, grouping: Grouping): string {
   return `date_trunc('${grouping}', (${column} AT TIME ZONE 'UTC') AT TIME ZONE '${REPORT_TIMEZONE}')`;
 }
 
+/** A stored UTC timestamp as wall-clock time in the report timezone (for EXTRACT). */
+export function tzWallClockExpr(column: string): string {
+  return `((${column} AT TIME ZONE 'UTC') AT TIME ZONE '${REPORT_TIMEZONE}')`;
+}
+
 /**
  * {@link tzBucketExpr} rendered as a `YYYY-MM-DD` text key.
  *

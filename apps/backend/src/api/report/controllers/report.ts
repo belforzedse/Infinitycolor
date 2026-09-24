@@ -7,6 +7,7 @@ import { type AdminCapability } from "@repo/auth-core";
 import { requireCapability } from "../../../utils/adminAuthorization";
 import * as productAnalytics from "../services/product-analytics";
 import { buildStyledWorkbook, WorkbookColumn } from "../../../utils/styledWorkbook";
+import { weekdayGrid } from "../../../utils/weekdayGrid";
 import {
   getSalesBreakdown,
   SALES_BREAKDOWN_DIMENSIONS,
@@ -735,6 +736,94 @@ async function computeProductPeriod(
     avgPrice: units > 0 ? gross / units : 0,
     aov: orders > 0 ? gross / orders : 0,
   };
+}
+
+/**
+ * The overview's figures per Tehran bucket, on the same paid-orders set and
+ * definitions as {@link computeProductPeriod}: `gross` here already carries
+ * the delivery fee (the overview's «فروش ناخالص»), `net` does not. Buckets
+ * with no paid order are true zeros. Feeds the cards' sparklines.
+ */
+async function computeOverviewSeries(
+  knex: any,
+  joins: productAnalytics.ResolvedJoins,
+  start: Date,
+  end: Date,
+) {
+  const grouping = PA.autoGrouping(start, end);
+  const sql = `
+    WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)},
+    items_b AS (
+      SELECT ${PA.tzBucketKeyExpr("order_date", grouping)} AS bucket,
+             SUM(line_gross)::numeric AS gross,
+             SUM(cnt)::bigint AS units
+      FROM itemized GROUP BY 1
+    ),
+    orders_b AS (
+      SELECT ${PA.tzBucketKeyExpr("po.order_date", grouping)} AS bucket,
+             COUNT(*)::bigint AS orders_count,
+             SUM(po.order_discount)::numeric AS discounts,
+             SUM(po.refund_irr)::numeric AS refund_irr,
+             COALESCE(SUM(o.shipping_cost), 0)::numeric AS shipping
+      FROM paid_orders po
+      JOIN orders o ON o.id = po.order_id
+      GROUP BY 1
+    )
+    SELECT
+      COALESCE(i.bucket, b.bucket) AS bucket,
+      COALESCE(i.gross, 0)::numeric AS gross,
+      COALESCE(i.units, 0)::bigint AS units,
+      COALESCE(b.orders_count, 0)::bigint AS orders_count,
+      COALESCE(b.discounts, 0)::numeric AS discounts,
+      COALESCE(b.refund_irr, 0)::numeric AS refund_irr,
+      COALESCE(b.shipping, 0)::numeric AS shipping
+    FROM items_b i
+    FULL OUTER JOIN orders_b b ON i.bucket = b.bucket
+    ORDER BY 1
+  `;
+  const res = await knex.raw(sql, [start, end]);
+  const points = rowsOf(res)
+    .filter((r: any) => r.bucket)
+    .map((r: any) => {
+      const lines = Number(r.gross) || 0;
+      const discounts = Number(r.discounts) || 0;
+      const refunds = PA.irrToToman(Number(r.refund_irr) || 0);
+      // `orders.shipping_cost` is stored in Toman already.
+      const shipping = Number(r.shipping) || 0;
+      return {
+        bucket: r.bucket,
+        gross: Math.round(lines + shipping),
+        shipping: Math.round(shipping),
+        net: Math.round(lines - discounts - refunds),
+        units: Number(r.units) || 0,
+        orders: Number(r.orders_count) || 0,
+        discounts: Math.round(discounts),
+        refunds: Math.round(refunds),
+      };
+    });
+  const empty = { gross: 0, shipping: 0, net: 0, units: 0, orders: 0, discounts: 0, refunds: 0 };
+  return { grouping, points: start <= end ? PA.fillBucketSeries(points, start, end, grouping, empty) : [] };
+}
+
+/** When paid orders are placed: a weekday × hour grid in Tehran time, by order date. */
+async function computeOrdersWeekdayGrid(
+  knex: any,
+  joins: productAnalytics.ResolvedJoins,
+  start: Date,
+  end: Date,
+) {
+  if (start > end) return weekdayGrid([], "", "", PA.REPORT_TIMEZONE);
+  const local = PA.tzWallClockExpr("order_date");
+  const sql = `
+    WITH ${PA.paidOrdersCte(joins)}
+    SELECT EXTRACT(DOW FROM ${local})::int AS dow,
+           EXTRACT(HOUR FROM ${local})::int AS hour,
+           COUNT(*)::bigint AS count
+    FROM paid_orders
+    GROUP BY 1, 2
+  `;
+  const res = await knex.raw(sql, [start, end]);
+  return weekdayGrid(rowsOf(res), PA.tehranYmd(start), PA.tehranYmd(end), PA.REPORT_TIMEZONE);
 }
 
 /** Attach cover-image URLs to performance rows (one query for the visible page). */
@@ -2435,10 +2524,12 @@ const reportController = {
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
 
-      const [currentPeriod, previousPeriod, analyticsDelivery] = await Promise.all([
+      const [currentPeriod, previousPeriod, analyticsDelivery, series, weekly] = await Promise.all([
         computeProductPeriod(knex, joins, start, end),
         computeProductPeriod(knex, joins, prevStart, prevEnd),
         getAnalyticsDeliveryHealth(knex),
+        computeOverviewSeries(knex, joins, start, end),
+        computeOrdersWeekdayGrid(knex, joins, start, end),
       ]);
 
       // Store-wide «فروش ناخالص» is what the orders were written for: merchandise
@@ -2486,6 +2577,10 @@ const reportController = {
             refunds: kpi("refunds"),
             shipping: kpi("shipping"),
           },
+          // The same figures per bucket of the queried window (sparklines), and
+          // when in the week paid orders were placed (Tehran time).
+          series,
+          weekly,
           analyticsDelivery,
         },
       };
