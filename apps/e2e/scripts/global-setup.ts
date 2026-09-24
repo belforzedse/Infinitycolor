@@ -365,11 +365,39 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
   }
 }
 
+/**
+ * CI runs the storefront with `next dev`, which compiles a route on its first
+ * request. On a loaded runner the PLP route took longer than a spec's 15 s
+ * request timeout (pipeline 1109), and compiling /api/revalidate while the
+ * backend was already posting to it answered those posts with a JSON parse
+ * error. Requesting each listed path once, with a generous timeout, moves that
+ * compile out of the tests. Any HTTP status counts: the point is the compile.
+ */
+async function warmStorefrontRoutes() {
+  const paths = (process.env.E2E_WARM_STOREFRONT_PATHS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const timeoutMs = Number(process.env.E2E_WARM_TIMEOUT_MS || 240_000);
+  for (const path of paths) {
+    const started = Date.now();
+    const response = await fetchWithTimeout(
+      new URL(path, storefrontBaseURL()).toString(),
+      { headers: { Accept: "text/html" }, cache: "no-store" },
+      timeoutMs,
+    );
+    await response.text().catch(() => "");
+    console.log(`[e2e] warmed storefront ${path} (${response.status}) in ${Date.now() - started} ms`);
+  }
+}
+
 export default async function globalSetup() {
   if (process.env.E2E_SKIP_SERVICE_WAIT !== "1") {
     const healthUrl = process.env.E2E_API_HEALTH_URL || `${strapiOrigin()}/_health`;
     await waitForEndpoint(healthUrl, Number(process.env.E2E_SERVICE_TIMEOUT_MS || 120_000));
   }
+
+  await warmStorefrontRoutes();
 
   const seedMode = process.env.E2E_SEED_MODE || "auto";
   let seedSummary: SeedSummary | undefined;
