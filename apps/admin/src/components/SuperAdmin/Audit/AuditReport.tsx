@@ -3,18 +3,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle,
   Bot,
-  CalendarClock,
   ChevronDown,
   ExternalLink,
   FilterX,
   Search,
   ShieldCheck,
   UserRound,
-  UsersRound,
 } from "lucide-react";
-import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
+import { AdminCard } from "@/components/admin";
+import KpiCard from "@/components/SuperAdmin/reports/shared/KpiCard";
+import WeeklyHeatmap from "@/components/SuperAdmin/reports/shared/WeeklyHeatmap";
+import { hoursShare } from "@/components/SuperAdmin/reports/shared/weekly";
+import { numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import ReportDateRangeField from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
 import ReportExportButton from "@/components/SuperAdmin/reports/shared/ReportExportButton";
 import {
@@ -38,6 +39,7 @@ import {
   type AuditResult,
   type AuditSummary,
 } from "@/services/audit";
+import ActivityChart from "./ActivityChart";
 import AuditEventDrawer from "./AuditEventDrawer";
 import {
   DOMAIN_LABELS,
@@ -76,84 +78,19 @@ const MODES: Array<{ value: AuditMode; label: string; icon: typeof UserRound }> 
 const inputClass =
   "h-11 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition focus:border-infinity-primary focus:ring-2 focus:ring-infinity-primary/15 motion-reduce:transition-none";
 
+/** Hours counted as «outside working hours» for admin changes: 22:00 to 07:00. */
+const OFF_HOURS = [22, 23, 0, 1, 2, 3, 4, 5, 6];
+
+/**
+ * The selected days as instants, bounded in Tehran time like every report.
+ * This used the browser's own midnight, which shifted the window for anyone
+ * outside Iran.
+ */
 function isoRange(start: string, end: string) {
-  const startDate = parseDateOnly(start) || new Date(Date.now() - 30 * 86_400_000);
-  const endDate = parseDateOnly(end) || new Date();
-  startDate.setHours(0, 0, 0, 0);
-  endDate.setHours(23, 59, 59, 999);
-  return { from: startDate.toISOString(), to: endDate.toISOString() };
-}
-
-function SummaryCard({
-  title,
-  value,
-  detail,
-  icon: Icon,
-  tone,
-  loading,
-}: {
-  title: string;
-  value: number;
-  detail?: string;
-  icon: typeof UserRound;
-  tone: string;
-  loading: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-neutral-100 bg-white p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium text-neutral-500">{title}</p>
-          {loading ? (
-            <div className="mt-3 h-7 w-20 animate-pulse rounded bg-neutral-100 motion-reduce:animate-none" />
-          ) : (
-            <p className="mt-2 text-2xl font-bold tabular-nums text-neutral-800">{faNum(value)}</p>
-          )}
-          {detail && <p className="mt-1 text-[11px] text-neutral-400">{detail}</p>}
-        </div>
-        <span className={`grid size-9 place-items-center rounded-xl ${tone}`}>
-          <Icon className="size-4.5" aria-hidden />
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function ActivitySplitChart({ summary, loading }: { summary: AuditSummary | null; loading: boolean }) {
-  const series = summary?.series.slice(-31) || [];
-  const maximum = Math.max(1, ...series.map((item) => item.human + item.automatic));
-  return (
-    <figure className="rounded-2xl border border-neutral-100 bg-white p-4 sm:p-5" aria-labelledby="audit-chart-title">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <figcaption>
-          <h2 id="audit-chart-title" className="text-sm font-semibold text-neutral-800">روند فعالیت در بازه انتخابی</h2>
-          <p className="mt-1 text-xs text-neutral-500">اقدام‌های مستقیم مدیران در کنار اجراهای خودکار</p>
-        </figcaption>
-        <div className="flex items-center gap-3 text-[11px] text-neutral-500">
-          <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-indigo-500" />مدیران</span>
-          <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-slate-400" />خودکار</span>
-        </div>
-      </div>
-      {loading ? (
-        <div className="h-36 animate-pulse rounded-xl bg-neutral-50 motion-reduce:animate-none" />
-      ) : series.length === 0 ? (
-        <div className="grid h-36 place-items-center rounded-xl bg-neutral-50 text-xs text-neutral-400">داده‌ای برای این بازه ثبت نشده است</div>
-      ) : (
-        <div className="flex h-36 items-end gap-1 overflow-hidden" role="img" aria-label="نمودار فعالیت مدیران و سامانه">
-          {series.map((item) => {
-            const humanHeight = Math.max(item.human ? 3 : 0, (item.human / maximum) * 100);
-            const automaticHeight = Math.max(item.automatic ? 3 : 0, (item.automatic / maximum) * 100);
-            return (
-              <div key={item.date} className="flex h-full min-w-1 flex-1 items-end gap-px" title={`${item.date}: ${item.human} مدیر، ${item.automatic} خودکار`}>
-                <span className="min-w-0 flex-1 rounded-t bg-indigo-500/85" style={{ height: `${humanHeight}%` }} />
-                <span className="min-w-0 flex-1 rounded-t bg-slate-300" style={{ height: `${automaticHeight}%` }} />
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </figure>
-  );
+  const valid = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const from = valid(start) ? new Date(`${start}T00:00:00.000+03:30`) : new Date(Date.now() - 30 * 86_400_000);
+  const to = valid(end) ? new Date(`${end}T23:59:59.999+03:30`) : new Date();
+  return { from: from.toISOString(), to: to.toISOString() };
 }
 
 function resultTone(result: AuditResult) {
@@ -171,7 +108,7 @@ function ActivityRow({ event, onOpen }: { event: AuditEvent; onOpen: () => void 
     .slice(0, 2);
   return (
     <article className="grid gap-3 px-3 py-4 transition hover:bg-neutral-50/70 motion-reduce:transition-none sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-start sm:px-4">
-      <span className={`grid size-10 shrink-0 place-items-center rounded-full text-xs font-semibold ${event.mode === "human" ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-600"}`} aria-hidden>
+      <span className={`grid size-10 shrink-0 place-items-center rounded-full text-xs font-semibold ${event.mode === "human" ? "bg-infinity-primary/10 text-infinity-primary" : "bg-slate-100 text-slate-600"}`} aria-hidden>
         {event.mode === "human" ? initials || "مد" : <Bot className="size-4" />}
       </span>
       <div className="min-w-0">
@@ -183,7 +120,7 @@ function ActivityRow({ event, onOpen }: { event: AuditEvent; onOpen: () => void 
           {describeAuditEvent(event)}
         </button>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-neutral-500">
-          <span className={`rounded-md px-2 py-0.5 font-medium ${event.mode === "human" ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-600"}`}>
+          <span className={`rounded-md px-2 py-0.5 font-medium ${event.mode === "human" ? "bg-infinity-primary/10 text-infinity-primary" : "bg-slate-100 text-slate-600"}`}>
             {event.mode === "human" ? "اقدام مدیر" : ORIGIN_LABELS[event.origin]}
           </span>
           {event.mode === "automatic" && event.initiator.type === "human" && (
@@ -320,8 +257,7 @@ export default function AuditReport() {
   }, [setValues]);
 
   return (
-    <ContentWrapper title="حسابرسی و فعالیت مدیران">
-      <div className="space-y-5" dir="rtl">
+    <div className="space-y-5" dir="rtl">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="inline-flex w-full rounded-xl bg-neutral-100 p-1 lg:w-auto" aria-label="نوع فعالیت">
             {MODES.map(({ value, label, icon: Icon }) => (
@@ -341,13 +277,45 @@ export default function AuditReport() {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard title="کل فعالیت" value={summary?.total || 0} icon={CalendarClock} tone="bg-neutral-100 text-neutral-600" loading={loading} />
-          <SummaryCard title="اقدام‌های مدیران" value={summary?.human || 0} detail={`${faNum(summary?.activeAdmins || 0)} مدیر فعال`} icon={UsersRound} tone="bg-indigo-50 text-indigo-700" loading={loading} />
-          <SummaryCard title="اجراهای خودکار" value={summary?.automatic || 0} icon={Bot} tone="bg-slate-100 text-slate-600" loading={loading} />
-          <SummaryCard title="ناموفق یا ردشده" value={summary?.failedOrDenied || 0} icon={AlertTriangle} tone="bg-rose-50 text-rose-700" loading={loading} />
+          <KpiCard title="کل فعالیت" amount={summary?.total ?? null} format={(value) => numberText(value)} loading={loading} order={0} />
+          <KpiCard
+            title="اقدام‌های مدیران"
+            amount={summary?.human ?? null}
+            format={(value) => numberText(value)}
+            context={summary ? `${numberText(summary.activeAdmins)} مدیر فعال` : null}
+            loading={loading}
+            order={1}
+          />
+          <KpiCard title="اجراهای خودکار" amount={summary?.automatic ?? null} format={(value) => numberText(value)} loading={loading} order={2} />
+          <KpiCard
+            title="ناموفق یا ردشده"
+            amount={summary?.failedOrDenied ?? null}
+            format={(value) => numberText(value)}
+            context={summary?.failedOrDenied ? "رویدادهایی که انجام نشدند یا اجازه نداشتند" : null}
+            loading={loading}
+            order={3}
+          />
         </div>
 
-        <ActivitySplitChart summary={summary} loading={loading} />
+        <ActivityChart summary={summary} loading={loading} range={{ start, end }} />
+
+        {summary?.weekly ? (
+          <AdminCard>
+            <WeeklyHeatmap
+              value={summary.weekly}
+              id="admin-weekly-title"
+              title="ساعت‌های کار مدیران"
+              unit="اقدام مدیر"
+              intro="میانگین اقدام‌های مستقیم مدیران در هر ساعت، به وقت تهران، با همین فیلترها."
+              extra={(view) => {
+                const share = hoursShare(view, OFF_HOURS);
+                return share === null
+                  ? null
+                  : `${ratioText(share)} از اقدام‌ها بیرون از ساعت کاری (۲۲ تا ۷) انجام شده است.`;
+              }}
+            />
+          </AdminCard>
+        ) : null}
 
         <section className="rounded-2xl border border-neutral-100 bg-white p-4 sm:p-5" aria-labelledby="audit-filters-heading">
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -459,7 +427,6 @@ export default function AuditReport() {
         </section>
 
         <AuditEventDrawer event={selected} open={Boolean(values.event && selected)} onClose={() => setFilter("event", "")} />
-      </div>
-    </ContentWrapper>
+    </div>
   );
 }

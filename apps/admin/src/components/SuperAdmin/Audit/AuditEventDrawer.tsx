@@ -170,7 +170,7 @@ export default function AuditEventDrawer({
                         {describeAuditEvent(event)}
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                        <span className={`rounded-md px-2 py-1 font-medium ${event.mode === "human" ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-700"}`}>
+                        <span className={`rounded-md px-2 py-1 font-medium ${event.mode === "human" ? "bg-infinity-primary/10 text-infinity-primary" : "bg-slate-100 text-slate-700"}`}>
                           {event.mode === "human" ? "اقدام مدیر" : "اجرای خودکار"}
                         </span>
                         <span className="rounded-md bg-neutral-100 px-2 py-1 text-neutral-600">

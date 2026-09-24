@@ -136,6 +136,12 @@ export interface AuditSummary {
   failedOrDenied: number;
   activeAdmins: number;
   series: Array<{ date: string; human: number; automatic: number }>;
+  /**
+   * When admins act: `counts[d][h]` of human actions (row 0 = Sunday), Tehran
+   * time, with `days[d]` weekdays in the window. Optional: older API images
+   * do not send it.
+   */
+  weekly?: { timezone: string; firstDay: "sunday"; counts: number[][]; days: number[] };
 }
 
 export interface AuditFilterOptions {
