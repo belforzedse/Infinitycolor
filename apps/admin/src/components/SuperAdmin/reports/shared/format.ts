@@ -130,6 +130,18 @@ export function weekdayDateText(ymd: unknown): string {
   return `${weekday} ${dateText(ymd)}`;
 }
 
+/**
+ * A server date as a Tehran `YYYY-MM-DD`. Report endpoints send either a
+ * calendar date or a full instant (a `Date` serialised to JSON, e.g. the
+ * Tehran midnight `2026-09-13T20:30:00.000Z`); anything else is null.
+ */
+export function toTehranYmd(value: unknown): string | null {
+  if (isDateOnly(value)) return value;
+  if (typeof value !== "string" || !value) return null;
+  const instant = new Date(value);
+  return Number.isFinite(instant.getTime()) ? tehranToday(instant) : null;
+}
+
 /** Adds whole days to a `YYYY-MM-DD` date. */
 export function addDays(ymd: string, days: number): string {
   const date = tehranNoon(ymd);

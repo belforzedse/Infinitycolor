@@ -68,4 +68,22 @@ describe("previous period", () => {
     expect(previousWasClipped({ start: "2026-09-20", end: "2026-09-25" }, { start: "2026-09-14", end: "2026-09-19" })).toBe(false);
     expect(previousWasClipped(range, null)).toBe(true);
   });
+
+  it("reads windows sent as instants, as the product overview sends them", () => {
+    // Tehran midnight and end of day, serialised from Date objects.
+    const range = { start: "2026-09-19T20:30:00.000Z", end: "2026-09-25T20:29:59.999Z" };
+    expect(previousWasClipped(range, { start: "2026-09-13T20:30:00.000Z", end: "2026-09-19T20:29:59.999Z" })).toBe(false);
+    // The floor clamped the previous window to nothing: end before start.
+    expect(
+      previousWasClipped(
+        { start: "2026-09-13T20:30:00.000Z", end: "2026-09-25T20:29:59.999Z" },
+        { start: "2026-09-13T20:30:00.000Z", end: "2026-09-13T20:29:59.999Z" },
+      ),
+    ).toBe(true);
+  });
+
+  it("never throws on a window it cannot read", () => {
+    expect(previousWasClipped({ start: "not a date", end: "2026-09-25" }, { start: "2026-09-14", end: "2026-09-19" })).toBe(true);
+    expect(previousWasClipped(undefined, undefined)).toBe(true);
+  });
 });

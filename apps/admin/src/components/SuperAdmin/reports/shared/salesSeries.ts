@@ -1,5 +1,5 @@
 import { LEGACY_SALES_DATA_CUTOFF } from "./reportDates";
-import { addDays, bucketSpanText, dateText, finite } from "./format";
+import { addDays, bucketSpanText, dateText, finite, toTehranYmd } from "./format";
 import type { SeriesRow } from "./TimeSeriesChart";
 
 /** How the commerce reports bucket a series (Tehran calendar; weeks start Monday server-side). */
@@ -52,10 +52,18 @@ export function comparablePrevious(range: DateRange): DateRange | null {
  * differs from the full equal-length window, the delta would compare unequal
  * spans: callers show why there is no comparison instead.
  */
-export function previousWasClipped(range: DateRange, previous: Partial<DateRange> | null | undefined): boolean {
-  if (!previous?.start || !previous.end) return true;
-  const full = previousWindow(range);
-  return previous.start > previous.end || previous.start !== full.start || previous.end !== full.end;
+export function previousWasClipped(
+  range: Partial<DateRange> | null | undefined,
+  previous: Partial<DateRange> | null | undefined,
+): boolean {
+  // Endpoints echo their windows as calendar dates or as full instants.
+  const start = toTehranYmd(range?.start);
+  const end = toTehranYmd(range?.end);
+  const previousStart = toTehranYmd(previous?.start);
+  const previousEnd = toTehranYmd(previous?.end);
+  if (!start || !end || !previousStart || !previousEnd || start > end) return true;
+  const full = previousWindow({ start, end });
+  return previousStart > previousEnd || previousStart !== full.start || previousEnd !== full.end;
 }
 
 export const NO_COMPARISON_BEFORE_FLOOR = "بدون مقایسه: دوره قبل پیش از ۲۳ شهریور است";
