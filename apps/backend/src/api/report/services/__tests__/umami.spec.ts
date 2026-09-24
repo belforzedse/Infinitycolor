@@ -375,6 +375,47 @@ describe("Umami client", () => {
     });
   });
 
+  it("asks for the Tehran weekday × hour grid with the audience filters, plus screens", async () => {
+    process.env.UMAMI_DATA_START_DATE = "2026-08-10";
+    const grid = Array.from({ length: 7 }, (_, day) =>
+      Array.from({ length: 24 }, (_, hour) => day * 100 + hour),
+    );
+    const calls = recordProvider((path) => {
+      if (path.includes("/sessions/weekly")) return grid;
+      if (path.includes("/stats")) return { pageviews: 44, visitors: 12, visits: 13 };
+      return [];
+    });
+
+    // 2026-08-08 is a Saturday; the first two days predate the data start.
+    const report = await getUmamiBehaviorReport(
+      "audience",
+      { startDate: "2026-08-08", endDate: "2026-08-22" },
+      { filters: { os: "iOS" } },
+    );
+    delete process.env.UMAMI_DATA_START_DATE;
+
+    const weekly = calls.find((call) => call.path.includes("/sessions/weekly"))!;
+    expect(weekly.url.searchParams.get("timezone")).toBe("Asia/Tehran");
+    expect(weekly.url.searchParams.get("os")).toBe("iOS");
+    expect(report.sections.weekly).toEqual({
+      timezone: "Asia/Tehran",
+      firstDay: "sunday",
+      sessions: grid,
+      // Sat 08-08 and Sun 08-09 predate the data start; Mon 08-10…Sat 08-22
+      // holds one Sunday and two of every other weekday.
+      days: [1, 2, 2, 2, 2, 2, 2],
+    });
+    expect(calls.some((call) => call.url.searchParams.get("type") === "screen")).toBe(true);
+  });
+
+  it("rejects a weekly grid that is not seven days of 24 hours instead of drawing zeros", () => {
+    const range = { startDate: "2026-09-01", endDate: "2026-09-07" };
+    expect(() => __private.weeklyGrid([[1, 2, 3]], range)).toThrow("UMAMI_INVALID_RESPONSE");
+    const holey = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 1));
+    holey[3][5] = "n/a" as never;
+    expect(() => __private.weeklyGrid(holey, range)).toThrow("UMAMI_INVALID_RESPONSE");
+  });
+
   it("keeps server diagnostics out of the visitor event table", () => {
     expect(
       __private

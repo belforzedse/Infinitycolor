@@ -208,7 +208,10 @@ describe("traffic and conversion workspace", () => {
     await waitFor(() => expect(within(pulse).getByText("۳٬۰۰۰")).toBeInTheDocument());
     // +50% against the previous period, with an arrow and words, not colour alone.
     expect(within(pulse).getByText("افزایش")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "قیف خرید و نرخ تبدیل" })).toBeInTheDocument();
+    // Summary first; the funnel and deeper sections are tabs, not further down the page.
+    expect(screen.getByRole("tab", { name: "خلاصه" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "قیف خرید" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.queryByRole("heading", { name: "قیف خرید و نرخ تبدیل" })).not.toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: "شاخص نمودار روند" })).toBeInTheDocument();
     expect(screen.getAllByLabelText("date")).toHaveLength(2);
     expect(screen.getByRole("checkbox", { name: "مقایسه با دوره قبل" })).toBeChecked();
@@ -261,6 +264,7 @@ describe("traffic and conversion workspace", () => {
       overview,
       conversion: conversionData({}, { coreFunnel: steps([800, 80, 30, 25, 20, 16]), purchaseTracking: { status: "live" } }),
     });
+    mockInitialValues.current = { view: "funnel" };
     render(<BehaviorReportPage />);
     const funnel = await screen.findByRole("list", { name: "مراحل مسیر کامل خرید" });
     expect(within(funnel).getByText("مشاهده محصول")).toBeInTheDocument();
@@ -284,18 +288,21 @@ describe("traffic and conversion workspace", () => {
         purchaseTracking: { umamiPurchaseSessions: 1, commercePaidOrders: 24, coverage: 1 / 24, status: "not_live" },
       }),
     });
+    mockInitialValues.current = { view: "funnel" };
     render(<BehaviorReportPage />);
     const funnel = await screen.findByRole("list", { name: "مراحل مسیر کامل خرید" });
     expect(within(funnel).getByText(/ردیابی خرید در این بازه کامل نیست/)).toBeInTheDocument();
     expect(within(funnel).getByText("ثبت ناقص")).toBeInTheDocument();
     expect(screen.getByText("رسیدند به «تلاش برای ثبت سفارش»")).toBeInTheDocument();
-    expect(within(screen.getByTestId("pulse-conversion")).getByText("ردیابی خرید ناقص است")).toBeInTheDocument();
     expect(screen.getAllByTestId("purchase-reconciliation")[0]).toHaveAttribute("data-status", "not_live");
+    expect(screen.queryByText("۰٫۰۱٪")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "خلاصه" }));
+    expect(within(await screen.findByTestId("pulse-conversion")).getByText("ردیابی خرید ناقص است")).toBeInTheDocument();
     expect(screen.queryByText("۰٫۰۱٪")).not.toBeInTheDocument();
   });
 
   it("names the filters the funnel could not apply", async () => {
-    mockInitialValues.current = { utmSource: "instagram", device: "mobile" };
+    mockInitialValues.current = { utmSource: "instagram", device: "mobile", view: "funnel" };
     respond({
       overview,
       conversion: conversionData({ stepFilters: { applied: ["device"], ignored: ["utmSource"] } }),
@@ -310,7 +317,8 @@ describe("traffic and conversion workspace", () => {
       expect.anything(),
     );
     expect(screen.getByRole("list", { name: "فیلترهای فعال" })).toHaveTextContent("همه بخش‌ها");
-    expect(within(screen.getByTestId("pulse-orders")).getByText(/روی سفارش‌ها اعمال نمی‌شوند/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "خلاصه" }));
+    expect(within(await screen.findByTestId("pulse-orders")).getByText(/روی سفارش‌ها اعمال نمی‌شوند/)).toBeInTheDocument();
   });
 
   it("applies an inline filter through the shareable URL state", async () => {
@@ -340,6 +348,7 @@ describe("traffic and conversion workspace", () => {
         errors: {},
       }),
     );
+    mockInitialValues.current = { view: "funnel" };
     render(<BehaviorReportPage />);
     await screen.findByRole("list", { name: "مراحل مسیر کامل خرید" });
     expect(getConversionDetailMock).not.toHaveBeenCalled();
@@ -363,7 +372,7 @@ describe("traffic and conversion workspace", () => {
     getConversionDetailMock.mockResolvedValue(
       ok({ kind: "conversion-journey", sections: { journeys: [{ e1: "add_to_cart", e2: "/cart", count: 12 }] }, errors: {} }),
     );
-    mockInitialValues.current = { fview: "dropoff" };
+    mockInitialValues.current = { view: "funnel", fview: "dropoff" };
     render(<BehaviorReportPage />);
     const table = await screen.findByRole("table", { name: /ریزش مرحله به مرحله/ });
     const firstRow = within(table).getAllByRole("row")[1];
@@ -384,18 +393,17 @@ describe("traffic and conversion workspace", () => {
 
   it("falls back to the separate funnels against an older report API", async () => {
     respond({ overview, conversion: conversionData({ coreFunnel: undefined }) });
+    mockInitialValues.current = { view: "funnel" };
     render(<BehaviorReportPage />);
     expect(await screen.findByText(/سرور گزارش هنوز قیف کامل را ارائه نمی‌دهد/)).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "کشف محصول" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "روند" })).toBeDisabled();
   });
 
-  it("loads a deeper tab on demand and switches it through the URL", async () => {
+  it("loads a deeper tab only when it is opened and switches it through the URL", async () => {
     render(<BehaviorReportPage />);
     await screen.findByTestId("pulse-visitors");
-    await waitFor(() =>
-      expect(getBehaviorViewMock).toHaveBeenCalledWith("acquisition", expect.anything(), expect.anything()),
-    );
+    expect(getBehaviorViewMock).not.toHaveBeenCalledWith("acquisition", expect.anything(), expect.anything());
     fireEvent.click(screen.getByRole("tab", { name: /مخاطبان/ }));
     expect(mockSetValues).toHaveBeenCalledWith({ view: "audience" });
     await waitFor(() =>
@@ -438,6 +446,60 @@ describe("traffic and conversion workspace", () => {
     fireEvent.click(screen.getByRole("radio", { name: "نام کمپین" }));
     const campaigns = await screen.findByRole("table", { name: "نام کمپین" });
     expect(within(campaigns).getByTitle(longCampaign)).toBeInTheDocument();
+  });
+
+  it("opens links from before the tabs on the matching tab", async () => {
+    mockInitialValues.current = { view: "conversion" };
+    render(<BehaviorReportPage />);
+    expect(await screen.findByRole("heading", { name: "قیف خرید و نرخ تبدیل" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "قیف خرید" })).toHaveAttribute("aria-selected", "true");
+    // Arrow keys move between tabs (RTL: left is next).
+    fireEvent.keyDown(screen.getByRole("tab", { name: "قیف خرید" }), { key: "ArrowLeft" });
+    expect(mockSetValues).toHaveBeenCalledWith({ view: "acquisition" });
+    expect(screen.getByRole("tab", { name: "منابع ورود" })).toHaveFocus();
+  });
+
+  it("shows who uses what and when, compared with the previous period", async () => {
+    mockInitialValues.current = { view: "audience" };
+    const weekly = {
+      sessions: Array.from({ length: 7 }, (_, dow) =>
+        Array.from({ length: 24 }, (_, hour) => (dow === 5 && hour === 22 ? 80 : 4)),
+      ),
+      days: [4, 4, 4, 4, 5, 4, 4],
+    };
+    respond({
+      overview,
+      conversion: conversionData(),
+      audience: ok({
+        kind: "audience",
+        summary: { visitors: 1000 },
+        sections: {
+          device: [{ label: "mobile", visitors: 940, visits: 1100 }, { label: "laptop", visitors: 60, visits: 70 }],
+          os: [{ label: "Android OS", visitors: 600 }, { label: "iOS", visitors: 400 }],
+          browser: [{ label: "chrome", visitors: 500 }, { label: "instagram", visitors: 500 }],
+          screen: [{ label: "390x844", visitors: 300, visits: 320 }],
+          weekly,
+        },
+        comparison: {
+          sections: { os: [{ label: "Android OS", visitors: 700 }, { label: "iOS", visitors: 300 }] },
+        },
+        errors: {},
+      }),
+    });
+    render(<BehaviorReportPage />);
+    const os = await screen.findByRole("group", { name: "ترکیب بازدیدکنندگان بر اساس سیستم‌عامل" });
+    const ios = within(os).getByRole("img", { name: /^iOS: ۴۰٪/ });
+    fireEvent.focus(ios);
+    // Details only on demand: the share shift appears in the tooltip, in points.
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/۱۰ واحد درصد/);
+    fireEvent.keyDown(ios, { key: "ArrowRight" });
+    expect(within(os).getByRole("img", { name: /اندروید|Android/ })).toHaveFocus();
+    expect(screen.getByRole("group", { name: "ترکیب بازدیدکنندگان بر اساس دستگاه" })).toBeInTheDocument();
+    // Friday 22:00: 80 sessions over four Fridays in the range.
+    expect(screen.getByRole("gridcell", { name: "جمعه‌ها، ساعت ۲۲ تا ۲۳: میانگین ۲۰ نشست فعال" })).toBeInTheDocument();
+    expect(screen.getByText(/شلوغ‌ترین زمان: جمعه‌ها، ساعت ۲۲ تا ۲۳/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "اندازه صفحه" }));
+    expect(await screen.findByText("۳۹۰ × ۸۴۴")).toBeInTheDocument();
   });
 
   it("uses rated p75 Core Web Vitals with readable device, browser and page labels", async () => {
@@ -535,6 +597,7 @@ describe("traffic and conversion workspace", () => {
       },
       conversion: conversionData(),
     });
+    mockInitialValues.current = { view: "funnel" };
     render(<BehaviorReportPage />);
     const banner = (
       await screen.findByText("بخشی از گزارش در دسترس نیست؛ بخش‌های موجود نمایش داده شده‌اند")

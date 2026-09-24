@@ -1,6 +1,13 @@
 "use client";
 
-import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, Info, Minus } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { FOCUS_RING } from "@/components/admin";
@@ -18,12 +25,15 @@ export function Delta({
   change,
   kind = "relative",
   lowerIsBetter = false,
+  neutral = false,
   className,
   suffix,
 }: {
   change: number | null;
   kind?: "relative" | "points";
   lowerIsBetter?: boolean;
+  /** A shift that is neither good nor bad (a share of the mix): no colour. */
+  neutral?: boolean;
   className?: string;
   suffix?: ReactNode;
 }) {
@@ -36,7 +46,7 @@ export function Delta({
   }
   const flat = Math.abs(change) < (kind === "points" ? 0.05 : 0.5);
   const up = change > 0;
-  const good = flat ? null : lowerIsBetter ? !up : up;
+  const good = flat || neutral ? null : lowerIsBetter ? !up : up;
   const Icon = flat ? Minus : up ? ArrowUp : ArrowDown;
   return (
     <span
@@ -310,4 +320,61 @@ export function TableToggle({
       {showing ? "نمایش نمودار" : "نمایش جدول"}
     </button>
   );
+}
+
+/**
+ * False on the first paint, true one frame later: lets a chart transition in
+ * from empty. Under reduced motion the `motion-reduce:` utilities skip the
+ * transition, so the final state simply appears.
+ */
+export function useEntered() {
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return entered;
+}
+
+/**
+ * A readout that appears only while a chart mark is hovered or focused,
+ * anchored above the mark. Every value it shows is also in the chart's legend
+ * or table view; it adds detail, it never gates it.
+ */
+export function useChartTip(containerRef: RefObject<HTMLDivElement | null>): {
+  show: (mark: Element, content: ReactNode) => void;
+  hide: () => void;
+  tip: ReactNode;
+} {
+  const [state, setState] = useState<{ x: number; y: number; content: ReactNode } | null>(null);
+  const show = (mark: Element, content: ReactNode) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const box = container.getBoundingClientRect();
+    const rect = mark.getBoundingClientRect();
+    const margin = Math.min(110, box.width / 2);
+    const x = Math.min(box.width - margin, Math.max(margin, rect.left + rect.width / 2 - box.left));
+    setState({ x, y: rect.top - box.top, content });
+  };
+  const hide = () => setState(null);
+  const tip = state ? (
+    <div
+      role="tooltip"
+      dir="rtl"
+      className="pointer-events-none absolute z-20 min-w-44 max-w-64 rounded-control border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-md"
+      style={{ left: state.x, top: state.y, transform: "translate(-50%, calc(-100% - 6px))" }}
+    >
+      {state.content}
+    </div>
+  ) : null;
+  return { show, hide, tip };
+}
+
+/** Arrow/Home/End movement for a roving-tabindex group (RTL: left is next). */
+export function rovingKey(key: string, index: number, count: number): number | null {
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (key === "ArrowLeft") return Math.min(count - 1, index + 1);
+  if (key === "ArrowRight") return Math.max(0, index - 1);
+  return null;
 }

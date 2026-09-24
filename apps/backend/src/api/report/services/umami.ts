@@ -427,6 +427,31 @@ export class UmamiClient {
     );
   }
 
+  /**
+   * Distinct sessions per weekday and hour, summed over the range, in Tehran
+   * wall-clock time: a 7×24 matrix whose row 0 is Sunday (Postgres `dow`).
+   */
+  async weeklyTraffic(
+    range: UmamiRange,
+    websiteId = this.config.websiteId,
+    filters: Record<string, string> = {},
+  ): Promise<unknown[]> {
+    const query = new URLSearchParams({
+      startAt: String(toTimestamp(range.startDate, false)),
+      endAt: String(toTimestamp(range.endDate, true)),
+      timezone: UMAMI_REPORT_TIMEZONE,
+    });
+    Object.entries(standardUmamiFilters(filters)).forEach(([key, value]) => query.set(key, value));
+    return assertResponseShape(
+      await this.request(
+        `/api/websites/${encodeURIComponent(websiteId)}/sessions/weekly?${query}`,
+        {},
+        websiteId,
+      ),
+      "array",
+    );
+  }
+
   async realtime(websiteId = this.config.websiteId): Promise<Record<string, any>> {
     return assertResponseShape(
       await this.request(`/api/realtime/${encodeURIComponent(websiteId)}`, {}, websiteId),
@@ -838,6 +863,30 @@ function trendSeries(value: unknown, range: UmamiRange, unit: SeriesUnit) {
   };
 }
 
+/**
+ * The weekday × hour grid. `sessions[d][h]` sums, over every day d of the week
+ * in the range, the sessions active in hour h (row 0 is Sunday). `days[d]`
+ * says how many such days had data (none before the data-start date), so the
+ * admin can average per day: a 30-day range holds five of two weekdays and
+ * four of the rest, and raw sums would crown whichever weekday occurred more.
+ */
+function weeklyGrid(value: unknown, range: UmamiRange) {
+  const grid = Array.isArray(value) ? value : [];
+  const sessions = Array.from({ length: 7 }, (_, day) => {
+    const row = Array.isArray(grid[day]) ? grid[day] : [];
+    return Array.from({ length: 24 }, (_, hour) => numberOrNull(row[hour]));
+  });
+  if (grid.length !== 7 || sessions.some((row) => row.some((count) => count === null || count < 0))) {
+    throw new Error("UMAMI_INVALID_RESPONSE");
+  }
+  const dataStart = umamiDataStart();
+  const days = Array.from({ length: 7 }, () => 0);
+  for (let ymd = range.startDate; ymd <= range.endDate; ymd = addDays(ymd, 1)) {
+    if (ymd >= dataStart) days[parseYmdUtc(ymd).getUTCDay()] += 1;
+  }
+  return { timezone: UMAMI_REPORT_TIMEZONE, firstDay: "sunday", sessions, days };
+}
+
 export type UmamiBehaviorPayload = {
   kind: string;
   range: UmamiRange;
@@ -858,7 +907,7 @@ const metricTypes = {
     "utmTerm",
   ],
   content: ["path", "entry", "exit", "title", "event", "tag"],
-  audience: ["device", "browser", "os", "language", "country", "region", "city"],
+  audience: ["device", "browser", "os", "screen", "language", "country", "region", "city"],
   conversion: ["event"],
   performance: [],
 } as const;
@@ -1125,9 +1174,14 @@ export async function getUmamiBehaviorReport(
         : []),
     ]);
   } else if (kind === "audience") {
-    await captureSection(sections, errors, "retention", () =>
-      client.report("retention", { ...dates, timezone: UMAMI_REPORT_TIMEZONE }, filters),
-    );
+    await Promise.all([
+      captureSection(sections, errors, "retention", () =>
+        client.report("retention", { ...dates, timezone: UMAMI_REPORT_TIMEZONE }, filters),
+      ),
+      captureSection(sections, errors, "weekly", async () =>
+        weeklyGrid(await client.weeklyTraffic(range, undefined, filters), range),
+      ),
+    ]);
   } else if (kind === "performance") {
     await captureSection(sections, errors, "performance", () =>
       client.report(
@@ -1379,6 +1433,7 @@ export const __private = {
   funnelSteps,
   funnelPrefix,
   trendSeries,
+  weeklyGrid,
   decodeJwtExpiry,
   metricRows,
   utmGroups,

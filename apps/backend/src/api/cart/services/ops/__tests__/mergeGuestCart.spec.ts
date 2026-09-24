@@ -39,7 +39,7 @@ describe("guest cart merge", () => {
         if (uid.includes("guest-cart-merge")) {
           return merges.find((row) => row.MergeId === where.MergeId && row.user === where.user) || null;
         }
-        if (uid === "api::cart.cart") return carts.find((row) => row.user === where.user) || null;
+        if (uid === "api::cart.cart") return carts.find((row) => row.id === where.id) || null;
         if (uid === "api::cart-item.cart-item") {
           return cartItems.find(
             (row) => row.cart === where.cart && row.product_variation === where.product_variation,
@@ -61,9 +61,16 @@ describe("guest cart merge", () => {
         return target[index];
       }),
     });
+    // The cart is resolved through raw SQL on the merge's transaction (the ranked
+    // `carts_user_links` read); the advisory lock needs no result.
+    const raw = jest.fn(async (sql: string, bindings: any[] = []) => ({
+      rows: /FROM carts_user_links/.test(sql)
+        ? carts.filter((row) => row.user === bindings[0]).map((row) => ({ cart_id: row.id }))
+        : [],
+    }));
     const strapi = {
       db: {
-        transaction: jest.fn(async (fn: any) => fn({ trx: { raw: jest.fn() } })),
+        transaction: jest.fn(async (fn: any) => fn({ trx: { raw } })),
         query: jest.fn(queryFor),
       },
     } as any;

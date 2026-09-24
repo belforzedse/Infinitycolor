@@ -31,7 +31,9 @@ import {
   type VitalRating,
 } from "../presentation";
 import { AnalyticsTable, LabelCell, ShareBar } from "./AnalyticsTable";
+import CompositionBars from "./CompositionBars";
 import { Notice, SectionHeader, Segmented } from "./ui";
+import WeeklyHeatmap from "./WeeklyHeatmap";
 
 type Row = Record<string, unknown>;
 type Icon = ComponentType<{ "aria-hidden"?: boolean; className?: string; focusable?: boolean }>;
@@ -128,7 +130,11 @@ function DimensionTable({
           render: (row) => (
             <LabelCell
               label={presentBehaviorValue(label(row), dimension)}
-              raw={dimension === "country" || dimension === "language" ? null : label(row)}
+              raw={
+                dimension === "country" || dimension === "language" || dimension === "screen"
+                  ? null
+                  : label(row)
+              }
               icon={iconFor(label(row), dimension)}
               maxWidth={200}
             />
@@ -173,14 +179,17 @@ function DimensionTable({
   );
 }
 
-type TechView = "device" | "os" | "browser";
+type TechView = "device" | "os" | "browser" | "screen";
 type GeoView = "country" | "region" | "city" | "language";
 
 export function AudiencePanel({
   sections,
+  previousSections,
   summaryVisitors,
 }: {
   sections: Record<string, unknown>;
+  /** The same report for the previous period, when comparing. */
+  previousSections?: Record<string, unknown> | null;
   summaryVisitors: number | null;
 }) {
   const [tech, setTech] = useState<TechView>("device");
@@ -189,6 +198,8 @@ export function AudiencePanel({
     { id: "device" as const, label: "دستگاه" },
     { id: "os" as const, label: "سیستم‌عامل" },
     { id: "browser" as const, label: "مرورگر" },
+    // Older servers do not send screens; offer the view only when they do.
+    ...(Array.isArray(sections.screen) ? [{ id: "screen" as const, label: "اندازه صفحه" }] : []),
   ];
   const geoOptions = [
     { id: "region" as const, label: "استان" },
@@ -198,7 +209,9 @@ export function AudiencePanel({
   ];
   const retention = rows(sections.retention);
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
+      <CompositionBars sections={sections} previousSections={previousSections} />
+      <WeeklyHeatmap value={sections.weekly} />
       <div className="grid gap-8 xl:grid-cols-2">
         <section aria-labelledby="tech-title" className="min-w-0 space-y-3">
           <SectionHeader

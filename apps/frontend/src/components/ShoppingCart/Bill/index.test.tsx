@@ -67,9 +67,12 @@ const mockSetStockNotice = jest.fn(
   },
 );
 
+let mockIsCartReady = true;
+
 jest.mock("@/contexts/CartContext", () => ({
   useCart: () => ({
     ...mockCartState,
+    isCartReady: mockIsCartReady,
     clearCart: jest.fn(),
     openDrawer: jest.fn(),
     refreshCart: mockRefreshCart,
@@ -271,6 +274,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     localStorage.clear();
     window.history.pushState({}, "", "/checkout");
     mockStockNotice = null;
+    mockIsCartReady = true;
     mockCartState = {
       totalPrice: 100_000,
       totalItems: 1,
@@ -367,6 +371,44 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(CartService.getAvailableGateways).not.toHaveBeenCalled();
     expect(CartService.getSnappEligible).not.toHaveBeenCalled();
     expect(WalletService.getMyWallet).not.toHaveBeenCalled();
+  });
+
+  it("waits for the post-login cart merge before checking stock or pricing a restored discount", async () => {
+    localStorage.setItem("discountCode", "RESTORED10");
+    mockIsCartReady = false;
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    const { rerender } = render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(CartService.checkCartStock).not.toHaveBeenCalled();
+    expect(CartService.applyDiscount).not.toHaveBeenCalled();
+
+    // CartProvider finished merging the guest cart (or gave up — it flips either way).
+    mockIsCartReady = true;
+    rerender(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.checkCartStock).toHaveBeenCalledTimes(1);
+      expect(CartService.applyDiscount).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "RESTORED10" }),
+      );
+    });
   });
 
   it("does not duplicate an already-applied discount preview from the coupon component", async () => {

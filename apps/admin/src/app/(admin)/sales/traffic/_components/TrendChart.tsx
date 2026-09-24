@@ -342,6 +342,13 @@ export default function TrendChart({
             <div className="h-[300px]" dir="ltr">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartRows} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
+                  <defs>
+                    {/* The area fades out towards the axis instead of a flat block. */}
+                    <linearGradient id="traffic-trend-fill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={SERIES_COLOR} stopOpacity={0.16} />
+                      <stop offset="100%" stopColor={SERIES_COLOR} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid vertical={false} stroke="#eef1f5" />
                   <XAxis
                     dataKey="label"
@@ -380,8 +387,8 @@ export default function TrendChart({
                     dataKey="settled"
                     stroke={SERIES_COLOR}
                     strokeWidth={2}
-                    fill={SERIES_COLOR}
-                    fillOpacity={0.08}
+                    fill="url(#traffic-trend-fill)"
+                    fillOpacity={1}
                     dot={false}
                     activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
                     isAnimationActive={false}

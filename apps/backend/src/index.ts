@@ -55,6 +55,7 @@ import {
 } from "@repo/auth-core";
 import { ensureAuditEventStorage } from "./audit/storage";
 import { ensureCategoryEditorialDatabaseInvariant } from "./api/product-category-content/services/category-editorial-database";
+import { ensureCartDatabaseInvariants } from "./api/cart/services/lib/cart-database";
 import { ensureIssueReportStorage } from "./api/issue-report/services/issue-report-storage";
 import { ensureModelApplicationStorage } from "./api/model-application/services/model-application-storage";
 import { isVideoUpload } from "./services/media/normalize-upload-video";
@@ -1419,6 +1420,9 @@ export default {
       await ensurePaymentAttemptEvidenceInvariants(strapi as any);
       await evaluateRecoveryReadiness(strapi as any);
       await ensureCategoryEditorialDatabaseInvariant(strapi);
+      // One cart per customer. Blocked (reported, never fatal) while legacy duplicates
+      // exist; scripts/repair-duplicate-user-carts.js consolidates them and installs it.
+      await ensureCartDatabaseInvariants(strapi);
       const issueReportStorage = await ensureIssueReportStorage(strapi);
       if (issueReportStorage.repaired) {
         strapi.log.info("Issue report storage indexes installed after schema sync");

@@ -473,7 +473,8 @@ function ShoppingCartBillForm({}: Props) {
   // fallback to normal shipping is explained rather than silently applied.
   const [reserveWindowClosed, setReserveWindowClosed] = useState(false);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
-  const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice } = useCart();
+  const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice, isCartReady } =
+    useCart();
   const cartItemsRef = React.useRef(cartItems);
   cartItemsRef.current = cartItems;
   const totalItemsRef = React.useRef(totalItems);
@@ -690,6 +691,9 @@ function ShoppingCartBillForm({}: Props) {
         lastDiscountPreviewKeyRef.current = null;
         return;
       }
+      // A restored code must be priced against the cart the shopper will pay for, not
+      // the pre-login one CartProvider is still merging (the backend answers empty_cart).
+      if (!isCartReady) return;
       if (lastDiscountPreviewKeyRef.current === discountPreviewKey && discountPreview) {
         return;
       }
@@ -727,7 +731,7 @@ function ShoppingCartBillForm({}: Props) {
       }
     };
     run();
-  }, [discountCode, discountPreview, discountPreviewKey, shippingId, shippingAddressContext]);
+  }, [discountCode, discountPreview, discountPreviewKey, isCartReady, shippingId, shippingAddressContext]);
 
   // Check SnappPay as soon as authenticated checkout data can load, then refresh
   // whenever an input to the *gateway leg* changes -- the cart, discount,
@@ -1101,7 +1105,10 @@ function ShoppingCartBillForm({}: Props) {
   );
 
   const reconcileCheckoutStock = React.useCallback(async () => {
-    if (!canLoadProtectedCheckoutData) return;
+    // check-stock deletes and rewrites cart lines. Right after login CartProvider is
+    // still merging the guest cart; running this alongside it evaluated (and raced) the
+    // pre-merge cart. `isCartReady` also turns true when that init fails or times out.
+    if (!canLoadProtectedCheckoutData || !isCartReady) return;
     if (stockReconcileInFlightRef.current) return;
     stockReconcileInFlightRef.current = true;
     try {
@@ -1137,7 +1144,7 @@ function ShoppingCartBillForm({}: Props) {
     } finally {
       stockReconcileInFlightRef.current = false;
     }
-  }, [applyCheckoutStockCorrection, canLoadProtectedCheckoutData]);
+  }, [applyCheckoutStockCorrection, canLoadProtectedCheckoutData, isCartReady]);
 
   // Drop lines held by an earlier unpaid reservation as soon as checkout loads,
   // and again when bfcache restores the page after a gateway back-nav.

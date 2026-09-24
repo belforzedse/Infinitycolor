@@ -1,5 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
 import { getAvailableStockCount } from "../lib/stock";
+import { resolveUserCartId } from "../lib/user-cart-identity";
 
 export type GuestMergeItem = { productVariationId: number; quantity: number };
 
@@ -38,13 +39,10 @@ export async function mergeGuestCart(
     if (previous?.Result) return { ...previous.Result, replayed: true };
 
     const cartQuery = strapi.db.query("api::cart.cart");
-    let cart: any = await cartQuery.findOne({ where: { user: userId }, transacting: trx } as any);
-    if (!cart) {
-      cart = await cartQuery.create({
-        data: { user: userId, Status: "Empty" },
-        transacting: trx,
-      } as any);
-    }
+    // Same resolver as every other cart path, inside this transaction: a failed merge
+    // rolls back a cart it created, and it can never unlink a cart another request made.
+    const cartId = await resolveUserCartId(strapi, userId, trx);
+    const cart: any = await cartQuery.findOne({ where: { id: cartId }, transacting: trx } as any);
 
     const accepted: any[] = [];
     const adjusted: any[] = [];

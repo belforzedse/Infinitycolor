@@ -12,6 +12,7 @@ export type BehaviorDimension =
   | "country"
   | "region"
   | "city"
+  | "screen"
   | "tag";
 
 type AnalyticsRow = Record<string, unknown>;
@@ -352,6 +353,13 @@ export function presentBehaviorValue(
     return IRAN_REGION_LABELS[regionCode] ?? (raw || "استان نامشخص");
   }
   if (dimension === "city") return CITY_LABELS[key] ?? (raw || "شهر نامشخص");
+  if (dimension === "screen") {
+    // Umami records the CSS-pixel viewport as «390x844».
+    const match = /^(\d{2,5})\s*[x×]\s*(\d{2,5})$/i.exec(raw);
+    if (!match) return raw || "اندازه نامشخص";
+    const format = (n: string) => new Intl.NumberFormat("fa-IR", { useGrouping: false }).format(Number(n));
+    return `${format(match[1])} × ${format(match[2])}`;
+  }
   if (dimension === "domain" || dimension === "referrer") return presentReferrer(raw);
   if (dimension === "tag") return presentTag(raw);
   return (

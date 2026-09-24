@@ -89,4 +89,10 @@ failure, and every website id is a canonical UUID from the explicit allowlist.
   (the top 5 segments, one funnel each), and `detail=journey&step=<funnel
   event>` (journeys starting at that step). Values outside the allowlists are
   rejected with `INVALID_CONVERSION_DETAIL`.
+- **audience** adds `sections.screen` (viewport sizes) and `sections.weekly`
+  from `/sessions/weekly` in Tehran time: `sessions[d][h]` sums the sessions
+  active in hour h over every weekday d of the range (row 0 is Sunday, as
+  Postgres `dow`), and `days[d]` counts those weekdays from the data-start
+  date on, so the admin averages per day instead of favouring a weekday that
+  occurred five times. A grid that is not 7×24 numbers is rejected, not zeroed.
 - Event tables leave out the server diagnostics `order_paid` and `refund`.
