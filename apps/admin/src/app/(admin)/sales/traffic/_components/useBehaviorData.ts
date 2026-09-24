@@ -12,7 +12,7 @@ import {
   getConversionDetail,
 } from "@/services/super-admin/reports/behavior";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
-import { tehranToday } from "../format";
+import { tehranToday } from "@/components/SuperAdmin/reports/shared/format";
 
 export type Resource = {
   report: BehaviorResponse | null;

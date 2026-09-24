@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { SkeletonBlock } from "@/components/admin";
+import KpiCard from "@/components/SuperAdmin/reports/shared/KpiCard";
 import type {
   CommerceSeriesPoint,
   PurchaseTracking,
@@ -11,22 +11,24 @@ import { cn } from "@/utils/tailwind";
 import {
   compactNumber,
   finite,
-  MISSING,
   numberText,
   pointChange,
   rangeText,
   ratioText,
   relativeChange,
   tomanText,
-} from "../format";
+} from "@/components/SuperAdmin/reports/shared/format";
 import { conversionRate } from "../funnelSemantics";
-import { Delta, SourceLabel, Sparkline } from "./ui";
+import { DeltaBadge } from "@/components/SuperAdmin/reports/shared/DeltaBadge";
+import { SourceLabel } from "./ui";
 
 type Summary = Record<string, unknown>;
 
 function Figure({
   label,
   value,
+  amount,
+  format,
   delta,
   context,
   spark,
@@ -34,7 +36,9 @@ function Figure({
   testId,
 }: {
   label: string;
-  value: ReactNode;
+  value?: ReactNode;
+  amount?: number | null;
+  format?: (value: number) => string;
   delta?: ReactNode;
   context?: ReactNode;
   spark?: ReadonlyArray<number | null> | null;
@@ -42,22 +46,18 @@ function Figure({
   testId: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1.5 bg-white p-4 md:px-5" data-testid={testId}>
-      <h3 className="text-xs font-medium text-slate-700">{label}</h3>
-      {loading ? (
-        <div aria-hidden className="space-y-2">
-          <SkeletonBlock className="h-7 w-28" />
-          <SkeletonBlock className="h-3 w-36" />
-        </div>
-      ) : (
-        <>
-          <p className="whitespace-nowrap text-xl font-semibold text-slate-900 md:text-2xl">{value}</p>
-          {delta}
-          {context ? <p className="text-[11px] leading-4 text-slate-600">{context}</p> : null}
-          {spark ? <Sparkline values={spark} width={120} height={24} className="mt-auto pt-1" /> : null}
-        </>
-      )}
-    </div>
+    <KpiCard
+      surface="plain"
+      testId={testId}
+      title={label}
+      value={value}
+      amount={amount}
+      format={format}
+      delta={delta}
+      context={context}
+      spark={spark}
+      loading={loading}
+    />
   );
 }
 
@@ -142,7 +142,7 @@ export default function PulseStrip({
     value: number | null,
     kind: "relative" | "points" = "relative",
     present = true,
-  ) => (compare && present ? <Delta change={value} kind={kind} suffix="نسبت به دوره قبل" /> : null);
+  ) => (compare && present ? <DeltaBadge change={value} kind={kind} suffix="نسبت به دوره قبل" /> : null);
   const commerceNote = filtersActive ? "فیلترهای گزارش روی سفارش‌ها اعمال نمی‌شوند." : null;
   // Orders are floored at the storefront cutover (23 Shahrivar). A window the
   // floor clipped holds fewer days than it claims, so comparing it would
@@ -182,7 +182,8 @@ export default function PulseStrip({
             testId="pulse-visitors"
             label="بازدیدکننده"
             loading={overviewLoading && !summary}
-            value={numberText(visitors)}
+            amount={visitors}
+            format={numberText}
             delta={deltaNode(change("visitors", summary, previousSummary), "relative", visitors !== null)}
             spark={visitors === null ? null : trendPoints?.map((point) => point.visitors ?? null)}
             context="هر دستگاه و مرورگر در یک ماه یک بازدیدکننده است."
@@ -191,7 +192,8 @@ export default function PulseStrip({
             testId="pulse-visits"
             label="بازدید"
             loading={overviewLoading && !summary}
-            value={numberText(visits)}
+            amount={visits}
+            format={numberText}
             delta={deltaNode(change("visits", summary, previousSummary), "relative", visits !== null)}
             context={
               visits
@@ -208,10 +210,10 @@ export default function PulseStrip({
                 <span className="text-base font-medium text-amber-800 md:text-lg">
                   ردیابی خرید ناقص است
                 </span>
-              ) : (
-                ratioText(rate.rate)
-              )
+              ) : undefined
             }
+            amount={rate.status === "incomplete" ? undefined : rate.rate}
+            format={ratioText}
             delta={
               rate.status === "ok"
                 ? deltaNode(pointChange(rate.rate, rate.previousRate), "points")
@@ -231,7 +233,8 @@ export default function PulseStrip({
             testId="pulse-orders"
             label="سفارش پرداخت‌شده"
             loading={conversionLoading && !commerce}
-            value={numberText(commerce?.paidOrders)}
+            amount={finite(commerce?.paidOrders)}
+            format={numberText}
             delta={commerceDelta("paidOrders")}
             spark={commercePoints?.map((point) => point.paidOrders)}
             context={
@@ -243,11 +246,8 @@ export default function PulseStrip({
             testId="pulse-revenue"
             label="درآمد خالص"
             loading={conversionLoading && !commerce}
-            value={
-              finite(commerce?.revenueToman) === null
-                ? MISSING
-                : `${compactNumber(commerce?.revenueToman, 2)} تومان`
-            }
+            amount={finite(commerce?.revenueToman)}
+            format={(value) => `${compactNumber(value, 2)} تومان`}
             delta={commerceDelta("revenueToman")}
             spark={commercePoints?.map((point) => point.revenueToman)}
             context={

@@ -44,14 +44,8 @@ export const Legend = dynamic(() => import("recharts").then((m) => m.Legend as a
   ssr: false,
 });
 
-/** Consistent categorical palette for pie/bar charts across every report page. */
-export const REPORT_CHART_COLORS = [
-  "#6366f1",
-  "#22c55e",
-  "#f59e0b",
-  "#ef4444",
-  "#06b6d4",
-  "#a855f7",
-  "#84cc16",
-  "#ec4899",
-];
+/**
+ * The chart colours live in `chartTheme.ts` and are re-exported here, so a
+ * page that draws a chart imports everything from one place.
+ */
+export * from "./chartTheme";

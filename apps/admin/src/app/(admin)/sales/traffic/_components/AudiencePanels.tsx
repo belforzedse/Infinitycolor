@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { FaChrome, FaEdge, FaFirefoxBrowser, FaInstagram, FaOpera, FaSafari, FaWindows } from "react-icons/fa";
 import { SiAndroid, SiApple, SiLinux } from "react-icons/si";
-import { dateText, finite, numberText, percentText, ratioText } from "../format";
+import { dateText, finite, numberText, percentText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import {
   measuredPerformanceRows,
   performanceP75,
@@ -30,10 +30,10 @@ import {
   type VitalKey,
   type VitalRating,
 } from "../presentation";
-import { AnalyticsTable, LabelCell, ShareBar } from "./AnalyticsTable";
+import { AnalyticsTable, LabelCell, ShareCell } from "@/components/SuperAdmin/reports/shared/AnalyticsTable";
 import CompositionBars from "./CompositionBars";
-import { Notice, SectionHeader, Segmented } from "./ui";
-import WeeklyHeatmap from "./WeeklyHeatmap";
+import { Notice, SectionHeader, Segmented } from "@/components/SuperAdmin/reports/shared/ui";
+import WeeklyHeatmap from "@/components/SuperAdmin/reports/shared/WeeklyHeatmap";
 
 type Row = Record<string, unknown>;
 type Icon = ComponentType<{ "aria-hidden"?: boolean; className?: string; focusable?: boolean }>;
@@ -146,7 +146,7 @@ function DimensionTable({
           numeric: true,
           sortValue: (row) => finite(row.visitors),
           render: (row) => (
-            <ShareBar
+            <ShareCell
               share={
                 summaryVisitors && finite(row.visitors) !== null
                   ? (finite(row.visitors) as number) / summaryVisitors
@@ -154,7 +154,7 @@ function DimensionTable({
               }
             >
               {numberText(row.visitors)}
-            </ShareBar>
+            </ShareCell>
           ),
         },
         {
@@ -211,7 +211,13 @@ export function AudiencePanel({
   return (
     <div className="space-y-10">
       <CompositionBars sections={sections} previousSections={previousSections} />
-      <WeeklyHeatmap value={sections.weekly} />
+      <WeeklyHeatmap
+        value={sections.weekly}
+        id="weekly-title"
+        title="ساعت‌های حضور"
+        unit="نشست فعال"
+        intro="میانگین نشست‌های فعال در هر ساعت، به وقت تهران."
+      />
       <div className="grid gap-8 xl:grid-cols-2">
         <section aria-labelledby="tech-title" className="min-w-0 space-y-3">
           <SectionHeader

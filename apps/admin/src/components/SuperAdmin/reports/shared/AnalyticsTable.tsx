@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { FOCUS_RING } from "@/components/admin";
 import { faNum } from "@/utils/faNum";
+import { useEntered } from "./motion";
 
 export type AnalyticsColumn<Row> = {
   key: string;
@@ -22,7 +23,7 @@ const DEFAULT_VISIBLE = 30;
 const STICKY_AFTER = 15;
 
 /**
- * The workspace's one table. Numeric columns align and use tabular figures,
+ * The reports' one table. Numeric columns align and use tabular figures,
  * sorting is stable (ties keep the provider's order), long tables get a sticky
  * header inside their own scroll area, and narrow screens scroll the table
  * horizontally instead of squeezing the label column.
@@ -222,13 +223,21 @@ export function LabelCell({
   );
 }
 
-/** A proportion bar behind a number, for scanning shares inside a table. */
-export function ShareBar({ share, children }: { share: number | null; children: ReactNode }) {
+/**
+ * A proportion bar beside a number, for scanning shares inside a table. The
+ * bar grows in once and follows the value when it changes; it is decorative,
+ * the number beside it is the value.
+ */
+export function ShareCell({ share, children }: { share: number | null; children: ReactNode }) {
+  const entered = useEntered();
   const width = share === null ? 0 : Math.max(0, Math.min(100, share * 100));
   return (
     <span className="inline-flex min-w-[96px] items-center justify-end gap-2">
-      <span aria-hidden className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-100">
-        <span className="block h-full rounded-full bg-infinity-primary/60" style={{ width: `${width}%` }} />
+      <span aria-hidden className="h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-slate-100">
+        <span
+          className="block h-full rounded-full bg-infinity-primary/60 transition-[width] duration-500 ease-out motion-reduce:transition-none"
+          style={{ width: `${entered ? width : 0}%` }}
+        />
       </span>
       <span>{children}</span>
     </span>

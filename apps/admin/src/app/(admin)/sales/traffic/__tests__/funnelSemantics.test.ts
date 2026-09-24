@@ -11,7 +11,7 @@ import {
   ratioText,
   relativeChange,
   signedPointsText,
-} from "../format";
+} from "@/components/SuperAdmin/reports/shared/format";
 import { buildTrendRows } from "../_components/TrendChart";
 import { trendBucketViews } from "../_components/FunnelTrend";
 

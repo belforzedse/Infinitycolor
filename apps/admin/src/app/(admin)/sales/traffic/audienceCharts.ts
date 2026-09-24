@@ -1,20 +1,11 @@
-import { finite } from "./format";
+import { finite } from "@/components/SuperAdmin/reports/shared/format";
+import { OTHER_COLOR, UNKNOWN_COLOR } from "@/components/SuperAdmin/reports/shared/chartTheme";
+import {
+  MAX_NAMED_SEGMENTS,
+  assignColors,
+  type ShareSegment,
+} from "@/components/SuperAdmin/reports/shared/shares";
 import { presentBehaviorValue, type BehaviorDimension } from "./presentation";
-
-/**
- * Five muted identity colours for audience composition. Validated as a set
- * with the dataviz palette checks on the white card surface, *all pairs* (not
- * just neighbours), because which two groups touch in a bar depends on the
- * data: worst normal-vision ΔE 15.4, worst colour-blind ΔE 7.2. That is inside
- * the floor band, which is legal only with secondary encoding, so segments are
- * separated by gaps and every one is named in the legend and the table.
- */
-export const AUDIENCE_PALETTE = ["#4f6cbd", "#53a4ce", "#d4ab52", "#559250", "#c46b8c"] as const;
-/** A faint top highlight over a mark's colour; depth, not decoration. */
-export const MARK_SHEEN = "linear-gradient(180deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 80%)";
-/** Folded tail and unknown values are neutral, never a sixth hue. */
-export const OTHER_COLOR = "#8e97a8";
-export const UNKNOWN_COLOR = "#d3d8e1";
 
 export type CompositionDimension = "device" | "os" | "browser";
 
@@ -28,9 +19,6 @@ const ENTITY_SLOTS: Record<CompositionDimension, Record<string, number>> = {
   os: { ios: 0, windows10: 1, linux: 2, androidos: 3, android: 3, macos: 4 },
   browser: { ios: 0, samsung: 1, chromiumwebview: 2, chrome: 3, instagram: 4 },
 };
-
-/** At most this many named groups get a colour; the rest fold into «سایر». */
-export const MAX_NAMED_SEGMENTS = AUDIENCE_PALETTE.length;
 
 type Row = Record<string, unknown>;
 
@@ -47,14 +35,9 @@ function ratio(numerator: number | null, denominator: number | null) {
   return numerator !== null && denominator ? numerator / denominator : null;
 }
 
-export type CompositionSegment = {
-  kind: "named" | "other" | "unknown";
-  /** Raw Umami value for named segments; a stable id for the folded ones. */
-  key: string;
-  label: string;
-  color: string;
+/** A share segment (keyed by the raw Umami value) with the visitors' behaviour. */
+export type CompositionSegment = ShareSegment & {
   visitors: number;
-  share: number;
   visits: number | null;
   bounceRate: number | null;
   pagesPerVisit: number | null;
@@ -64,8 +47,6 @@ export type CompositionSegment = {
   previousShare: number | null;
   /** Change in share, in percentage points. */
   changePp: number | null;
-  /** Folded «سایر» members, largest first. */
-  members?: Array<{ label: string; share: number }>;
 };
 
 export type Composition = {
@@ -134,22 +115,10 @@ export function buildComposition(
   const folded = known.slice(MAX_NAMED_SEGMENTS);
 
   // Fixed slots first, then free slots in palette order for the rest.
-  const slots = ENTITY_SLOTS[dimension];
-  const taken = new Set<number>();
-  const slotFor = new Map<Row, number>();
-  for (const row of named) {
-    const slot = slots[entityKey(labelOf(row))];
-    if (slot !== undefined && !taken.has(slot)) {
-      taken.add(slot);
-      slotFor.set(row, slot);
-    }
-  }
-  for (const row of named) {
-    if (slotFor.has(row)) continue;
-    const slot = AUDIENCE_PALETTE.findIndex((_, index) => !taken.has(index));
-    taken.add(slot);
-    slotFor.set(row, slot);
-  }
+  const colors = assignColors(
+    named.map((row) => entityKey(labelOf(row))),
+    ENTITY_SLOTS[dimension],
+  );
 
   const segment = (
     kind: CompositionSegment["kind"],
@@ -167,6 +136,7 @@ export function buildComposition(
       key,
       label,
       color,
+      value: stats.visitors,
       share,
       ...stats,
       previousShare,
@@ -179,7 +149,7 @@ export function buildComposition(
       "named",
       labelOf(row),
       presentBehaviorValue(labelOf(row), dimension as BehaviorDimension),
-      AUDIENCE_PALETTE[slotFor.get(row) as number],
+      colors.get(entityKey(labelOf(row))) as string,
       [row],
       [entityKey(labelOf(row))],
     ),
@@ -195,6 +165,7 @@ export function buildComposition(
       [...previousByKey.keys()].filter((key) => key !== "__unknown" && !namedKeys.has(key)),
     );
     other.members = folded.map((row) => ({
+      key: labelOf(row),
       label: presentBehaviorValue(labelOf(row), dimension as BehaviorDimension),
       share: (finite(row.visitors) ?? 0) / total,
     }));
@@ -204,96 +175,4 @@ export function buildComposition(
     segments.push(segment("unknown", "__unknown", "نامشخص", UNKNOWN_COLOR, unknownRows, ["__unknown"]));
   }
   return { dimension, total, segments };
-}
-
-/** Saturday-first Persian week; Umami's grid is Sunday-first (Postgres `dow`). */
-export const PERSIAN_WEEK: ReadonlyArray<{ dow: number; label: string }> = [
-  { dow: 6, label: "شنبه" },
-  { dow: 0, label: "یکشنبه" },
-  { dow: 1, label: "دوشنبه" },
-  { dow: 2, label: "سه‌شنبه" },
-  { dow: 3, label: "چهارشنبه" },
-  { dow: 4, label: "پنجشنبه" },
-  { dow: 5, label: "جمعه" },
-];
-
-/** Seven steps of one navy hue, light (none) to dark (most); lightness-monotone. */
-export const HEAT_RAMP = [
-  "#eff3fa",
-  "#cdd4e5",
-  "#acb7d0",
-  "#8c99bb",
-  "#6d7da6",
-  "#506191",
-  "#34467c",
-] as const;
-
-export type WeeklyCell = {
-  dow: number;
-  hour: number;
-  /** Sessions active in this hour, summed over the range. */
-  total: number;
-  /** Per such weekday in the range; null when the range held none of it. */
-  average: number | null;
-};
-
-export type WeeklyView = {
-  days: Array<{ dow: number; label: string; observedDays: number; cells: WeeklyCell[]; hourlyMean: number | null }>;
-  /** Mean active sessions per hour of the day, over every observed day. */
-  hourProfile: Array<number | null>;
-  max: number;
-  peak: WeeklyCell | null;
-};
-
-/**
- * Averages the weekday × hour grid per occurrence of each weekday. A range
- * holding five Fridays and four Saturdays would otherwise make Friday look
- * busier by construction. Returns null for a missing or malformed section.
- */
-export function buildWeekly(value: unknown): WeeklyView | null {
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-  const sessions = record?.sessions;
-  const days = record?.days;
-  if (!Array.isArray(sessions) || sessions.length !== 7 || !Array.isArray(days) || days.length !== 7) {
-    return null;
-  }
-  const grid = sessions.map((row) =>
-    Array.from({ length: 24 }, (_, hour) => (Array.isArray(row) ? finite(row[hour]) : null)),
-  );
-  if (grid.some((row) => row.some((count) => count === null))) return null;
-  const observed = days.map((count) => finite(count) ?? 0);
-
-  let max = 0;
-  let peak: WeeklyCell | null = null;
-  const view = PERSIAN_WEEK.map(({ dow, label }) => {
-    const cells = grid[dow].map((total, hour) => {
-      const average = observed[dow] ? (total as number) / observed[dow] : null;
-      const cell = { dow, hour, total: total as number, average };
-      if (average !== null && average > max) {
-        max = average;
-        peak = cell;
-      }
-      return cell;
-    });
-    const averages = cells.map((cell) => cell.average).filter((entry): entry is number => entry !== null);
-    return {
-      dow,
-      label,
-      observedDays: observed[dow],
-      cells,
-      hourlyMean: averages.length ? averages.reduce((a, b) => a + b, 0) / averages.length : null,
-    };
-  });
-  const observedTotal = observed.reduce((a, b) => a + b, 0);
-  const hourProfile = Array.from({ length: 24 }, (_, hour) =>
-    observedTotal ? grid.reduce((sum, row) => sum + (row[hour] as number), 0) / observedTotal : null,
-  );
-  return { days: view, hourProfile, max, peak };
-}
-
-/** Step of `HEAT_RAMP` for a value: 0 only for a true zero, then six equal bands. */
-export function heatStep(value: number | null, max: number): number | null {
-  if (value === null) return null;
-  if (value <= 0 || max <= 0) return 0;
-  return Math.min(HEAT_RAMP.length - 1, 1 + Math.floor((value / max) * (HEAT_RAMP.length - 1)));
 }

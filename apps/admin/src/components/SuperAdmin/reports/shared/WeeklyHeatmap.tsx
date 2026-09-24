@@ -1,11 +1,14 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/utils/tailwind";
 import { FOCUS_RING } from "@/components/admin";
-import { numberText } from "../format";
-import { HEAT_RAMP, buildWeekly, heatStep, type WeeklyCell } from "../audienceCharts";
-import { SectionHeader, TableToggle, useChartTip, useEntered } from "./ui";
+import { numberText } from "./format";
+import { ChartTableToggle } from "./ChartTableToggle";
+import { useChartTip } from "./ChartTooltip";
+import { SWAP, useEntered } from "./motion";
+import { SectionHeader } from "./ui";
+import { HEAT_RAMP, buildWeekly, heatStep, type WeeklyCell, type WeeklyView } from "./weekly";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
@@ -19,11 +22,33 @@ function hourSpan(hour: number) {
 }
 
 /**
- * When visitors are on the site: mean sessions active in each hour of each
- * weekday, Tehran time. Hours run left to right like every time axis on the
- * page; weekdays start on Saturday.
+ * When something happens: the mean count in each hour of each weekday,
+ * Tehran time. Hours run left to right like every time axis in the reports;
+ * weekdays start on Saturday. Cells fade in along a diagonal wave, the
+ * hovered or focused cell lifts, and the grid is navigable with the arrow
+ * keys. Every value is also in the table view.
  */
-export default function WeeklyHeatmap({ value }: { value: unknown }) {
+export default function WeeklyHeatmap({
+  value,
+  id,
+  title,
+  unit,
+  intro,
+  extra,
+  className,
+}: {
+  value: unknown;
+  /** Heading id, unique on the page. */
+  id: string;
+  title: string;
+  /** What one count is, singular: «نشست فعال», «سفارش پرداخت‌شده», «اقدام». */
+  unit: string;
+  /** The definition sentence: «میانگین … در هر ساعت، به وقت تهران.» */
+  intro: string;
+  /** A second reading under the description (e.g. the off-hours share). */
+  extra?: (view: WeeklyView) => ReactNode;
+  className?: string;
+}) {
   const weekly = buildWeekly(value);
   const entered = useEntered();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -39,7 +64,7 @@ export default function WeeklyHeatmap({ value }: { value: unknown }) {
   const describe = (dayLabel: string, cell: WeeklyCell) =>
     cell.average === null
       ? `${dayLabel}، ${hourSpan(cell.hour)}: این روز در بازه نبود`
-      : `${plural(dayLabel)}، ${hourSpan(cell.hour)}: میانگین ${numberText(cell.average)} نشست فعال`;
+      : `${plural(dayLabel)}، ${hourSpan(cell.hour)}: میانگین ${numberText(cell.average, cell.average < 10 ? 1 : 0)} ${unit}`;
 
   const move = (row: number, column: number) => {
     const nextRow = Math.max(0, Math.min(days.length - 1, row));
@@ -48,23 +73,26 @@ export default function WeeklyHeatmap({ value }: { value: unknown }) {
   };
 
   return (
-    <section aria-labelledby="weekly-title" className="space-y-3">
+    <section aria-labelledby={id} className={cn("space-y-3", className)}>
       <SectionHeader
-        id="weekly-title"
-        title="ساعت‌های حضور"
+        id={id}
+        title={title}
         description={
-          peak && peakDay
-            ? `میانگین نشست‌های فعال در هر ساعت، به وقت تهران. شلوغ‌ترین زمان: ${plural(peakDay.label)}، ${hourSpan(peak.hour)}.`
-            : "میانگین نشست‌های فعال در هر ساعت، به وقت تهران."
+          <>
+            {peak && peakDay && max > 0
+              ? `${intro} شلوغ‌ترین زمان: ${plural(peakDay.label)}، ${hourSpan(peak.hour)}.`
+              : intro}
+            {extra ? <span className="block">{extra(weekly)}</span> : null}
+          </>
         }
         actions={
-          <TableToggle showing={showTable} onToggle={() => setShowTable((shown) => !shown)} controls={tableId} />
+          <ChartTableToggle showing={showTable} onToggle={() => setShowTable((shown) => !shown)} controls={tableId} />
         }
       />
       {showTable ? (
-        <div id={tableId} className="overflow-x-auto rounded-control border border-slate-200">
+        <div id={tableId} className={cn("overflow-x-auto rounded-control border border-slate-200", SWAP)}>
           <table className="w-full min-w-[900px] text-[11px] tabular-nums">
-            <caption className="sr-only">میانگین نشست‌های فعال در هر ساعت هر روز هفته</caption>
+            <caption className="sr-only">{`${title}: میانگین ${unit} در هر ساعت هر روز هفته`}</caption>
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th scope="col" className="px-2 py-1.5 text-right font-medium">روز</th>
@@ -83,7 +111,7 @@ export default function WeeklyHeatmap({ value }: { value: unknown }) {
                   </th>
                   {day.cells.map((cell) => (
                     <td key={cell.hour} className="px-1 py-1.5 text-center text-slate-800">
-                      {numberText(cell.average)}
+                      {numberText(cell.average, cell.average !== null && cell.average < 10 ? 1 : 0)}
                     </td>
                   ))}
                 </tr>
@@ -92,13 +120,8 @@ export default function WeeklyHeatmap({ value }: { value: unknown }) {
           </table>
         </div>
       ) : (
-        <div ref={containerRef} className="relative">
-          <div
-            role="grid"
-            aria-label="میانگین نشست‌های فعال بر اساس روز هفته و ساعت"
-            className="space-y-0.5"
-            onPointerLeave={tip.hide}
-          >
+        <div ref={containerRef} className={cn("relative", SWAP)}>
+          <div role="grid" aria-label={`${title} بر اساس روز هفته و ساعت`} className="space-y-0.5" onPointerLeave={tip.hide}>
             {days.map((day, row) => (
               <div key={day.dow} role="row" className="flex items-center gap-2">
                 <div role="rowheader" className="w-16 shrink-0 text-xs text-slate-600">
@@ -130,8 +153,10 @@ export default function WeeklyHeatmap({ value }: { value: unknown }) {
                                   "این روز در بازه نبود"
                                 ) : (
                                   <span className="whitespace-nowrap">
-                                    <strong className="text-sm text-slate-900">{numberText(cell.average)}</strong>{" "}
-                                    نشست فعال (میانگین)
+                                    <strong className="text-sm tabular-nums text-slate-900">
+                                      {numberText(cell.average, cell.average < 10 ? 1 : 0)}
+                                    </strong>{" "}
+                                    {unit} (میانگین)
                                   </span>
                                 )}
                               </p>
@@ -159,14 +184,16 @@ export default function WeeklyHeatmap({ value }: { value: unknown }) {
                           move(...target);
                         }}
                         className={cn(
-                          "h-6 rounded-[4px] transition-opacity duration-500 ease-out motion-reduce:transition-none",
+                          "h-6 rounded-[4px] transition-[opacity,transform,box-shadow] duration-500 ease-out motion-reduce:transition-none",
+                          "hover:z-10 hover:scale-110 hover:shadow-md hover:shadow-slate-900/10 hover:duration-150 focus-visible:z-10 focus-visible:scale-110",
                           step === null && "border border-dashed border-slate-200",
                           FOCUS_RING,
                         )}
                         style={{
                           background: step === null ? undefined : HEAT_RAMP[step],
                           opacity: entered ? 1 : 0,
-                          transitionDelay: `${cell.hour * 12}ms`,
+                          // A diagonal wave: early hours of Saturday first, late hours of Friday last.
+                          transitionDelay: entered ? `${(row + cell.hour) * 10}ms` : undefined,
                         }}
                       />
                     );
@@ -193,7 +220,7 @@ export default function WeeklyHeatmap({ value }: { value: unknown }) {
                 <span key={color} className="h-2.5 w-5 rounded-[3px]" style={{ background: color }} />
               ))}
             </span>
-            <span>زیاد ({numberText(max)})</span>
+            <span>زیاد ({numberText(max, max < 10 ? 1 : 0)})</span>
           </div>
           {tip.tip}
         </div>

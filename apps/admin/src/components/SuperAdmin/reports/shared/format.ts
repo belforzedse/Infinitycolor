@@ -1,10 +1,14 @@
 /**
- * Number, date and change formatting for the traffic workspace. Every helper
+ * Number, date and change formatting for every report page. Every helper
  * takes `unknown` and answers «—» for a missing value, so a gap in the data is
- * never printed as a zero.
+ * never printed as a zero. Numbers use Persian digits and grouping; dates are
+ * Jalali, in Tehran time. Money pages that already format with
+ * `priceFormatter` keep doing so; these are the Intl equivalents for charts.
  */
 
 const TEHRAN = "Asia/Tehran";
+/** Persian digits on the Jalali calendar, stated explicitly rather than implied by `fa-IR`. */
+const FA_DATE = "fa-IR-u-ca-persian";
 export const MISSING = "—";
 
 export function finite(value: unknown): number | null {
@@ -107,7 +111,7 @@ export function isDateOnly(value: unknown): value is string {
 /** «۱۲ مهر ۱۴۰۵» for a `YYYY-MM-DD` Tehran date. */
 export function dateText(ymd: unknown, withYear = true): string {
   if (!isDateOnly(ymd)) return MISSING;
-  return tehranNoon(ymd).toLocaleDateString("fa-IR", {
+  return tehranNoon(ymd).toLocaleDateString(FA_DATE, {
     timeZone: TEHRAN,
     day: "numeric",
     month: "long",
@@ -115,19 +119,40 @@ export function dateText(ymd: unknown, withYear = true): string {
   });
 }
 
+/** «شنبه ۲۹ شهریور ۱۴۰۵»: a day with its weekday, for tooltips. */
+export function weekdayDateText(ymd: unknown): string {
+  if (!isDateOnly(ymd)) return MISSING;
+  return tehranNoon(ymd).toLocaleDateString(FA_DATE, {
+    timeZone: TEHRAN,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/** Adds whole days to a `YYYY-MM-DD` date. */
+export function addDays(ymd: string, days: number): string {
+  const date = tehranNoon(ymd);
+  date.setUTCDate(date.getUTCDate() + days);
+  return tehranToday(date);
+}
+
 export function rangeText(start: unknown, end: unknown): string {
   if (!isDateOnly(start) || !isDateOnly(end)) return MISSING;
   return start === end ? dateText(start) : `${dateText(start, false)} تا ${dateText(end)}`;
 }
 
-/** A trend bucket key (`YYYY-MM-DD`, `YYYY-MM-DD HH` or `YYYY-MM`) as a short label. */
-export function bucketText(t: string, unit: "hour" | "day" | "month"): string {
+export type BucketUnit = "hour" | "day" | "week" | "month";
+
+/** A trend bucket key (`YYYY-MM-DD`, `YYYY-MM-DD HH` or `YYYY-MM`) as a short axis label. */
+export function bucketText(t: string, unit: BucketUnit): string {
   if (unit === "hour") {
     const hour = Number(t.slice(11, 13));
     return `${dateText(t.slice(0, 10), false)}، ${formatter({}).format(hour)}:۰۰`;
   }
   if (unit === "month") {
-    return tehranNoon(`${t.slice(0, 7)}-15`).toLocaleDateString("fa-IR", {
+    return tehranNoon(`${t.slice(0, 7)}-15`).toLocaleDateString(FA_DATE, {
       timeZone: TEHRAN,
       month: "long",
       year: "numeric",
@@ -136,11 +161,21 @@ export function bucketText(t: string, unit: "hour" | "day" | "month"): string {
   return dateText(t.slice(0, 10), false);
 }
 
+/**
+ * The days a bucket covers, for tooltips: «۲۴ تا ۳۰ شهریور ۱۴۰۵». Week and
+ * month buckets are named by their span rather than a month name, because a
+ * calendar-month bucket spans two Jalali months.
+ */
+export function bucketSpanText(first: string, last: string): string {
+  if (!isDateOnly(first) || !isDateOnly(last)) return MISSING;
+  return first === last ? weekdayDateText(first) : rangeText(first, last);
+}
+
 export function dateTimeText(value?: string | null): string {
   if (!value) return "نامشخص";
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime())
-    ? parsed.toLocaleString("fa-IR", { timeZone: TEHRAN })
+    ? parsed.toLocaleString(FA_DATE, { timeZone: TEHRAN })
     : "نامشخص";
 }
 

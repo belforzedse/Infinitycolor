@@ -2,15 +2,15 @@
 
 import { useState } from "react";
 import JourneyFlow from "@/components/SuperAdmin/reports/shared/JourneyFlow";
-import { durationText, finite, numberText, ratioText } from "../format";
+import { durationText, finite, numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import {
   CHECKOUT_EVENT_NAMES,
   presentBehaviorValue,
   presentJourneyStep,
   presentPath,
 } from "../presentation";
-import { AnalyticsTable, LabelCell, ShareBar } from "./AnalyticsTable";
-import { SectionHeader, Segmented } from "./ui";
+import { AnalyticsTable, LabelCell, ShareCell } from "@/components/SuperAdmin/reports/shared/AnalyticsTable";
+import { SectionHeader, Segmented } from "@/components/SuperAdmin/reports/shared/ui";
 
 type Row = Record<string, unknown>;
 
@@ -125,7 +125,7 @@ export default function ContentPanel({
               numeric: true,
               sortValue: (row) => finite(row.visitors),
               render: (row) => (
-                <ShareBar
+                <ShareCell
                   share={
                     summaryVisitors && finite(row.visitors) !== null
                       ? (finite(row.visitors) as number) / summaryVisitors
@@ -133,7 +133,7 @@ export default function ContentPanel({
                   }
                 >
                   {numberText(row.visitors)}
-                </ShareBar>
+                </ShareCell>
               ),
             },
             ...(pageView === "entry"

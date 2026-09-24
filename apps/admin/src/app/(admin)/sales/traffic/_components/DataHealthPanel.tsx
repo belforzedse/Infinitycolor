@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { BehaviorResponse, PurchaseTracking } from "@/types/super-admin/reports/behavior";
-import { dateText, dateTimeText, numberText } from "../format";
+import { dateText, dateTimeText, numberText } from "@/components/SuperAdmin/reports/shared/format";
 import { presentAnalyticsMessage } from "../presentation";
 import { PurchaseReconciliation } from "./ConversionRates";
 

@@ -4,9 +4,10 @@ import { AlertTriangle, ArrowDown, TrendingDown } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { faNum } from "@/utils/faNum";
 import type { FunnelAnalysis, FunnelStepView } from "../funnelSemantics";
-import { numberText, ratioText } from "../format";
+import { numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import { presentFunnelStep } from "../presentation";
-import { COMPARISON_COLOR, Delta, SERIES_COLOR } from "./ui";
+import { DeltaBadge } from "@/components/SuperAdmin/reports/shared/DeltaBadge";
+import { COMPARISON_COLOR, SERIES_COLOR } from "@/components/SuperAdmin/reports/shared/chartTheme";
 
 const HATCH =
   "repeating-linear-gradient(135deg, #cbd5e1 0 4px, #f1f5f9 4px 8px)";
@@ -54,7 +55,7 @@ function Transition({
         </span>
       ) : null}
       {compare && step.previous ? (
-        <Delta change={step.fromPreviousChangePp} kind="points" suffix="نسبت به دوره قبل" />
+        <DeltaBadge change={step.fromPreviousChangePp} kind="points" suffix="نسبت به دوره قبل" />
       ) : null}
     </div>
   );

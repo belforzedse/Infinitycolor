@@ -12,7 +12,7 @@ import type { BehaviorFilters } from "@/types/super-admin/reports/behavior";
 import { validateBehaviorQuery } from "@/services/super-admin/reports/behavior";
 import { cn } from "@/utils/tailwind";
 import { faNum } from "@/utils/faNum";
-import { dateTimeText } from "../format";
+import { dateTimeText } from "@/components/SuperAdmin/reports/shared/format";
 import {
   activeFilterKeys,
   BROWSER_OPTIONS,

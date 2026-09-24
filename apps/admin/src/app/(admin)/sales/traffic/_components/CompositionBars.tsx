@@ -1,17 +1,18 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
-import { cn } from "@/utils/tailwind";
-import { FOCUS_RING } from "@/components/admin";
-import { numberText, ratioText } from "../format";
+import { useRef, type ReactNode } from "react";
+import { numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import {
-  MARK_SHEEN,
   buildComposition,
   type Composition,
   type CompositionDimension,
   type CompositionSegment,
 } from "../audienceCharts";
-import { Delta, SectionHeader, rovingKey, useChartTip, useEntered } from "./ui";
+import { useChartTip } from "@/components/SuperAdmin/reports/shared/ChartTooltip";
+import { DeltaBadge } from "@/components/SuperAdmin/reports/shared/DeltaBadge";
+import { useEntered } from "@/components/SuperAdmin/reports/shared/motion";
+import { ShareBar } from "@/components/SuperAdmin/reports/shared/ShareBar";
+import { SectionHeader } from "@/components/SuperAdmin/reports/shared/ui";
 
 const DIMENSIONS: ReadonlyArray<{ id: CompositionDimension; label: string }> = [
   { id: "device", label: "دستگاه" },
@@ -40,7 +41,7 @@ function TipContent({ segment }: { segment: CompositionSegment }) {
         </p>
       ) : null}
       {segment.changePp !== null ? (
-        <Delta className="mt-1" kind="points" neutral change={segment.changePp} suffix="سهم، نسبت به دوره قبل" />
+        <DeltaBadge className="mt-1" kind="points" neutral change={segment.changePp} suffix="سهم، نسبت به دوره قبل" />
       ) : null}
       {segment.members?.length ? (
         <p className="mt-1 text-slate-500">
@@ -70,17 +71,8 @@ function CompositionRow({
   onShow: (mark: Element, content: ReactNode) => void;
   onHide: () => void;
 }) {
-  const [active, setActive] = useState<string | null>(null);
-  const [focusIndex, setFocusIndex] = useState(0);
-  const refs = useRef<Array<HTMLDivElement | null>>([]);
   const { segments } = composition;
-  const activate = (index: number | null, mark?: Element | null) => {
-    setActive(index === null ? null : segments[index].key);
-    if (index === null || !mark) onHide();
-    else onShow(mark, <TipContent segment={segments[index]} />);
-  };
   const lead = segments[0];
-
   return (
     <div className="grid gap-x-6 gap-y-2 md:grid-cols-[132px_minmax(0,1fr)] md:items-start">
       <div className="min-w-0">
@@ -91,75 +83,16 @@ function CompositionRow({
           </p>
         ) : null}
       </div>
-      <div className="min-w-0">
-        <div
-          role="group"
-          aria-label={`ترکیب بازدیدکنندگان بر اساس ${label}`}
-          className={cn(
-            "flex w-full gap-0.5 transition-[clip-path] duration-700 ease-out motion-reduce:transition-none",
-          )}
-          style={{
-            clipPath: entered ? "inset(0 0 0 0)" : "inset(0 0 0 100%)",
-            transitionDelay: `${order * 90}ms`,
-          }}
-          onPointerLeave={() => activate(null)}
-        >
-          {segments.map((segment, index) => (
-            <div
-              key={segment.key}
-              ref={(node) => {
-                refs.current[index] = node;
-              }}
-              role="img"
-              aria-label={segmentLabel(segment)}
-              tabIndex={index === focusIndex ? 0 : -1}
-              onPointerEnter={(event) => activate(index, event.currentTarget)}
-              onFocus={(event) => {
-                setFocusIndex(index);
-                activate(index, event.currentTarget);
-              }}
-              onBlur={() => activate(null)}
-              onKeyDown={(event) => {
-                const next = rovingKey(event.key, index, segments.length);
-                if (next === null) return;
-                event.preventDefault();
-                refs.current[next]?.focus();
-              }}
-              // The hit area is taller than the slim painted bar.
-              className={cn(
-                "flex h-6 min-w-[3px] cursor-default items-center rounded-[4px] transition-[flex-grow,opacity] duration-500 ease-out motion-reduce:transition-none",
-                "first:[&>span]:rounded-r-full last:[&>span]:rounded-l-full",
-                active !== null && active !== segment.key && "opacity-40",
-                FOCUS_RING,
-              )}
-              style={{ flexGrow: segment.share, flexBasis: 0 }}
-            >
-              <span
-                aria-hidden
-                className="block h-4 w-full"
-                style={{ background: `${MARK_SHEEN}, ${segment.color}` }}
-              />
-            </div>
-          ))}
-        </div>
-        <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
-          {segments.map((segment, index) => (
-            <li
-              key={segment.key}
-              className={cn(
-                "flex items-center gap-1.5 transition-opacity",
-                active !== null && active !== segment.key && "opacity-50",
-              )}
-              onPointerEnter={() => activate(index, refs.current[index])}
-              onPointerLeave={() => activate(null)}
-            >
-              <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: segment.color }} />
-              <span>{segment.label}</span>
-              <span className="tabular-nums text-slate-500">{ratioText(segment.share)}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <ShareBar
+        segments={segments}
+        label={`ترکیب بازدیدکنندگان بر اساس ${label}`}
+        describe={segmentLabel}
+        tipContent={(segment) => <TipContent segment={segment} />}
+        onShow={onShow}
+        onHide={onHide}
+        entered={entered}
+        order={order}
+      />
     </div>
   );
 }

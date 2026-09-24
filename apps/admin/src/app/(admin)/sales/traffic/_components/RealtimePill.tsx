@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Radio } from "lucide-react";
 import { FOCUS_RING } from "@/components/admin";
 import { cn } from "@/utils/tailwind";
-import { dateTimeText, finite, numberText } from "../format";
+import { dateTimeText, finite, numberText } from "@/components/SuperAdmin/reports/shared/format";
 import { presentAnalyticsMessage, presentPath } from "../presentation";
 import { useRealtime } from "./useBehaviorData";
 

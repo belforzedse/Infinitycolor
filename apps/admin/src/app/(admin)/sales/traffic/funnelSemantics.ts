@@ -4,7 +4,7 @@ import type {
   PurchaseTracking,
   PurchaseTrackingStatus,
 } from "@/types/super-admin/reports/behavior";
-import { finite, pointChange } from "./format";
+import { finite, pointChange } from "@/components/SuperAdmin/reports/shared/format";
 
 /**
  * Funnel and conversion semantics for the traffic workspace, in one place so

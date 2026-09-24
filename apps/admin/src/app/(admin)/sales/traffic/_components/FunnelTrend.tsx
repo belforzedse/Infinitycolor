@@ -16,7 +16,7 @@ import type {
   CommerceSeriesPoint,
   ConversionTrendBucket,
 } from "@/types/super-admin/reports/behavior";
-import { dateText, numberText, percentText, ratioText } from "../format";
+import { dateText, numberText, percentText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import {
   analyzeFunnel,
   paidOrdersBetween,
@@ -24,8 +24,19 @@ import {
   type FunnelAnalysis,
 } from "../funnelSemantics";
 import { presentFunnelStep } from "../presentation";
-import { AnalyticsTable } from "./AnalyticsTable";
-import { Notice, SERIES_COLOR, TableToggle } from "./ui";
+import { AnalyticsTable } from "@/components/SuperAdmin/reports/shared/AnalyticsTable";
+import { ChartTableToggle } from "@/components/SuperAdmin/reports/shared/ChartTableToggle";
+import {
+  AXIS_COLOR,
+  AXIS_TICK,
+  CURSOR_COLOR,
+  GRID_COLOR,
+  SERIES_COLOR,
+} from "@/components/SuperAdmin/reports/shared/chartTheme";
+import { TOOLTIP_SURFACE, useTooltipEscape } from "@/components/SuperAdmin/reports/shared/ChartTooltip";
+import { DURATION, usePrefersReducedMotion } from "@/components/SuperAdmin/reports/shared/motion";
+import { isolatedDot } from "@/components/SuperAdmin/reports/shared/TimeSeriesChart";
+import { Notice } from "@/components/SuperAdmin/reports/shared/ui";
 
 export type TrendBucketView = {
   bucket: ConversionTrendBucket;
@@ -113,6 +124,8 @@ export default function FunnelTrend({
 }) {
   const [rateId, setRateId] = useState<RateId>("overall");
   const [showTable, setShowTable] = useState(false);
+  const escape = useTooltipEscape();
+  const reduced = usePrefersReducedMotion();
   const tableId = useId();
   const options = useMemo(
     () => [
@@ -169,7 +182,7 @@ export default function FunnelTrend({
             ))}
           </select>
         </label>
-        <TableToggle showing={showTable} onToggle={() => setShowTable((v) => !v)} controls={tableId} />
+        <ChartTableToggle showing={showTable} onToggle={() => setShowTable((v) => !v)} controls={tableId} />
       </div>
       <p className="mt-2 text-xs leading-5 text-slate-600">
         {rateId === "overall"
@@ -239,20 +252,26 @@ export default function FunnelTrend({
           این نرخ در هیچ دوره‌ای قابل محاسبه نیست (ورودی صفر یا ثبت ناقص خرید).
         </Notice>
       ) : (
-        <div className="mt-3 h-[280px]" dir="ltr" role="img" aria-label={`روند نرخ ${selectedLabel}؛ مقدارهای دقیق در «نمایش جدول»`}>
+        <div
+          className="mt-3 h-[280px]"
+          dir="ltr"
+          role="figure"
+          aria-label={`روند نرخ ${selectedLabel}؛ با کلیدهای جهت‌نما بین دوره‌ها بروید، مقدارهای دقیق در «نمایش جدول»`}
+          {...escape.handlers}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={rows} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
-              <CartesianGrid vertical={false} stroke="#eef1f5" />
+              <CartesianGrid vertical={false} stroke={GRID_COLOR} />
               <XAxis
                 dataKey="label"
-                tick={{ fontSize: 11, fill: "#475569" }}
+                tick={AXIS_TICK}
                 tickLine={false}
-                axisLine={{ stroke: "#e2e8f0" }}
+                axisLine={{ stroke: AXIS_COLOR }}
                 interval="preserveStartEnd"
                 minTickGap={24}
               />
               <YAxis
-                tick={{ fontSize: 11, fill: "#475569" }}
+                tick={AXIS_TICK}
                 tickLine={false}
                 axisLine={false}
                 width={48}
@@ -260,12 +279,14 @@ export default function FunnelTrend({
                 tickFormatter={(value: number) => percentText(value, 0)}
               />
               <Tooltip
-                cursor={{ stroke: "#94a3b8", strokeWidth: 1 }}
+                active={escape.active}
+                cursor={{ stroke: CURSOR_COLOR, strokeWidth: 1 }}
+                animationDuration={DURATION.micro}
                 content={({ active, payload }) => {
                   const row = payload?.[0]?.payload as (typeof rows)[number] | undefined;
                   if (!active || !row) return null;
                   return (
-                    <div dir="rtl" className="rounded-control border border-slate-200 bg-white px-3 py-2 text-xs shadow-md">
+                    <div dir="rtl" className={`${TOOLTIP_SURFACE} text-xs`}>
                       <p className="text-slate-600">
                         {row.label}
                         {row.bucket.incomplete ? " (ناتمام)" : ""}
@@ -283,8 +304,11 @@ export default function FunnelTrend({
                 dataKey="settled"
                 stroke={SERIES_COLOR}
                 strokeWidth={2}
-                dot={{ r: 3, fill: SERIES_COLOR, stroke: "#fff", strokeWidth: 2 }}
-                isAnimationActive={false}
+                dot={isolatedDot("settled")}
+                activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
+                isAnimationActive={!reduced}
+                animationDuration={DURATION.chart}
+                animationEasing="ease-out"
                 connectNulls={false}
               />
               <Line

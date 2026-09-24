@@ -3,13 +3,14 @@
 import { CheckCircle2, CircleHelp, AlertTriangle } from "lucide-react";
 import type { PurchaseTracking } from "@/types/super-admin/reports/behavior";
 import { cn } from "@/utils/tailwind";
-import { numberText, ratioText } from "../format";
+import { numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import {
   CONVERSION_DEFINITIONS,
   conversionRate,
   type ConversionDefinitionId,
 } from "../funnelSemantics";
-import { Delta, Sparkline } from "./ui";
+import { DeltaBadge } from "@/components/SuperAdmin/reports/shared/DeltaBadge";
+import { Sparkline } from "@/components/SuperAdmin/reports/shared/Sparkline";
 
 type Inputs = Parameters<typeof conversionRate>[1];
 
@@ -112,7 +113,7 @@ export default function ConversionRates({
                       : `${numberText(rate.numerator)} ${definition.numerator} از ${numberText(rate.denominator)} ${definition.denominator}`}
                 </span>
                 {compare && rate.status === "ok" ? (
-                  <Delta change={rate.changePp} kind="points" suffix="نسبت به دوره قبل" />
+                  <DeltaBadge change={rate.changePp} kind="points" suffix="نسبت به دوره قبل" />
                 ) : null}
                 <span className="text-[10px] text-slate-500">{definition.source}</span>
               </dd>

@@ -14,7 +14,10 @@ import type {
   TrendPoint,
 } from "@/types/super-admin/reports/behavior";
 import { cn } from "@/utils/tailwind";
-import { dateText, finite, tehranToday } from "./format";
+import { dateText, finite, tehranToday } from "@/components/SuperAdmin/reports/shared/format";
+import { SWAP } from "@/components/SuperAdmin/reports/shared/motion";
+import ReportTabs from "@/components/SuperAdmin/reports/shared/ReportTabs";
+import { Notice } from "@/components/SuperAdmin/reports/shared/ui";
 import { filtersFromValues, URL_FILTER_KEYS } from "./filters";
 import { isOpenRange } from "./funnelSemantics";
 import { presentAnalyticsMessage } from "./presentation";
@@ -27,9 +30,7 @@ import PulseStrip from "./_components/PulseStrip";
 import { useRealtimePill } from "./_components/RealtimePill";
 import TrafficToolbar from "./_components/TrafficToolbar";
 import TrendChart, { type TrendMetric } from "./_components/TrendChart";
-import { Notice } from "./_components/ui";
 import { useBehaviorView } from "./_components/useBehaviorData";
-import WorkspaceTabs from "./_components/WorkspaceTabs";
 
 /**
  * The workspace's sections. Summary and funnel read the two reports loaded on
@@ -245,7 +246,7 @@ export default function BehaviorReportPage() {
           start={start}
         />
 
-        <WorkspaceTabs
+        <ReportTabs
           tabs={TABS}
           value={view}
           onChange={(next) => set({ view: next === "overview" ? null : next })}
@@ -254,10 +255,11 @@ export default function BehaviorReportPage() {
         />
 
         <div
+          key={view}
           id="traffic-panel"
           role="tabpanel"
           aria-labelledby={`traffic-tab-${view}`}
-          className="space-y-4 lg:space-y-6"
+          className={cn("space-y-4 lg:space-y-6", SWAP)}
         >
           {view === "overview" ? (
             <>

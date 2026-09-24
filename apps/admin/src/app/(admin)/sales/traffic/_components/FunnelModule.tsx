@@ -13,7 +13,7 @@ import type {
   PurchaseTracking,
   StepFilterScope,
 } from "@/types/super-admin/reports/behavior";
-import { numberText, ratioText } from "../format";
+import { numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import { FILTER_LABELS } from "../filters";
 import {
   analyzeFunnel,
@@ -27,7 +27,8 @@ import FunnelBars from "./FunnelBars";
 import FunnelBreakdown from "./FunnelBreakdown";
 import FunnelDropoff from "./FunnelDropoff";
 import FunnelTrend, { trendBucketViews } from "./FunnelTrend";
-import { Delta, Notice, SectionHeader, Segmented } from "./ui";
+import { DeltaBadge } from "@/components/SuperAdmin/reports/shared/DeltaBadge";
+import { Notice, SectionHeader, Segmented } from "@/components/SuperAdmin/reports/shared/ui";
 import { useConversionDetail, type Resource } from "./useBehaviorData";
 
 export type FunnelScope = FunnelKey | "discovery";
@@ -271,7 +272,7 @@ export default function FunnelModule({
                 <>
                   از ورودی‌ها
                   {compare ? (
-                    <Delta className="ms-2" change={analysis.overallChangePp} kind="points" />
+                    <DeltaBadge className="ms-2" change={analysis.overallChangePp} kind="points" />
                   ) : null}
                 </>
               }

@@ -6,7 +6,7 @@ import { FOCUS_RING, InlineLoadingState } from "@/components/admin";
 import { cn } from "@/utils/tailwind";
 import type { BehaviorQuery } from "@/types/super-admin/reports/behavior";
 import type { FunnelAnalysis, FunnelStepView } from "../funnelSemantics";
-import { finite, numberText, ratioText } from "../format";
+import { finite, numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import {
   CHECKOUT_EVENT_NAMES,
   presentAnalyticsMessage,
@@ -14,8 +14,9 @@ import {
   presentFunnelStep,
   presentJourneyStep,
 } from "../presentation";
-import { AnalyticsTable, LabelCell } from "./AnalyticsTable";
-import { Delta, Notice } from "./ui";
+import { AnalyticsTable, LabelCell } from "@/components/SuperAdmin/reports/shared/AnalyticsTable";
+import { DeltaBadge } from "@/components/SuperAdmin/reports/shared/DeltaBadge";
+import { Notice } from "@/components/SuperAdmin/reports/shared/ui";
 import { useConversionDetail } from "./useBehaviorData";
 
 type Transition = { from: FunnelStepView; to: FunnelStepView };
@@ -152,7 +153,7 @@ export default function FunnelDropoff({
                   render: ({ to }: Transition) => (
                     // A falling drop-off rate is good, so show the drop-off change
                     // (the negation of the continuation change) with lower-is-better.
-                    <Delta
+                    <DeltaBadge
                       change={to.fromPreviousChangePp === null ? null : -to.fromPreviousChangePp}
                       kind="points"
                       lowerIsBetter

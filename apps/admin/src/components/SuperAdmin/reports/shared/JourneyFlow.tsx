@@ -2,15 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ResponsiveContainer, Sankey } from "./charts";
+import { CATEGORICAL_PALETTE, CURSOR_COLOR, OTHER_COLOR } from "./chartTheme";
 import { buildJourneyFlow, type JourneyNode, type JourneyRow } from "./journeyFlow";
 import { faNum } from "@/utils/faNum";
 
-/** Depth-column palette. Skips REPORT_CHART_COLORS[3] (#ef4444, red) —
- * that hue is reserved for negative-change semantics in MetricCard/KpiCard
- * and reusing it for a neutral column would misleadingly read as "bad". */
-const DEPTH_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#06b6d4"];
-const TERMINAL_OVERFLOW_COLOR = "#94a3b8";
-const LINK_COLOR = "#94a3b8";
+/**
+ * One colour per step depth, from the shared validated palette (red is
+ * reserved for bad change, so a neutral column never borrows it). The folded
+ * tail is neutral grey, like «سایر» everywhere else.
+ */
+const DEPTH_COLORS = CATEGORICAL_PALETTE.slice(0, 4);
+const TERMINAL_OVERFLOW_COLOR = OTHER_COLOR;
+const LINK_COLOR = CURSOR_COLOR;
 const MOBILE_BREAKPOINT = 640;
 const SANKEY_HEIGHT = 420;
 const MAX_LABEL_CHARS = 24;

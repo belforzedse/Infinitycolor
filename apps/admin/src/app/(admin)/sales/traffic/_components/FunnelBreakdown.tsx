@@ -6,11 +6,11 @@ import type {
   BreakdownDimension,
   ConversionBreakdownSegment,
 } from "@/types/super-admin/reports/behavior";
-import { numberText, ratioText } from "../format";
+import { numberText, ratioText } from "@/components/SuperAdmin/reports/shared/format";
 import { analyzeFunnel, type FunnelAnalysis } from "../funnelSemantics";
 import { presentBehaviorValue, presentFunnelStep } from "../presentation";
-import { AnalyticsTable, LabelCell, ShareBar } from "./AnalyticsTable";
-import { Notice, Segmented } from "./ui";
+import { AnalyticsTable, LabelCell, ShareCell } from "@/components/SuperAdmin/reports/shared/AnalyticsTable";
+import { Notice, Segmented } from "@/components/SuperAdmin/reports/shared/ui";
 
 export const BREAKDOWN_OPTIONS: ReadonlyArray<{ id: BreakdownDimension; label: string }> = [
   { id: "device", label: "دستگاه" },
@@ -111,7 +111,7 @@ export default function FunnelBreakdown({
                 numeric: true,
                 sortValue: (view) => view.analysis?.entrants ?? null,
                 render: (view) => (
-                  <ShareBar
+                  <ShareCell
                     share={
                       totalEntrants && view.analysis
                         ? (view.analysis.entrants ?? 0) / totalEntrants
@@ -119,7 +119,7 @@ export default function FunnelBreakdown({
                     }
                   >
                     {numberText(view.analysis?.entrants)}
-                  </ShareBar>
+                  </ShareCell>
                 ),
               },
               ...stepEvents.slice(1).map((event, index) => ({
