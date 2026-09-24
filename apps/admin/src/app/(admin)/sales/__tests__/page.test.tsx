@@ -76,6 +76,22 @@ function makeResponse(overrides: Partial<any> = {}) {
   };
 }
 
+/**
+ * The reconciliation formula's box. KPI cards show their titles while
+ * loading, so wait for the formula itself rather than the first «فروش ناخالص».
+ */
+async function findFormula() {
+  let formula: HTMLElement | undefined;
+  await waitFor(() => {
+    formula = screen
+      .getAllByText("فروش ناخالص")
+      .map((el) => el.closest("div.rounded-xl"))
+      .find(Boolean) as HTMLElement | undefined;
+    expect(formula).toBeTruthy();
+  });
+  return formula as HTMLElement;
+}
+
 describe("OverviewReportPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -101,9 +117,7 @@ describe("OverviewReportPage", () => {
     render(<OverviewReportPage />);
 
     // gross 1,120,000 − shipping 120,000 − discounts 50,000 − refunds 50,000 = net 900,000.
-    const formula = (await screen.findAllByText("فروش ناخالص"))
-      .map((el) => el.closest("div.rounded-xl"))
-      .find(Boolean) as HTMLElement;
+    const formula = await findFormula();
     expect(formula).toBeTruthy();
     expect(formula).toHaveTextContent("۱٬۱۲۰٬۰۰۰ تومان");
     expect(formula).toHaveTextContent("۱۲۰٬۰۰۰ تومان");
@@ -132,9 +146,7 @@ describe("OverviewReportPage", () => {
     getOverviewMock.mockResolvedValue(response);
     render(<OverviewReportPage />);
 
-    const formula = (await screen.findAllByText("فروش ناخالص"))
-      .map((el) => el.closest("div.rounded-xl"))
-      .find(Boolean) as HTMLElement;
+    const formula = await findFormula();
     // 1,000,000 − 50,000 − 50,000 = 900,000, the pre-D16 arithmetic.
     expect(formula).toHaveTextContent("۱٬۰۰۰٬۰۰۰ تومان");
     expect(formula).toHaveTextContent("۹۰۰٬۰۰۰ تومان");

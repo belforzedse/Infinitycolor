@@ -28,6 +28,34 @@ export interface OverviewResponse {
      */
     shipping?: Delta;
   };
+  /**
+   * The same figures per Tehran bucket of the queried window (gross carries
+   * shipping, as above). Optional: absent against an older API image.
+   */
+  series?: {
+    grouping: "day" | "week" | "month";
+    points: Array<{
+      bucket: string;
+      gross: number;
+      shipping: number;
+      net: number;
+      units: number;
+      orders: number;
+      discounts: number;
+      refunds: number;
+    }>;
+  };
+  /**
+   * When paid orders were placed: `counts[d][h]` summed over the window
+   * (row 0 = Sunday), `days[d]` how many of each weekday it held. Optional
+   * like `series`.
+   */
+  weekly?: {
+    timezone: string;
+    firstDay: "sunday";
+    counts: number[][];
+    days: number[];
+  };
   analyticsDelivery: {
     status: "healthy" | "pending" | "attention";
     total: number;
