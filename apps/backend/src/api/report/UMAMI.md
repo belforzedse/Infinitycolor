@@ -51,7 +51,42 @@ content, audience, performance, and realtime. Responses distinguish `ok`,
 Metadata always includes source, timezone, currency, definition version,
 data-start date, refresh time, and cache state.
 
+Metadata also carries `provider.contractVersion` (the Umami release the
+contract targets, 3.3.1; declared, since Umami has no version endpoint).
+
 Historical responses cache for 60 seconds with stale-if-error, advanced reports
 cache for five minutes, and realtime caches for ten seconds. Identical cold
 provider requests are coalesced, reader tokens are refreshed once after an auth
 failure, and every website id is a canonical UUID from the explicit allowlist.
+
+### What each view adds (definition `umami-infinity-v2`)
+
+- **overview** `sections.trend`: pageviews and distinct sessions per Tehran
+  bucket from `/pageviews` (hourly up to 2 days, daily up to 120, then monthly).
+  A bucket Umami returned nothing for, or one before the data-start date, is
+  `null`, never 0.
+- **conversion** `sections.coreFunnel`: the end-to-end funnel
+  (`UMAMI_FUNNELS.core`). `discoveryFunnel` is derived from its first three
+  steps, not requested separately. `sections.commerce.series` gives paid
+  orders and net revenue per bucket from the orders database.
+  `sections.purchaseTracking` compares Umami `purchase` sessions with paid
+  orders: `unknown` under 5 orders, `not_live` below 5% coverage, `degraded`
+  below 50%, `live` otherwise. The admin withholds purchase-based rates unless
+  the status is `live` or `unknown`.
+- **Step filters.** Funnels, the purchase goal and attribution receive only
+  session-level filters (device, OS, browser, language, country, region, city,
+  segment, cohort). Umami tests every other filter (path, referrer, title,
+  tag, hostname, event, UTM) against individual event rows: the first step's
+  row on Postgres, every step's row on ClickHouse. A campaign filter would then
+  keep only visitors whose product view itself carried the campaign URL, not
+  the visitors the campaign brought. `sections.stepFilters` lists what was
+  applied and what was ignored. With session filters active, an unfiltered
+  `purchaseGoalAll` is fetched too, because the orders ledger that
+  `purchaseTracking` reconciles against is never filtered.
+- **Drill-downs** of the conversion view, loaded on demand with the same
+  capability: `detail=trend&funnel=core|checkout|payment` (one funnel and
+  goal per bucket, at most 12), `detail=breakdown&dimension=device|os|browser`
+  (the top 5 segments, one funnel each), and `detail=journey&step=<funnel
+  event>` (journeys starting at that step). Values outside the allowlists are
+  rejected with `INVALID_CONVERSION_DETAIL`.
+- Event tables leave out the server diagnostics `order_paid` and `refund`.

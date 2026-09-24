@@ -15,14 +15,22 @@ import {
 import { METRIC_CATALOG } from "../analytics/metrics/catalog";
 import { DELIVERABLE_EVENT_TYPES } from "../analytics/outbox";
 import {
+  conversionDetailKey,
   getUmamiBehaviorReport,
+  getUmamiConversionDetail,
   getUmamiRealtimeReport,
   isUmamiConfigured,
   normalizeRange,
   normalizeUmamiFilters,
+  parseConversionDetail,
   previousRange,
+  seriesKeys,
+  seriesUnitForRange,
+  umamiDataStart,
+  UMAMI_CONTRACT_VERSION,
   UMAMI_DEFINITION_VERSION,
   UMAMI_REPORT_TIMEZONE,
+  type ConversionDetailRequest,
 } from "../services/umami";
 
 type Interval = "day" | "week" | "month";
@@ -90,9 +98,9 @@ function behaviorMeta(
     // The only money in a behavior response is the commerce section, in Toman.
     currency: "Toman",
     definitionVersion: UMAMI_DEFINITION_VERSION,
-    dataStart: /^\d{4}-\d{2}-\d{2}$/.test(String(process.env.UMAMI_DATA_START_DATE || ""))
-      ? String(process.env.UMAMI_DATA_START_DATE)
-      : "2026-08-09",
+    // Declared, not detected: Umami has no version endpoint.
+    provider: { name: "Umami", contractVersion: UMAMI_CONTRACT_VERSION },
+    dataStart: umamiDataStart(),
     refreshedAt,
     cache,
     status,
@@ -104,7 +112,7 @@ function behaviorMeta(
 }
 
 function behaviorCacheKey(
-  kind: BehaviorKind,
+  kind: string,
   range: { startDate: string; endDate: string },
   filters: Record<string, string>,
   advanced: boolean,
@@ -122,6 +130,8 @@ type BehaviorReadOptions = {
   filters?: Record<string, unknown>;
   fresh?: boolean;
   comparison?: boolean;
+  /** A lazily requested conversion drill-down; never compared, cached on its own key. */
+  detail?: ConversionDetailRequest;
 };
 
 async function readBehaviorReport(
@@ -130,9 +140,11 @@ async function readBehaviorReport(
   options: BehaviorReadOptions = {},
 ) {
   const filters = normalizeUmamiFilters(options.filters || {});
-  const wantsComparison = Boolean(options.comparison);
+  const detail = options.detail;
+  const wantsComparison = Boolean(options.comparison) && !detail;
   const comparisonRange = wantsComparison ? previousRange(range) : null;
-  const key = behaviorCacheKey(kind, range, filters, Boolean(options.advanced), wantsComparison);
+  const cacheKind = detail ? `${kind}:${conversionDetailKey(detail)}` : kind;
+  const key = behaviorCacheKey(cacheKind, range, filters, Boolean(options.advanced), wantsComparison);
   const now = Date.now();
   const cached = behaviorCache.get(key);
   const freshTtl = options.advanced ? 5 * 60_000 : 60_000;
@@ -146,11 +158,13 @@ async function readBehaviorReport(
 
   const reportPromise = (async () => {
     const providerOptions = { advanced: options.advanced, filters };
+    const load = (target: { startDate: string; endDate: string }) =>
+      detail
+        ? getUmamiConversionDetail(detail, target, providerOptions)
+        : getUmamiBehaviorReport(kind, target, providerOptions);
     const [report, comparisonReport] = await Promise.all([
-      getUmamiBehaviorReport(kind, range, providerOptions),
-      comparisonRange
-        ? getUmamiBehaviorReport(kind, comparisonRange, providerOptions)
-        : Promise.resolve(null),
+      load(range),
+      comparisonRange ? load(comparisonRange) : Promise.resolve(null),
     ]);
     const currentStatus = behaviorStatus(report);
     const comparisonStatus = comparisonReport ? behaviorStatus(comparisonReport) : null;
@@ -486,13 +500,26 @@ const PA = productAnalytics;
  * converted to Toman. The window is the order date, floored like every money
  * report, and the effective window is returned so the page can say so.
  */
+const COMMERCE_SERIES_FORMAT = { hour: "YYYY-MM-DD HH24", day: "YYYY-MM-DD", month: "YYYY-MM" } as const;
+
+/**
+ * Tehran bucket key for the commerce series, formatted exactly like the Umami
+ * trend's `t` so the two series line up. Same shift as `PA.tzBucketExpr`,
+ * which does not offer an hourly grouping.
+ */
+function commerceBucketKeyExpr(column: string, unit: keyof typeof COMMERCE_SERIES_FORMAT): string {
+  return `to_char(date_trunc('${unit}', (${column} AT TIME ZONE 'UTC') AT TIME ZONE '${PA.REPORT_TIMEZONE}'), '${COMMERCE_SERIES_FORMAT[unit]}')`;
+}
+
 async function getBehaviorCommerce(range: { startDate: string; endDate: string }) {
   const { start, end } = PA.clampToFinancialFloor({
     start: parseDate(range.startDate, 30, "start"),
     end: parseDate(range.endDate, 0, "end"),
   });
   const knex = strapi.db.connection;
-  const result = await knex.raw(
+  const unit = seriesUnitForRange(range);
+  const [result, seriesResult] = await Promise.all([
+    knex.raw(
     `WITH storefront_orders AS (
        SELECT o.id, o.status
          FROM orders o
@@ -515,17 +542,92 @@ async function getBehaviorCommerce(range: { startDate: string; endDate: string }
        (SELECT COUNT(*) FROM storefront_orders WHERE status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders,
        (SELECT COALESCE(SUM(net_irr), 0) FROM settled)::bigint AS revenue_irr`,
     [start, end],
-  );
+    ),
+    knex.raw(
+      `WITH storefront_orders AS (
+         SELECT o.id, o.status, ${commerceBucketKeyExpr("o.date", unit)} AS bucket
+           FROM orders o
+          WHERE o.date BETWEEN ? AND ?
+            AND o.external_source IS DISTINCT FROM 'woocommerce'
+       ),
+       settled AS (
+         SELECT so.id,
+                SUM(CASE WHEN lower(ct.type) = 'return' THEN -ct.amount ELSE ct.amount END) AS net_irr
+           FROM storefront_orders so
+           JOIN orders_contract_links ocl ON ocl.order_id = so.id
+           JOIN contract_transactions_contract_links ctcl ON ctcl.contract_id = ocl.contract_id
+           JOIN contract_transactions ct ON ct.id = ctcl.contract_transaction_id
+          WHERE lower(ct.status) = 'success'
+            AND so.status IN (${PA.PAID_STATUS_SQL})
+          GROUP BY so.id
+       )
+       SELECT so.bucket,
+              COUNT(*) FILTER (WHERE so.status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders,
+              COALESCE(SUM(s.net_irr), 0)::bigint AS revenue_irr
+         FROM storefront_orders so
+         LEFT JOIN settled s ON s.id = so.id
+        GROUP BY so.bucket
+        ORDER BY so.bucket`,
+      [start, end],
+    ),
+  ]);
   const row = rowsOf(result)[0] || {};
+  const effective = effectiveRange(start, end);
+  const byBucket = new Map(
+    rowsOf(seriesResult).map((point: any) => [String(point.bucket), point]),
+  );
   return {
     source: "commerce",
     scope: "storefront",
     currency: "Toman",
-    range: effectiveRange(start, end),
+    range: effective,
     paidOrders: Number(row.paid_orders || 0),
     totalOrders: Number(row.total_orders || 0),
     revenueToman: Math.round(Number(row.revenue_irr || 0) / 10),
+    // The ledger is complete, so a queried bucket without orders is a real 0.
+    // Buckets before the financial floor were never queried: null, not 0.
+    series: {
+      unit,
+      points: seriesKeys(range, unit).map((t) => {
+        if (t.slice(0, 10) < effective.start.slice(0, t.length >= 10 ? 10 : 7)) {
+          return { t, paidOrders: null, revenueToman: null };
+        }
+        const point: any = byBucket.get(t);
+        return {
+          t,
+          paidOrders: Number(point?.paid_orders || 0),
+          revenueToman: Math.round(Number(point?.revenue_irr || 0) / 10),
+        };
+      }),
+    },
   };
+}
+
+type PurchaseTrackingStatus = "live" | "degraded" | "not_live" | "unknown" | "unavailable";
+
+/**
+ * How much of the storefront's paid orders Umami saw as a `purchase` session.
+ * Sessions sit a little below orders by design (ad blockers, closed tabs, one
+ * session buying twice), so only a large gap means the tracking itself is
+ * missing for part or all of the range, e.g. a range that starts before the
+ * browser `purchase` emitter shipped. The admin then shows purchase steps as
+ * incomplete instead of as a collapse in conversion.
+ */
+function purchaseTracking(goal: unknown, commerce: { paidOrders: number } | null) {
+  const record = goal && typeof goal === "object" ? (goal as Record<string, unknown>) : null;
+  const sessions =
+    record && record.num !== undefined && record.num !== null && Number.isFinite(Number(record.num))
+      ? Number(record.num)
+      : null;
+  const paidOrders = commerce ? commerce.paidOrders : null;
+  const coverage = sessions !== null && paidOrders ? sessions / paidOrders : null;
+  let status: PurchaseTrackingStatus;
+  if (sessions === null || paidOrders === null) status = "unavailable";
+  else if (paidOrders < 5) status = "unknown";
+  else if ((coverage ?? 0) < 0.05) status = "not_live";
+  else if ((coverage ?? 0) < 0.5) status = "degraded";
+  else status = "live";
+  return { umamiPurchaseSessions: sessions, commercePaidOrders: paidOrders, coverage, status };
 }
 
 // ---------------------------------------------------------------------------
@@ -1184,6 +1286,17 @@ const reportController = {
         (ctx.query.startDate as string) || (ctx.query.start as string),
         (ctx.query.endDate as string) || (ctx.query.end as string),
       );
+      const detail = parseConversionDetail(ctx.query || {});
+      if (detail) {
+        // Drill-downs are behavioral only and heavier (one Umami call per bucket
+        // or segment), so they take the advanced cache and never a comparison.
+        ctx.body = await readBehaviorReport("conversion", range, {
+          ...behaviorRequestOptions(ctx, true),
+          comparison: false,
+          detail,
+        });
+        return;
+      }
       const options = behaviorRequestOptions(ctx);
       const comparisonRange = options.comparison ? previousRange(range) : null;
       const [payload, commerce, comparisonCommerce] = await Promise.all([
@@ -1205,6 +1318,11 @@ const reportController = {
             sections: {
               ...(providerComparison?.sections || {}),
               commerce: comparisonCommerce,
+              purchaseTracking: purchaseTracking(
+                providerComparison?.sections?.purchaseGoalAll ??
+                  providerComparison?.sections?.purchaseGoal,
+                comparisonCommerce,
+              ),
             },
             status: providerComparison?.status || (providerComparison ? "empty" : "partial"),
           }
@@ -1215,7 +1333,16 @@ const reportController = {
           range,
           errors: { source: "UMAMI_UNAVAILABLE" },
         }),
-        sections: { ...(providerData?.sections || {}), commerce },
+        sections: {
+          ...(providerData?.sections || {}),
+          commerce,
+          // With session filters the goal is a segment; the unfiltered count
+          // (fetched alongside it) is what the unfiltered ledger compares to.
+          purchaseTracking: purchaseTracking(
+            providerData?.sections?.purchaseGoalAll ?? providerData?.sections?.purchaseGoal,
+            commerce,
+          ),
+        },
         ...(comparisonRange
           ? {
               comparison,

@@ -25,6 +25,9 @@ export const Line = dynamic(() => import("recharts").then((m) => m.Line), { ssr:
 export const BarChart = dynamic(() => import("recharts").then((m) => m.BarChart), { ssr: false });
 export const Bar = dynamic(() => import("recharts").then((m) => m.Bar), { ssr: false });
 export const AreaChart = dynamic(() => import("recharts").then((m) => m.AreaChart), { ssr: false });
+export const ComposedChart = dynamic(() => import("recharts").then((m) => m.ComposedChart), {
+  ssr: false,
+});
 export const Area = dynamic(() => import("recharts").then((m) => m.Area), { ssr: false });
 export const PieChart = dynamic(() => import("recharts").then((m) => m.PieChart), { ssr: false });
 export const Pie = dynamic(() => import("recharts").then((m) => m.Pie), { ssr: false });

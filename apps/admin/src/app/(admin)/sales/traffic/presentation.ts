@@ -17,7 +17,9 @@ export type BehaviorDimension =
 type AnalyticsRow = Record<string, unknown>;
 
 const CHANNEL_LABELS: Record<string, string> = {
-  direct: "ورود مستقیم",
+  // Umami files every visit without a usable referrer here: typed URLs, but
+  // also apps, bookmarks and browsers that strip the referrer.
+  direct: "مستقیم یا بدون منبع مشخص",
   llm: "ابزارهای هوش مصنوعی",
   paidads: "تبلیغات کلیکی",
   organicsearch: "جست‌وجوی رایگان",
@@ -106,10 +108,23 @@ const BROWSER_LABELS: Record<string, string> = {
   samsung: "Samsung Internet",
   "samsung internet": "Samsung Internet",
   yandex: "Yandex Browser",
+  yandexbrowser: "Yandex Browser",
+  // Umami 3 browser ids as they appear in production sessions.
+  ios: "Safari (آیفون)",
+  crios: "Chrome (آیفون)",
+  fxios: "Firefox (آیفون)",
+  "ios-webview": "مرورگر داخلی برنامه‌ها (آیفون)",
+  "chromium-webview": "مرورگر داخلی برنامه‌ها (اندروید)",
+  instagram: "مرورگر داخلی اینستاگرام",
+  facebook: "مرورگر داخلی فیسبوک",
+  "edge-chromium": "Microsoft Edge",
+  "edge-ios": "Microsoft Edge (آیفون)",
+  miui: "مرورگر شیائومی",
 };
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
+  "android os": "Android",
   ios: "iOS",
   ipados: "iPadOS",
   linux: "Linux",
@@ -290,7 +305,8 @@ function presentLanguage(value: unknown): string {
 
 function presentReferrer(value: unknown): string {
   const raw = String(value ?? "").trim();
-  if (!raw || ["direct", "(direct)", "none"].includes(normalizedKey(raw))) return "ورود مستقیم";
+  if (!raw || ["direct", "(direct)", "none"].includes(normalizedKey(raw)))
+    return "مستقیم یا بدون منبع مشخص";
   try {
     const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
     return url.hostname.replace(/^www\./i, "");
@@ -437,6 +453,12 @@ const SECTION_LABELS: Record<string, string> = {
   firstAttribution: "اولین منبع ورود خریداران",
   lastAttribution: "آخرین منبع پیش از خرید",
   purchaseGoal: "خریدهای ثبت‌شده",
+  coreFunnel: "قیف مسیر کامل خرید",
+  trend: "روند بازدید",
+  buckets: "روند تبدیل",
+  breakdown: "تفکیک قیف",
+  segments: "تفکیک قیف",
+  purchaseTracking: "تطبیق خریدها با سفارش‌ها",
   discoveryFunnel: "مسیر محصول تا ثبت سفارش",
   checkoutFunnel: "مسیر ثبت سفارش تا خرید",
   paymentFunnel: "مسیر درگاه تا خرید",
@@ -458,6 +480,8 @@ export function presentAnalyticsMessage(value: unknown): string {
   // flatten this into "temporarily unavailable" — a bad range is not an outage,
   // and waiting will not fix it.
   if (/INVALID_DATE_RANGE/i.test(raw)) return "بازه تاریخ انتخاب‌شده معتبر نیست؛ تاریخ شروع و پایان را بررسی کنید.";
+  if (/INVALID_CONVERSION_DETAIL/i.test(raw)) return "این نمای قیف پشتیبانی نمی‌شود.";
+  if (/UMAMI_PARTIAL/i.test(raw)) return "بخشی از داده‌های این نما دریافت نشد؛ ردیف‌های ناقص با «—» مشخص شده‌اند.";
   if (/UMAMI_TIMEOUT|AbortError|timed?\s*out/i.test(raw)) return "دریافت آمار بیش از حد معمول طول کشید. دوباره تلاش کنید.";
   if (/UMAMI_AUTH|unauthorized|forbidden/i.test(raw)) return "دسترسی گزارش‌گیری نیاز به بررسی مدیر سیستم دارد.";
   // Checked before the generic unavailable branch: a missing configuration
@@ -470,3 +494,66 @@ export function presentAnalyticsMessage(value: unknown): string {
     return "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.";
   return raw.length <= 120 ? raw : "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.";
 }
+
+/**
+ * Filters Umami keeps on the session. Only these can narrow an ordered funnel,
+ * a goal or attribution; every other filter belongs to each event row and is
+ * not applied there (the backend reports which, in `stepFilters`).
+ */
+export const SESSION_LEVEL_FILTERS: ReadonlySet<string> = new Set([
+  "os",
+  "browser",
+  "device",
+  "language",
+  "country",
+  "region",
+  "city",
+  "segment",
+  "cohort",
+  "match",
+]);
+
+/** Filters that only narrow the content view's product/category/variant evidence. */
+export const PRODUCT_PROPERTY_FILTERS: ReadonlySet<string> = new Set([
+  "productId",
+  "categoryId",
+  "variantId",
+]);
+
+export type VitalKey = "lcp" | "inp" | "cls" | "fcp" | "ttfb";
+export type VitalRating = "good" | "needs_improvement" | "poor";
+
+/** Google's published Core Web Vitals thresholds, applied to p75. */
+export const VITAL_THRESHOLDS: Record<VitalKey, readonly [number, number]> = {
+  lcp: [2500, 4000],
+  inp: [200, 500],
+  cls: [0.1, 0.25],
+  fcp: [1800, 3000],
+  ttfb: [800, 1800],
+};
+
+export function rateVital(key: VitalKey, value: number | null): VitalRating | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  const [good, poor] = VITAL_THRESHOLDS[key];
+  if (value <= good) return "good";
+  if (value <= poor) return "needs_improvement";
+  return "poor";
+}
+
+export const VITAL_RATING_LABELS: Record<VitalRating, string> = {
+  good: "خوب",
+  needs_improvement: "نیازمند بهبود",
+  poor: "ضعیف",
+};
+
+/** Funnel step names written as what the shopper did. */
+export function presentFunnelStep(event: unknown): string {
+  return presentBehaviorValue(event, "event");
+}
+
+/** Iran's provinces as Umami region codes («IR-23»), for the region filter. */
+export const REGION_OPTIONS: ReadonlyArray<{ value: string; label: string }> = Object.entries(
+  IRAN_REGION_LABELS,
+)
+  .map(([code, label]) => ({ value: `IR-${code}`, label }))
+  .sort((left, right) => left.label.localeCompare(right.label, "fa"));

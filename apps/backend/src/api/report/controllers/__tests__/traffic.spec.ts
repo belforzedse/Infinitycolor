@@ -1,14 +1,24 @@
 const requireCapabilityMock = jest.fn();
 const getUmamiBehaviorReportMock = jest.fn();
 const getUmamiRealtimeReportMock = jest.fn();
+const getUmamiConversionDetailMock = jest.fn();
 
 jest.mock("../../../../utils/adminAuthorization", () => ({
   requireCapability: (...args: any[]) => requireCapabilityMock(...args),
 }));
 
-jest.mock("../../services/umami", () => ({
+jest.mock("../../services/umami", () => {
+  const actual = jest.requireActual("../../services/umami");
+  return {
   UMAMI_DEFINITION_VERSION: "umami-infinity-v1",
+  UMAMI_CONTRACT_VERSION: "3.3.1",
   UMAMI_REPORT_TIMEZONE: "Asia/Tehran",
+  umamiDataStart: () => "2026-08-09",
+  seriesUnitForRange: actual.seriesUnitForRange,
+  seriesKeys: actual.seriesKeys,
+  parseConversionDetail: actual.parseConversionDetail,
+  conversionDetailKey: actual.conversionDetailKey,
+  getUmamiConversionDetail: (...args: any[]) => getUmamiConversionDetailMock(...args),
   isUmamiConfigured: jest.fn(() => true),
   normalizeRange: jest.fn((start?: string, end?: string) => ({
     startDate: start || "2026-08-09",
@@ -24,7 +34,8 @@ jest.mock("../../services/umami", () => ({
   previousRange: jest.fn(() => ({ startDate: "2026-07-18", endDate: "2026-08-08" })),
   getUmamiBehaviorReport: (...args: any[]) => getUmamiBehaviorReportMock(...args),
   getUmamiRealtimeReport: (...args: any[]) => getUmamiRealtimeReportMock(...args),
-}));
+  };
+});
 
 function loadController() {
   let controller: any;
@@ -123,9 +134,11 @@ describe("Umami behavior report endpoints", () => {
     const raw = (global as any).strapi.db.connection.raw;
     raw.mockImplementation((sql: string) =>
       Promise.resolve(
-        sql.includes("storefront_orders")
-          ? { rows: [{ total_orders: 3, paid_orders: 2, revenue_irr: 12_500_000 }] }
-          : { rows: [] },
+        sql.includes("AS bucket")
+          ? { rows: [{ bucket: "2026-09-16", paid_orders: 2, revenue_irr: 12_500_000 }] }
+          : sql.includes("storefront_orders")
+            ? { rows: [{ total_orders: 3, paid_orders: 2, revenue_irr: 12_500_000 }] }
+            : { rows: [] },
       ),
     );
     const controller = loadController();
@@ -143,6 +156,24 @@ describe("Umami behavior report endpoints", () => {
       paidOrders: 2,
       totalOrders: 3,
       revenueToman: 1_250_000,
+      series: {
+        unit: "day",
+        points: [
+          { t: "2026-09-15", paidOrders: 0, revenueToman: 0 },
+          { t: "2026-09-16", paidOrders: 2, revenueToman: 1_250_000 },
+          { t: "2026-09-17", paidOrders: 0, revenueToman: 0 },
+          { t: "2026-09-18", paidOrders: 0, revenueToman: 0 },
+          { t: "2026-09-19", paidOrders: 0, revenueToman: 0 },
+          { t: "2026-09-20", paidOrders: 0, revenueToman: 0 },
+        ],
+      },
+    });
+    // Without Umami the purchase goal is unknown, so tracking is unavailable, not "0%".
+    expect(ctx.body.data.sections.purchaseTracking).toEqual({
+      umamiPurchaseSessions: null,
+      commercePaidOrders: 2,
+      coverage: null,
+      status: "unavailable",
     });
     // Umami only sees the new storefront; legacy WooCommerce orders stay out.
     const commerceSql = raw.mock.calls.find(([sql]: [string]) => sql.includes("storefront_orders"))[0];
@@ -214,6 +245,149 @@ describe("Umami behavior report endpoints", () => {
     expect(getUmamiRealtimeReportMock).toHaveBeenCalledTimes(1);
     expect(first.body.data.activeVisitors).toBe(3);
     expect(second.body.meta.cache).toBe("fresh");
+  });
+
+  it("buckets the commerce series in Tehran and leaves days before the financial floor null", async () => {
+    getUmamiBehaviorReportMock.mockResolvedValue({
+      kind: "conversion",
+      range: { startDate: "2026-09-12", endDate: "2026-09-15" },
+      summary: { visitors: 10 },
+      sections: { purchaseGoal: { num: 1, total: 10 } },
+      errors: {},
+    });
+    const raw = (global as any).strapi.db.connection.raw;
+    raw.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes("AS bucket")
+          ? { rows: [{ bucket: "2026-09-15", paid_orders: 1, revenue_irr: 10_000 }] }
+          : { rows: [{ total_orders: 1, paid_orders: 1, revenue_irr: 10_000 }] },
+      ),
+    );
+    const controller = loadController();
+    const ctx = createCtx({ query: { startDate: "2026-09-12", endDate: "2026-09-15" } });
+
+    await controller.behaviorConversion(ctx);
+
+    const seriesSql = raw.mock.calls.find(([sql]: [string]) => sql.includes("AS bucket"))[0];
+    expect(seriesSql).toContain("(o.date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Tehran'");
+    expect(seriesSql).toContain("o.external_source IS DISTINCT FROM 'woocommerce'");
+    expect(ctx.body.data.sections.commerce.series.points).toEqual([
+      { t: "2026-09-12", paidOrders: null, revenueToman: null },
+      { t: "2026-09-13", paidOrders: null, revenueToman: null },
+      { t: "2026-09-14", paidOrders: 0, revenueToman: 0 },
+      { t: "2026-09-15", paidOrders: 1, revenueToman: 1_000 },
+    ]);
+  });
+
+  it.each([
+    [{ num: 0, total: 900 }, 40, "not_live"],
+    [{ num: 12, total: 900 }, 40, "degraded"],
+    [{ num: 34, total: 900 }, 40, "live"],
+    [{ num: 0, total: 900 }, 3, "unknown"],
+  ])(
+    "reconciles Umami purchase sessions %j against %i paid orders as %s",
+    async (purchaseGoal, paidOrders, status) => {
+      getUmamiBehaviorReportMock.mockResolvedValue({
+        kind: "conversion",
+        range: { startDate: "2026-09-15", endDate: "2026-09-20" },
+        summary: { visitors: 900 },
+        sections: { purchaseGoal },
+        errors: {},
+      });
+      (global as any).strapi.db.connection.raw.mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes("AS bucket")
+            ? { rows: [] }
+            : { rows: [{ total_orders: paidOrders, paid_orders: paidOrders, revenue_irr: 0 }] },
+        ),
+      );
+      const controller = loadController();
+      const ctx = createCtx({ query: { startDate: "2026-09-15", endDate: "2026-09-20" } });
+
+      await controller.behaviorConversion(ctx);
+
+      expect(ctx.body.data.sections.purchaseTracking).toMatchObject({
+        umamiPurchaseSessions: purchaseGoal.num,
+        commercePaidOrders: paidOrders,
+        status,
+      });
+    },
+  );
+
+  it("reconciles against the unfiltered purchase count when a segment filter is active", async () => {
+    getUmamiBehaviorReportMock.mockResolvedValue({
+      kind: "conversion",
+      range: { startDate: "2026-09-15", endDate: "2026-09-20" },
+      summary: { visitors: 900 },
+      // Laptops alone bought twice; the whole storefront recorded 34 buyers.
+      sections: { purchaseGoal: { num: 2, total: 90 }, purchaseGoalAll: { num: 34, total: 1800 } },
+      errors: {},
+    });
+    (global as any).strapi.db.connection.raw.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes("AS bucket")
+          ? { rows: [] }
+          : { rows: [{ total_orders: 40, paid_orders: 40, revenue_irr: 0 }] },
+      ),
+    );
+    const controller = loadController();
+    const ctx = createCtx({ query: { startDate: "2026-09-15", endDate: "2026-09-20", device: "laptop" } });
+
+    await controller.behaviorConversion(ctx);
+
+    expect(ctx.body.data.sections.purchaseTracking).toMatchObject({
+      umamiPurchaseSessions: 34,
+      commercePaidOrders: 40,
+      status: "live",
+    });
+    // The segment's own goal is still what its conversion rate uses.
+    expect(ctx.body.data.sections.purchaseGoal).toEqual({ num: 2, total: 90 });
+  });
+
+  it("serves a conversion drill-down without commerce, comparison, or the full report", async () => {
+    getUmamiConversionDetailMock.mockResolvedValue({
+      kind: "conversion-breakdown",
+      range: { startDate: "2026-09-15", endDate: "2026-09-20" },
+      sections: { segments: [{ value: "mobile", visitors: 10, steps: [] }] },
+      errors: {},
+    });
+    const controller = loadController();
+    const ctx = createCtx({
+      query: {
+        startDate: "2026-09-15",
+        endDate: "2026-09-20",
+        comparison: "previous_period",
+        detail: "breakdown",
+        funnel: "checkout",
+        dimension: "os",
+      },
+    });
+
+    await controller.behaviorConversion(ctx);
+
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+    expect(getUmamiBehaviorReportMock).not.toHaveBeenCalled();
+    expect(getUmamiConversionDetailMock).toHaveBeenCalledTimes(1);
+    expect(getUmamiConversionDetailMock).toHaveBeenCalledWith(
+      { detail: "breakdown", funnel: "checkout", dimension: "os" },
+      { startDate: "2026-09-15", endDate: "2026-09-20" },
+      expect.anything(),
+    );
+    expect((global as any).strapi.db.connection.raw).not.toHaveBeenCalled();
+    expect(ctx.body.data.sections.segments[0].value).toBe("mobile");
+    expect(ctx.body.data.comparison).toBeUndefined();
+    expect(ctx.body.meta.provider).toEqual({ name: "Umami", contractVersion: "3.3.1" });
+  });
+
+  it("rejects a drill-down outside the allowlists instead of serving the full report", async () => {
+    const controller = loadController();
+    const ctx = createCtx({ query: { detail: "breakdown", dimension: "utmSource" } });
+
+    await controller.behaviorConversion(ctx);
+
+    expect(ctx.badRequest).toHaveBeenCalledWith("INVALID_CONVERSION_DETAIL", expect.anything());
+    expect(getUmamiConversionDetailMock).not.toHaveBeenCalled();
+    expect(getUmamiBehaviorReportMock).not.toHaveBeenCalled();
   });
 
   it("stops before provider access when capability enforcement rejects", async () => {

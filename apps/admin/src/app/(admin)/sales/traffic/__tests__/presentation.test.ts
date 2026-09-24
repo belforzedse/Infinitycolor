@@ -6,7 +6,10 @@ import {
   presentJourneyStep,
   presentPath,
   presentWindow,
+  rateVital,
+  REGION_OPTIONS,
 } from "../presentation";
+import { filterScopeText } from "../filters";
 
 describe("behavior analytics presentation", () => {
   it("names a bad date range instead of calling it a temporary outage", () => {
@@ -86,5 +89,45 @@ describe("journey and funnel presentation", () => {
     expect(presentWindow(1440)).toBe("۲۴ ساعت");
     expect(presentWindow(30)).toBe("۳۰ دقیقه");
     expect(presentWindow(undefined)).toBeNull();
+  });
+
+  it("names the production browser and OS ids Umami 3 reports", () => {
+    expect(presentBehaviorValue("instagram", "browser")).toBe("مرورگر داخلی اینستاگرام");
+    expect(presentBehaviorValue("chromium-webview", "browser")).toBe("مرورگر داخلی برنامه‌ها (اندروید)");
+    expect(presentBehaviorValue("ios", "browser")).toBe("Safari (آیفون)");
+    expect(presentBehaviorValue("crios", "browser")).toBe("Chrome (آیفون)");
+    expect(presentBehaviorValue("Android OS", "os")).toBe("Android");
+    expect(presentBehaviorValue("Windows 10", "os")).toBe("Windows 10");
+  });
+
+  it("does not claim every direct visit was a typed address", () => {
+    expect(presentBehaviorValue("direct", "channel")).toBe("مستقیم یا بدون منبع مشخص");
+    expect(presentBehaviorValue("", "referrer")).toBe("مستقیم یا بدون منبع مشخص");
+  });
+
+  it("rates Core Web Vitals against the published thresholds", () => {
+    expect(rateVital("lcp", 2500)).toBe("good");
+    expect(rateVital("lcp", 2501)).toBe("needs_improvement");
+    expect(rateVital("lcp", 4001)).toBe("poor");
+    expect(rateVital("cls", 0.05)).toBe("good");
+    expect(rateVital("inp", 600)).toBe("poor");
+    expect(rateVital("ttfb", null)).toBeNull();
+  });
+
+  it("says where each filter applies", () => {
+    expect(filterScopeText("device")).toBe("همه بخش‌ها");
+    expect(filterScopeText("utmSource")).toBe("بازدید و صفحه‌ها، نه قیف");
+    expect(filterScopeText("path")).toBe("بازدید و صفحه‌ها، نه قیف");
+    expect(filterScopeText("productId")).toBe("فقط شواهد محصول");
+  });
+
+  it("offers every province as its Umami region code", () => {
+    expect(REGION_OPTIONS).toHaveLength(31);
+    expect(REGION_OPTIONS).toContainEqual({ value: "IR-23", label: "تهران" });
+  });
+
+  it("explains drill-down failures in words", () => {
+    expect(presentAnalyticsMessage("INVALID_CONVERSION_DETAIL")).toBe("این نمای قیف پشتیبانی نمی‌شود.");
+    expect(presentAnalyticsMessage("UMAMI_PARTIAL")).toMatch(/ردیف‌های ناقص/);
   });
 });
