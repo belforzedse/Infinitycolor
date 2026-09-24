@@ -119,16 +119,15 @@ export function dateText(ymd: unknown, withYear = true): string {
   });
 }
 
-/** «شنبه ۲۹ شهریور ۱۴۰۵»: a day with its weekday, for tooltips. */
+/**
+ * «شنبه ۲۹ شهریور ۱۴۰۵»: a day with its weekday, for tooltips. Composed from
+ * parts because ICU's Persian pattern for this set of fields reads
+ * «۱۴۰۵ شهریور ۲۹, شنبه», year first with a Latin comma.
+ */
 export function weekdayDateText(ymd: unknown): string {
   if (!isDateOnly(ymd)) return MISSING;
-  return tehranNoon(ymd).toLocaleDateString(FA_DATE, {
-    timeZone: TEHRAN,
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const weekday = tehranNoon(ymd).toLocaleDateString(FA_DATE, { timeZone: TEHRAN, weekday: "long" });
+  return `${weekday} ${dateText(ymd)}`;
 }
 
 /** Adds whole days to a `YYYY-MM-DD` date. */
