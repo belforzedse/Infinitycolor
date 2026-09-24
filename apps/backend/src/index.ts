@@ -22,9 +22,12 @@ import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
 import { registerAppLifecycles } from "./lifecycles/registerAppLifecycles";
 import { registerSchemaRegressionGuard } from "./bootstrap/schemaRegressionGuard";
 import {
+  isWebProcess,
   shouldRunWebBootstrapMaintenance,
   shouldStartInProcessBackgroundJobs,
 } from "./utils/processRole";
+import { installGracefulShutdown } from "./bootstrap/gracefulShutdown";
+import { parsePositiveInt } from "./utils/parsePositiveInt";
 import {
   assertSnappayRuntimeConfig,
   isSnappayHardenedInitiationEnabled,
@@ -1356,6 +1359,17 @@ export default {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }) {
+    // Rolling updates stop the old web task with SIGTERM; let its in-flight
+    // requests finish instead of Strapi resetting every socket at once.
+    if (isWebProcess()) {
+      installGracefulShutdown({
+        server: strapi.server.httpServer,
+        destroy: () => strapi.destroy(),
+        log: strapi.log,
+        timeoutMs: parsePositiveInt(process.env.SHUTDOWN_DRAIN_TIMEOUT_MS, 25_000),
+      });
+    }
+
     // Every `incrementMetric` call in the jobs and sweeps has been a no-op
     // because nothing ever assigned `strapi.metrics`. Install the registry
     // first, so counters recorded during the rest of bootstrap are kept.
