@@ -40,7 +40,14 @@ export function assignColors(keys: string[], fixedSlots: Record<string, number> 
   return new Map([...slotFor].map(([key, slot]) => [key, CATEGORICAL_PALETTE[slot] ?? OTHER_COLOR]));
 }
 
-export type ShareInput = { key: string; label: string; value: number | null; unknown?: boolean };
+export type ShareInput = {
+  key: string;
+  label: string;
+  value: number | null;
+  unknown?: boolean;
+  /** Already a remainder (the server's own «سایر»): always folds into the tail. */
+  fold?: boolean;
+};
 
 export type Shares = {
   total: number;
@@ -64,11 +71,11 @@ export function buildShares(
   const total = positive.reduce((sum, item) => sum + (item.value as number), 0);
   if (!total) return null;
   const known = positive
-    .filter((item) => !item.unknown)
+    .filter((item) => !item.unknown && !item.fold)
     .sort((left, right) => (right.value as number) - (left.value as number));
   const unknown = positive.filter((item) => item.unknown);
   const named = known.slice(0, maxNamed);
-  const folded = known.slice(maxNamed);
+  const folded = [...known.slice(maxNamed), ...positive.filter((item) => item.fold && !item.unknown)];
   const colors = assignColors(
     named.map((item) => item.key),
     fixedSlots,

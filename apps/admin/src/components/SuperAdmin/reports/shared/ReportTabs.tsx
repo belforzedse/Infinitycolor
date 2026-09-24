@@ -27,20 +27,33 @@ export default function ReportTabs<T extends string>({
   idPrefix: string;
 }) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
   const selectedIndex = tabs.findIndex((tab) => tab.id === value);
   useLayoutEffect(() => {
     const node = refs.current[selectedIndex];
     if (!node) return;
-    const measure = () => setIndicator({ left: node.offsetLeft, width: node.offsetWidth });
+    let active = true;
+    const measure = () => {
+      if (active) setIndicator({ left: node.offsetLeft, width: node.offsetWidth });
+    };
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
+    // Any tab growing (a web font arriving, a label changing) moves the
+    // chosen one, so watch them all, not just the chosen tab.
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    if (observer) {
+      if (listRef.current) observer.observe(listRef.current);
+      refs.current.forEach((tab) => tab && observer.observe(tab));
+    }
+    void document.fonts?.ready.then(measure);
+    return () => {
+      active = false;
+      observer?.disconnect();
+    };
   }, [selectedIndex, tabs]);
   return (
     <div
+      ref={listRef}
       role="tablist"
       aria-label={label}
       className="relative -mx-4 flex gap-1 overflow-x-auto overscroll-x-contain border-b border-slate-200 px-4 scrollbar-hide md:mx-0 md:px-0"

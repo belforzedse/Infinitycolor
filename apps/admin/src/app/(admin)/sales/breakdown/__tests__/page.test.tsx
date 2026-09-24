@@ -147,9 +147,11 @@ describe("SalesBreakdownReportPage", () => {
     );
     render(<SalesBreakdownReportPage />);
     expect(await screen.findByText("اثر کدهای تخفیف بر فروش")).toBeInTheDocument();
-    expect(screen.getByText("SUMMER10")).toBeInTheDocument();
-    expect(screen.getByText(/۴ سفارش · ۱۰۰٬۰۰۰ تومان تخفیف/)).toBeInTheDocument();
-    expect(screen.getByText("۹۰۰٬۰۰۰ تومان")).toBeInTheDocument();
+    // The share bar's legend names the code too; check the ranked chart itself.
+    const chart = screen.getByRole("figure", { name: /اثر کدهای تخفیف بر فروش/ });
+    expect(within(chart).getByText("SUMMER10")).toBeInTheDocument();
+    expect(within(chart).getByText(/۴ سفارش · ۱۰۰٬۰۰۰ تومان تخفیف/)).toBeInTheDocument();
+    expect(within(chart).getByText("۹۰۰٬۰۰۰ تومان")).toBeInTheDocument();
   });
 
   it("shows the Iran map above the table on the geography tab", async () => {
@@ -204,7 +206,8 @@ describe("SalesBreakdownReportPage", () => {
 
     it("opens on the top-level categories only, with their rolled-up totals", async () => {
       render(<SalesBreakdownReportPage />);
-      await screen.findByTestId("table");
+      // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
       expect(screen.getAllByTestId("table-row")).toHaveLength(1);
       expect(screen.getByTestId("table-row")).toHaveTextContent("آرایشی: 900");
       expect(within(screen.getByTestId("table")).queryByText("رژ لب")).not.toBeInTheDocument();
@@ -212,7 +215,8 @@ describe("SalesBreakdownReportPage", () => {
 
     it("reveals one level per disclosure click, not the whole subtree", async () => {
       render(<SalesBreakdownReportPage />);
-      await screen.findByTestId("table");
+      // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
 
       fireEvent.click(screen.getByRole("button", { name: /باز کردن زیرمجموعه‌های آرایشی/ }));
       await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(3));
@@ -228,7 +232,8 @@ describe("SalesBreakdownReportPage", () => {
 
     it("collapses again on a second click", async () => {
       render(<SalesBreakdownReportPage />);
-      await screen.findByTestId("table");
+      // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
       const toggle = () => screen.getByRole("button", { name: /زیرمجموعه‌های آرایشی/ });
       fireEvent.click(toggle());
       await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(3));
@@ -238,7 +243,8 @@ describe("SalesBreakdownReportPage", () => {
 
     it("expand-all opens every level, and toggles back to collapsed", async () => {
       render(<SalesBreakdownReportPage />);
-      await screen.findByTestId("table");
+      // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
       fireEvent.click(screen.getByText("باز کردن همه"));
       await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(4));
       fireEvent.click(screen.getByText("بستن همه"));
@@ -256,7 +262,8 @@ describe("SalesBreakdownReportPage", () => {
 
     it("ranks the chart across all depths, not just the visible rows", async () => {
       render(<SalesBreakdownReportPage />);
-      await screen.findByTestId("table");
+      // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
       // Only the root is visible in the table, but every depth is ranked above it.
       expect(screen.getByText("بیشترین فروش بر اساس دسته‌بندی")).toBeInTheDocument();
       expect(screen.getByText("۹۰۰ تومان")).toBeInTheDocument();
@@ -277,7 +284,8 @@ describe("SalesBreakdownReportPage", () => {
         }),
       );
       render(<SalesBreakdownReportPage />);
-      await screen.findByTestId("table");
+      // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
       expect(screen.getAllByTestId("table-row")).toHaveLength(2);
       expect(screen.queryByText("باز کردن همه")).not.toBeInTheDocument();
     });
@@ -292,7 +300,8 @@ describe("SalesBreakdownReportPage", () => {
   it("stays silent about the definition when the window is settled", async () => {
     getSalesBreakdownMock.mockResolvedValue(makeResponse({ ordersDefinition: "settled" }));
     render(<SalesBreakdownReportPage />);
-    await screen.findByTestId("table");
+    // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
     expect(screen.queryByText(/بر پایه سفارش‌های «تحویل شده»/)).not.toBeInTheDocument();
   });
 
@@ -315,7 +324,8 @@ describe("SalesBreakdownReportPage", () => {
   it("shows no degradation banner on a full-fidelity response", async () => {
     getSalesBreakdownMock.mockResolvedValue(makeResponse({ warnings: [] }));
     render(<SalesBreakdownReportPage />);
-    await screen.findByTestId("table");
+    // Wait for the rows, not just the table (it renders while loading).
+      await screen.findAllByTestId("table-row");
     expect(screen.queryByText(/قابل تشخیص نبود/)).not.toBeInTheDocument();
   });
 
