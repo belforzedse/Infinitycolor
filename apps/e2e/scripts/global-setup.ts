@@ -290,8 +290,12 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
   });
 
   try {
+    // In CI the auth server is `next dev`, which compiles this route on its
+    // first request. That took 29.7 s on a loaded runner (pipeline 1108),
+    // just inside the default 30 s, and failed the whole smoke job.
     const response = await context.post("/api/auth/infinity/password/sign-in", {
       data: credentials,
+      timeout: 120_000,
     });
     if (!response.ok()) {
       throw new Error(
