@@ -27,6 +27,7 @@ import {
   shouldStartInProcessBackgroundJobs,
 } from "./utils/processRole";
 import { installGracefulShutdown } from "./bootstrap/gracefulShutdown";
+import { registerSchemaSyncLock, withBootLock } from "./bootstrap/bootLock";
 import { parsePositiveInt } from "./utils/parsePositiveInt";
 import {
   assertSnappayRuntimeConfig,
@@ -1336,6 +1337,9 @@ export default {
     // is the last point at which a stale build can be stopped from dropping
     // columns the database already has.
     registerSchemaRegressionGuard(strapi);
+    // A release boots many backend processes at once; only one may sync the
+    // schema at a time (bootstrap/bootLock.ts).
+    registerSchemaSyncLock(strapi);
 
     // Plugins register before the application register hook, so this is appended
     // after the native Users & Permissions content-API strategy.
@@ -1391,46 +1395,50 @@ export default {
       databaseClient.includes("pg") ||
       databaseClient.includes("postgres")
     ) {
-      const auditStorage = await ensureAuditEventStorage(strapi);
-      if (auditStorage.repaired) {
-        strapi.log.info("Canonical audit storage protections installed after schema sync");
-      }
-      // These constraints also protect the shared payment-attempt workflow when
-      // hardened SnappPay initiation is disabled, so keep them on every
-      // PostgreSQL boot. A non-Postgres database still fails closed if hardened
-      // initiation is explicitly enabled.
-      await ensureSnappayDatabaseInvariants(strapi as any);
-      // Mellat is always active (no feature flag), so its own payment-attempt
-      // provider-reference invariant runs unconditionally alongside SnappPay's.
-      await ensurePaymentAttemptDatabaseInvariants(strapi as any);
-      // Wallet money paths: Strapi never turned the schemas' `unique: true` into
-      // database uniqueness, so install it here and then verify it. Holds and
-      // top-ups stay switched off unless every prerequisite verifies, however
-      // the env flags are set.
-      await ensureWalletDatabaseInvariants(strapi as any);
-      const walletReadiness = await refreshWalletReadiness(strapi as any);
-      strapi.log.info(
-        `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
-      );
-      // Append-only evidence for every provider-evidence recovery decision.
-      // Installed before the readiness evaluation below, because the presence of
-      // the immutability trigger is itself an ENFORCE prerequisite: a mutable
-      // evidence table would make a release unprovable after the fact and let a
-      // circuit breaker be talked out of tripping.
-      await ensurePaymentAttemptEvidenceInvariants(strapi as any);
-      await evaluateRecoveryReadiness(strapi as any);
-      await ensureCategoryEditorialDatabaseInvariant(strapi);
-      // One cart per customer. Blocked (reported, never fatal) while legacy duplicates
-      // exist; scripts/repair-duplicate-user-carts.js consolidates them and installs it.
-      await ensureCartDatabaseInvariants(strapi);
-      const issueReportStorage = await ensureIssueReportStorage(strapi);
-      if (issueReportStorage.repaired) {
-        strapi.log.info("Issue report storage indexes installed after schema sync");
-      }
-      const modelApplicationStorage = await ensureModelApplicationStorage(strapi);
-      if (modelApplicationStorage.repaired) {
-        strapi.log.info("Model application storage indexes installed after schema sync");
-      }
+      // The schema sync above dropped any index its models do not declare, and
+      // these repairs put them back; one process at a time (bootstrap/bootLock.ts).
+      await withBootLock(strapi, "the database invariants", async () => {
+        const auditStorage = await ensureAuditEventStorage(strapi);
+        if (auditStorage.repaired) {
+          strapi.log.info("Canonical audit storage protections installed after schema sync");
+        }
+        // These constraints also protect the shared payment-attempt workflow when
+        // hardened SnappPay initiation is disabled, so keep them on every
+        // PostgreSQL boot. A non-Postgres database still fails closed if hardened
+        // initiation is explicitly enabled.
+        await ensureSnappayDatabaseInvariants(strapi as any);
+        // Mellat is always active (no feature flag), so its own payment-attempt
+        // provider-reference invariant runs unconditionally alongside SnappPay's.
+        await ensurePaymentAttemptDatabaseInvariants(strapi as any);
+        // Wallet money paths: Strapi never turned the schemas' `unique: true` into
+        // database uniqueness, so install it here and then verify it. Holds and
+        // top-ups stay switched off unless every prerequisite verifies, however
+        // the env flags are set.
+        await ensureWalletDatabaseInvariants(strapi as any);
+        const walletReadiness = await refreshWalletReadiness(strapi as any);
+        strapi.log.info(
+          `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
+        );
+        // Append-only evidence for every provider-evidence recovery decision.
+        // Installed before the readiness evaluation below, because the presence of
+        // the immutability trigger is itself an ENFORCE prerequisite: a mutable
+        // evidence table would make a release unprovable after the fact and let a
+        // circuit breaker be talked out of tripping.
+        await ensurePaymentAttemptEvidenceInvariants(strapi as any);
+        await evaluateRecoveryReadiness(strapi as any);
+        await ensureCategoryEditorialDatabaseInvariant(strapi);
+        // One cart per customer. Blocked (reported, never fatal) while legacy duplicates
+        // exist; scripts/repair-duplicate-user-carts.js consolidates them and installs it.
+        await ensureCartDatabaseInvariants(strapi);
+        const issueReportStorage = await ensureIssueReportStorage(strapi);
+        if (issueReportStorage.repaired) {
+          strapi.log.info("Issue report storage indexes installed after schema sync");
+        }
+        const modelApplicationStorage = await ensureModelApplicationStorage(strapi);
+        if (modelApplicationStorage.repaired) {
+          strapi.log.info("Model application storage indexes installed after schema sync");
+        }
+      });
     }
 
     if (snappayHardenedInitiationEnabled) {
