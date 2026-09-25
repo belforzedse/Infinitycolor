@@ -90,7 +90,7 @@ RUN mkdir -p /runtime \
     && mkdir -p /runtime/dist /runtime/build \
     && cp -a /repo/apps/backend/dist/. /runtime/dist/ \
     && if [ -d /repo/apps/backend/build ]; then cp -a /repo/apps/backend/build/. /runtime/build/; fi \
-    && mkdir -p /runtime/public/uploads \
+    && mkdir -p /runtime/public/uploads /runtime/.tmp \
     && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /runtime/public/uploads/ \
     && echo "backend runtime assembly complete"
 
