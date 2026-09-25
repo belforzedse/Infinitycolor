@@ -7,10 +7,33 @@ import { useCan } from "@/hooks/useCan";
 import Modal from "@/components/Kits/Modal";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { Ruler, Settings } from "lucide-react";
+import AsyncSearchPicker from "@/components/Kits/Form/AsyncSearchPicker";
+import { renderColorOption } from "../Features/colorOption";
+import { searchColors } from "@/services/product/variation-options";
+import { apiCache } from "@/lib/api-cache";
+import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
 
 interface ProductVariablesProps {
   productId: number;
   refreshKey?: number;
+  /** Called after an edit or delete that can change the product's colour/size/model set. */
+  onVariationsChanged?: () => void;
+}
+
+/** The row label: every attribute the variation actually has, in a fixed order. */
+function buildVariableName(
+  variation: Pick<ProductVariableDisplay, "size" | "color" | "model" | "genericAttributes">,
+) {
+  // Absent attributes are `undefined` (not ""), so filter on truthiness to
+  // avoid stray " - " separators (e.g. a model-only "کد 1" variation).
+  return [
+    variation.size,
+    variation.color,
+    variation.model,
+    ...(variation.genericAttributes || []).map((item) => `${item.attribute}: ${item.term}`),
+  ]
+    .filter((part) => Boolean(part && part.trim()))
+    .join(" - ");
 }
 
 // DEFAULT_TITLES removed - variations should only show actual size/model values, not defaults
@@ -26,7 +49,11 @@ const BULK_FORM_DEFAULT = {
   removeDiscount: false,
 };
 
-const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshKey = 0 }) => {
+const ProductVariables: React.FC<ProductVariablesProps> = ({
+  productId,
+  refreshKey = 0,
+  onVariationsChanged,
+}) => {
   const canDeleteVariations = useCan("product.variation.delete");
 
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
@@ -128,16 +155,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             });
           }
 
-          // Create variable name from combinations - only include parts that exist.
-          // Absent attributes are `undefined` (not ""), so filter on truthiness to
-          // avoid stray " - " separators (e.g. a model-only "کد 1" variation).
-          const variableParts = [
-            size,
-            color,
-            model,
-            ...genericAttributes.map((item) => `${item.attribute}: ${item.term}`),
-          ].filter((part) => Boolean(part && part.trim()));
-          const variableName = variableParts.join(" - ");
+          const variableName = buildVariableName({ size, color, model, genericAttributes });
 
           // Get variation-specific discount price (priority)
           const basePrice = Number(variation.attributes.Price || 0);
@@ -246,6 +264,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
       setDeleteConfirmOpen(false);
       setDeleteId(null);
       toast.success("تنوع محصول با موفقیت حذف شد");
+      onVariationsChanged?.();
 
       // Trigger a refresh by updating refreshKey if parent component supports it
       // This ensures the list is refreshed after deletion
@@ -259,6 +278,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
         setDeleteConfirmOpen(false);
         setDeleteId(null);
         toast.success("تنوع محصول با موفقیت حذف شد");
+        onVariationsChanged?.();
         return;
       }
 
@@ -418,6 +438,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
       if (deletedIds.length > 0) {
         setVariables((prev) => prev.filter((v) => !deletedIds.includes(v.id)));
         setSelectedRows((prev) => prev.filter((id) => !deletedIds.includes(id)));
+        onVariationsChanged?.();
       }
 
       const failedCount = reservedStockLabels.length + otherFailureCount;
@@ -477,13 +498,19 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
         return;
       }
 
-      // Update variation data
+      const original = variables.find((v) => v.id === updatedVariation.id);
+      const colorChanged =
+        Boolean(updatedVariation.colorId) && updatedVariation.colorId !== original?.colorId;
+
+      // Update variation data. The colour goes only when it changed: the backend
+      // refuses a combination another variation of this product already has.
       await apiClient.put(`/product-variations/${updatedVariation.id}`, {
         data: {
           SKU: updatedVariation.sku,
           Price: updatedVariation.price,
           DiscountPrice: updatedVariation.discountPrice || null,
           IsPublished: updatedVariation.isPublished,
+          ...(colorChanged ? { product_variation_color: updatedVariation.colorId } : {}),
         },
       });
 
@@ -509,15 +536,21 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
       }
 
       // Update local state
-      setVariables((prev) =>
-        prev.map((v) => (v.id === updatedVariation.id ? updatedVariation : v)),
-      );
+      const saved = { ...updatedVariation, variable: buildVariableName(updatedVariation) };
+      setVariables((prev) => prev.map((v) => (v.id === saved.id ? saved : v)));
 
       setEditModalOpen(false);
       setCurrentVariation(null);
       toast.success("تنوع محصول با موفقیت به‌روزرسانی شد");
+      if (colorChanged) {
+        apiCache.clearByPattern(/product-variation/i);
+        onVariationsChanged?.();
+      }
     } catch (error) {
       console.error("Error updating product variation:", error);
+      toast.error(
+        translateErrorMessage(extractErrorMessage(error), "ذخیره تنوع محصول با خطا مواجه شد"),
+      );
     }
   };
 
@@ -640,6 +673,44 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             </div>
 
             <div className="space-y-4">
+              {currentVariation.colorId && (
+                <div>
+                  <label className="mb-1 block text-sm">رنگ این تنوع</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <span
+                        className="h-5 w-5 rounded-full border border-slate-200"
+                        style={{ backgroundColor: currentVariation.colorCode || "#f5f5f5" }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-sm text-slate-700">{currentVariation.color}</span>
+                    </div>
+                    <div className="min-w-[14rem] flex-1">
+                      <AsyncSearchPicker
+                        placeholder="تغییر به رنگ دیگر..."
+                        search={searchColors}
+                        selectedIds={new Set([String(currentVariation.colorId)])}
+                        onPick={(option) =>
+                          setCurrentVariation({
+                            ...currentVariation,
+                            colorId: Number(option.id),
+                            color: option.title,
+                            colorCode: option.colorCode,
+                          })
+                        }
+                        renderOption={(option, isSelected) =>
+                          renderColorOption(option, isSelected, "رنگ فعلی")
+                        }
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    فقط رنگ همین تنوع عوض می‌شود. برای تغییر رنگ همه‌ی تنوع‌های یک رنگ، از دکمه
+                    «تغییر رنگ» در جدول ویژگی‌ها استفاده کنید.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="mb-1 block text-sm">کد محصول (SKU)</label>
                 <input

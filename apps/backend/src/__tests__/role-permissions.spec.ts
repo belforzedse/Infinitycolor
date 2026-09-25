@@ -90,6 +90,7 @@ function createActionTree() {
           publication: action(),
           updateDisplayDate: action(),
           generateVariationCombinations: action(),
+          replaceVariationColor: action(),
           softDelete: action(),
           restore: action(),
           delete: action(),
@@ -795,7 +796,10 @@ describe("role permission templates", () => {
       },
       {
         capabilities: ["product.variation.manage"],
-        actions: ["api::product.product.generateVariationCombinations"],
+        actions: [
+          "api::product.product.generateVariationCombinations",
+          "api::product.product.replaceVariationColor",
+        ],
       },
       {
         capabilities: ["product.publish", "product.schedule"],
@@ -1203,6 +1207,7 @@ describe("role permission templates", () => {
     const controller = (typeKey: string, name: string) => storeManager[typeKey].controllers[name];
 
     expect(controller("api::product", "product").generateVariationCombinations.enabled).toBe(true);
+    expect(controller("api::product", "product").replaceVariationColor.enabled).toBe(true);
     // Variation deletion is reversible in effect (scoped to one product) and is
     // granted starting at Seller 1, so Store Manager inherits it too.
     expect(controller("api::product-variation", "product-variation").delete.enabled).toBe(true);
@@ -1333,6 +1338,7 @@ describe("role permission templates", () => {
       "findOne",
       "generateVariationCombinations",
       "publication",
+      "replaceVariationColor",
       "restore",
       "search",
       "softDelete",

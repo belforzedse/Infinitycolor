@@ -22,6 +22,10 @@ import {
   parseSearchwiseSize,
 } from "../services/searchwise-feed";
 import { generateVariationCombinations } from "../services/variation-combinations";
+import {
+  ColorReplaceError,
+  replaceProductVariationColor,
+} from "../services/variation-color-replace";
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
@@ -905,6 +909,32 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         data: { code: "VARIATION_COMBINATIONS_REJECTED" },
         error: (error as Error).message,
       });
+    }
+  },
+
+  async replaceVariationColor(ctx) {
+    const body = ctx.request?.body?.data ?? ctx.request?.body ?? {};
+    const actor = await resolveAdminActor(strapi, ctx.state?.user);
+    try {
+      const result = await replaceProductVariationColor(strapi, {
+        productId: ctx.params?.id,
+        fromColorId: body.fromColorId,
+        toColorId: body.toColorId,
+        newColor: body.newColor,
+        removeEmptyDrafts: body.removeEmptyDrafts === true,
+        dryRun: body.dryRun === true,
+        canDeleteVariations: Boolean(
+          actor && hasCapability(actor.role, "product.variation.delete"),
+        ),
+      });
+      ctx.body = { data: result };
+    } catch (error) {
+      if (!(error instanceof ColorReplaceError)) throw error;
+      const details = { data: { errorCode: error.errorCode, ...error.data } };
+      if (error.status === 403) return ctx.forbidden(error.message, details);
+      if (error.status === 404) return ctx.notFound(error.message, details);
+      if (error.status === 409) return ctx.conflict(error.message, details);
+      return ctx.badRequest(error.message, details);
     }
   },
 

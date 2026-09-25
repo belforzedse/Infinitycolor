@@ -1,5 +1,5 @@
 "use client";
-import { use, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SetDetails from "@/components/Product/add/SetCategory/SetCategory";
 import Tabs from "@/components/Kits/Tabs";
 import type { TabItem } from "@/types/Tabs";
@@ -52,6 +52,13 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   // Raw LastEditedByAdminAt used to seed the display-date picker (admin reorder control).
   const [displayDate, setDisplayDate] = useState<string | null>(null);
   const [variationsRefreshKey, setVariationsRefreshKey] = useState(0);
+  // Bumped when the variations tab adds, removes or re-colours variations, so the
+  // published/total count on the side card does not go stale.
+  const [publishCardRefreshKey, setPublishCardRefreshKey] = useState(0);
+  const handleVariationsChanged = useCallback(
+    () => setPublishCardRefreshKey((key) => key + 1),
+    [],
+  );
   const [previewLoading, setPreviewLoading] = useState(false);
   // `editProductDataAtom` is module-level and shared by every product page, so nothing
   // may act on it until this product's own fetch has landed — otherwise a save writes
@@ -331,7 +338,10 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           />
         )}
         {!isSimpleProduct && canManageVariations && (
-          <PublishAllVariations productId={Number(id)} refreshKey={variationsRefreshKey} />
+          <PublishAllVariations
+            productId={Number(id)}
+            refreshKey={variationsRefreshKey + publishCardRefreshKey}
+          />
         )}
         {/* <SetPrice />
         <SetStatus /> */}
@@ -351,6 +361,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
                     key={"variables"}
                     productId={Number(id)}
                     refreshKey={variationsRefreshKey}
+                    onVariationsChanged={handleVariationsChanged}
                   />,
                 ] : []),
             ...(canManageSizeGuide

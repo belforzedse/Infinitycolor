@@ -38,7 +38,10 @@ export const CAPABILITY_API_TOKEN_ACTIONS: Partial<Record<AdminCapability, reado
     "api::product.product.publication",
     "api::product.product.updateDisplayDate",
   ],
-  "product.variation.manage": ["api::product.product.generateVariationCombinations"],
+  "product.variation.manage": [
+    "api::product.product.generateVariationCombinations",
+    "api::product.product.replaceVariationColor",
+  ],
 };
 
 type ApiTokenCredentials = {

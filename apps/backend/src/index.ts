@@ -173,7 +173,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
   "product.variation.manage": {
-    "api::product": { product: ["generateVariationCombinations"] },
+    "api::product": { product: ["generateVariationCombinations", "replaceVariationColor"] },
     "api::product-variation": { "product-variation": CREATE_UPDATE_ACTIONS },
     "api::product-variation-color": { "product-variation-color": CREATE_UPDATE_ACTIONS },
     "api::product-variation-size": { "product-variation-size": CREATE_UPDATE_ACTIONS },

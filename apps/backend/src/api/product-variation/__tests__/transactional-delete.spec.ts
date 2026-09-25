@@ -13,6 +13,11 @@ jest.mock("@strapi/strapi", () => ({
   },
 }));
 
+const clearProductOriginCaches = jest.fn().mockResolvedValue(undefined);
+jest.mock("../../../utils/productOriginCache", () => ({
+  clearProductOriginCaches: (...args: unknown[]) => clearProductOriginCaches(...args),
+}));
+
 import controller from "../controllers/product-variation";
 
 describe("product variation operational field contract", () => {
@@ -64,6 +69,70 @@ describe("product variation operational field contract", () => {
       "attribute:31=725",
     );
     expect(base.create).toHaveBeenCalledWith(ctx);
+  });
+});
+
+describe("changing one variation's colour", () => {
+  const base = Object.getPrototypeOf(controller);
+  const updateCtx = (data: Record<string, unknown>) => ({
+    params: { id: "11" },
+    state: { user: { id: 7, role: { name: "Store manager" } } },
+    request: { body: { data } },
+    badRequest: jest.fn(),
+    notFound: jest.fn(),
+    conflict: jest.fn(),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockStrapi.entityService = {
+      // The variation being edited: red, size S, on product 5.
+      findOne: jest.fn(async () => ({
+        id: 11,
+        product: { id: 5, Slug: "shirt" },
+        product_variation_color: { id: 1 },
+        product_variation_size: { id: 21 },
+        product_variation_model: null,
+        selected_attribute_terms: [],
+      })),
+      // Its siblings: itself, and blue in size S.
+      findMany: jest.fn(async () => [
+        { id: 11, AttributeSignature: "color=1|size=21" },
+        { id: 14, AttributeSignature: "color=2|size=21" },
+      ]),
+    };
+  });
+
+  it("refuses a colour that would duplicate another variation of the product", async () => {
+    const ctx = updateCtx({ product_variation_color: 2 });
+    await controller.update(ctx as any);
+
+    expect(ctx.conflict).toHaveBeenCalledWith(expect.any(String), {
+      data: { errorCode: "VARIATION_SIGNATURE_EXISTS", variationId: 14 },
+    });
+    expect(base.update).not.toHaveBeenCalled();
+    expect(clearProductOriginCaches).not.toHaveBeenCalled();
+  });
+
+  it("saves a free colour and refreshes that product's storefront pages", async () => {
+    const ctx = updateCtx({ product_variation_color: 3 });
+    await controller.update(ctx as any);
+
+    expect(ctx.conflict).not.toHaveBeenCalled();
+    expect(ctx.request.body.data.AttributeSignature).toBe("color=3|size=21");
+    expect(base.update).toHaveBeenCalledWith(ctx);
+    expect(clearProductOriginCaches).toHaveBeenCalledWith(mockStrapi, "shirt", {
+      availabilityCrossed: true,
+      logPrefix: "variation-color",
+    });
+  });
+
+  it("leaves caches alone when the colour did not change", async () => {
+    const ctx = updateCtx({ product_variation_color: 1, Price: 120 });
+    await controller.update(ctx as any);
+
+    expect(base.update).toHaveBeenCalledWith(ctx);
+    expect(clearProductOriginCaches).not.toHaveBeenCalled();
   });
 });
 

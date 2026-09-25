@@ -28,6 +28,19 @@ export default {
         middlewares: [],
       },
     },
+    // Re-points one product's variations from a wrongly chosen colour to another,
+    // keeping their price, stock and publication. Removing empty duplicate drafts
+    // on the way additionally needs product.variation.delete, checked inside.
+    {
+      method: "POST",
+      path: "/products/:id/variation-colors/replace",
+      handler: "product.replaceVariationColor",
+      config: {
+        auth: { scope: [] },
+        policies: [capabilityPolicy("product.variation.manage")],
+        middlewares: [],
+      },
+    },
     // Reversible removal to the recycle bin and its undo. Separate routes rather
     // than a `removedAt` write through the generic update path, so each half is
     // gated on its own capability and `removedAt` stays out of the operational

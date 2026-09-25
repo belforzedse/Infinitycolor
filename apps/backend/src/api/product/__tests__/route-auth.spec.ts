@@ -27,6 +27,23 @@ describe("product operational routes", () => {
     ]);
   });
 
+  it("requires the variation-management capability to replace a product's colour", () => {
+    const route = routeConfig.routes.find(
+      (entry) => entry.path === "/products/:id/variation-colors/replace",
+    );
+
+    expect(route).toBeDefined();
+    expect(route?.method).toBe("POST");
+    expect(route?.handler).toBe("product.replaceVariationColor");
+    expect(route?.config.auth).toEqual({ scope: [] });
+    expect(route?.config.policies).toEqual([
+      {
+        name: "global::require-capability",
+        config: { capability: "product.variation.manage" },
+      },
+    ]);
+  });
+
   it("requires the scheduling capability for product display-date changes", () => {
     const route = routeConfig.routes.find(
       (entry) => entry.path === "/products/:id/display-date",
