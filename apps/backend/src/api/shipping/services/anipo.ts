@@ -12,6 +12,7 @@ export type AnipoCreateOrderPayload = {
   receiver_address?: string;
   receiver_postal_code?: string;
   weight_g?: number;
+  package_count?: number;
   box_type?: number;
   parcel_content?: string;
   order_total?: number;
@@ -21,11 +22,26 @@ export type AnipoCreateOrderPayload = {
 export type AnipoBarcodeResult = {
   issued: boolean;
   barcode?: string;
+  barcodes?: string[];
+  expectedCount?: number;
   readyToIssue?: boolean;
   status?: string;
   message?: string;
   postalCost?: unknown;
   issuedAt?: string;
+};
+
+export type AnipoApiResult<T> = {
+  ok: boolean;
+  data?: T;
+  status?: number;
+  error?: string;
+  validationErrors?: Record<string, string[]>;
+};
+
+export type AnipoBatchBarcodeResult = AnipoBarcodeResult & {
+  orderCode: string;
+  found: boolean;
 };
 
 export type AnipoOrderResult = AnipoBarcodeResult & {
@@ -53,6 +69,7 @@ function http(): AxiosInstance {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      Accept: "application/json",
     },
   });
 }
@@ -87,6 +104,25 @@ function extractErrorMessage(data: unknown, fallback: string): string {
   return fallback;
 }
 
+function safeValidationErrors(data: unknown): Record<string, string[]> | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const errors = (data as { errors?: unknown }).errors;
+  if (!errors || typeof errors !== "object" || Array.isArray(errors)) return undefined;
+  const safe: Record<string, string[]> = {};
+  for (const [field, value] of Object.entries(errors).slice(0, 20)) {
+    if (!/^[a-z_]{1,60}$/i.test(field)) continue;
+    const messages = Array.isArray(value) ? value : [value];
+    safe[field] = messages
+      .filter((message): message is string => typeof message === "string")
+      .map((message) => message
+        .replace(/(?:[0-9۰-۹٠-٩][\s().-]*){8,}/g, "[redacted]")
+        .replace(/["'«][^"'»]{8,}["'»]/g, "[redacted]")
+        .slice(0, 200))
+      .slice(0, 3);
+  }
+  return Object.keys(safe).length ? safe : undefined;
+}
+
 function optionalText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -100,6 +136,14 @@ export function parseAnipoOrderResult(data: unknown): AnipoOrderResult | null {
       : envelope;
 
   const barcode = optionalText(raw.barcode);
+  const barcodes = Array.isArray(raw.barcodes)
+    ? raw.barcodes.flatMap((item) => {
+        const code = optionalText(
+          item && typeof item === "object" ? (item as Record<string, unknown>).barcode : item,
+        );
+        return code ? [code] : [];
+      })
+    : undefined;
   const weight = Number(raw.weight_g);
   return {
     orderCode: optionalText(raw.order_code),
@@ -109,12 +153,33 @@ export function parseAnipoOrderResult(data: unknown): AnipoOrderResult | null {
       typeof raw.ready_to_issue === "boolean" ? raw.ready_to_issue : undefined,
     issued: raw.issued === true,
     barcode,
+    barcodes,
+    expectedCount: Number.isInteger(Number(raw.count)) && Number(raw.count) > 0
+      ? Number(raw.count)
+      : undefined,
     postalCost: raw.postal_cost,
     issuedAt: optionalText(raw.issued_at),
     weightG: Number.isFinite(weight) && weight > 0 ? weight : undefined,
     service: optionalText(raw.service),
     message: optionalText(raw.message),
   };
+}
+
+export function parseAnipoBatchBarcodes(data: unknown): AnipoBatchBarcodeResult[] | null {
+  if (!data || typeof data !== "object") return null;
+  const envelope = data as { data?: unknown };
+  if (!Array.isArray(envelope.data)) return null;
+  const results: AnipoBatchBarcodeResult[] = [];
+  for (const value of envelope.data) {
+    if (!value || typeof value !== "object") return null;
+    const row = value as Record<string, unknown>;
+    const orderCode = optionalText(row.order_code);
+    if (!orderCode || typeof row.found !== "boolean" || typeof row.issued !== "boolean") return null;
+    const parsed = parseAnipoOrderResult(row);
+    if (!parsed) return null;
+    results.push({ ...parsed, orderCode, found: row.found });
+  }
+  return results;
 }
 
 function safeOrderSummary(data: unknown): Record<string, unknown> {
@@ -129,7 +194,6 @@ function safeOrderSummary(data: unknown): Record<string, unknown> {
         hasBarcode: Boolean(parsed.barcode),
         hasPostalCost: parsed.postalCost !== null && parsed.postalCost !== undefined,
         issuedAt: parsed.issued ? parsed.issuedAt : undefined,
-        message: parsed.message,
       }
     : { responseShape: "unrecognized" };
 }
@@ -190,9 +254,9 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
   async createOrUpdateOrder(
     payload: AnipoCreateOrderPayload
-  ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  ): Promise<AnipoApiResult<unknown>> {
     const { token } = getConfig();
-    if (!token) return { ok: false, error: "missing_token" };
+    if (!token) return { ok: false, status: 401, error: "missing_token" };
 
     const body: AnipoCreateOrderPayload = {
       ...payload,
@@ -228,23 +292,58 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       strapi.log.info(`[anipo] http response endpoint=/orders status=${res.status}`, {
         ...safeOrderSummary(res.data),
       });
-      return { ok: true, data: res.data };
+      return { ok: true, status: res.status, data: res.data };
     } catch (e: unknown) {
       const err = e as {
         message?: string;
         response?: { status?: number; data?: unknown };
         config?: { url?: string; data?: unknown; headers?: unknown };
       };
-      strapi.log.error(
-        `[anipo] http error endpoint=/orders message=${err?.message} status=${
-          err?.response?.status
-        } url=${err?.config?.url} response=${extractErrorMessage(
-          err?.response?.data,
-          "provider_error",
-        )}`
-      );
+      const validationErrors = safeValidationErrors(err?.response?.data);
+      strapi.log.error("[anipo] order registration failed", {
+        orderCode: body.order_code,
+        status: err?.response?.status ?? null,
+        error: err?.response?.status === 422 ? "validation_failed" : "request_failed",
+        validationErrors,
+      });
       return {
         ok: false,
+        status: err?.response?.status,
+        error: extractErrorMessage(err?.response?.data, "network_error"),
+        validationErrors,
+      };
+    }
+  },
+
+  async getOrderBarcodes(orderCodes: string[]): Promise<AnipoApiResult<AnipoBatchBarcodeResult[]>> {
+    const { token } = getConfig();
+    if (!token) return { ok: false, error: "missing_token", status: 401 };
+    if (!orderCodes.length || orderCodes.length > 200) {
+      return { ok: false, error: "invalid_batch_size", status: 422 };
+    }
+    try {
+      const startedAt = Date.now();
+      const res = await http().post("/orders/barcodes", { order_codes: orderCodes });
+      const parsed = parseAnipoBatchBarcodes(res.data);
+      strapi.log.info("[anipo] barcode batch completed", {
+        count: orderCodes.length,
+        status: res.status,
+        durationMs: Date.now() - startedAt,
+        parsed: parsed?.length ?? null,
+      });
+      return parsed
+        ? { ok: true, status: res.status, data: parsed }
+        : { ok: false, status: res.status, error: "invalid_batch_response" };
+    } catch (e: unknown) {
+      const err = e as { response?: { status?: number; data?: unknown } };
+      strapi.log.error("[anipo] barcode batch failed", {
+        count: orderCodes.length,
+        status: err?.response?.status ?? null,
+        error: extractErrorMessage(err?.response?.data, "network_error"),
+      });
+      return {
+        ok: false,
+        status: err?.response?.status,
         error: extractErrorMessage(err?.response?.data, "network_error"),
       };
     }
@@ -276,11 +375,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         response?: { status?: number; data?: unknown };
         config?: { url?: string };
       };
-      strapi.log.error(
-        `[anipo] http error endpoint=${endpoint} message=${err?.message} status=${
-          err?.response?.status
-        } url=${err?.config?.url} response=${toJson(err?.response?.data)}`
-      );
+      strapi.log.error("[anipo] barcode lookup failed", {
+        orderCode,
+        status: err?.response?.status ?? null,
+      });
       return {
         ok: false,
         error: extractErrorMessage(err?.response?.data, "network_error"),
@@ -290,7 +388,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
   async getOrder(
     orderCode: string
-  ): Promise<{ ok: boolean; data?: AnipoOrderResult; error?: string }> {
+  ): Promise<AnipoApiResult<AnipoOrderResult>> {
     const { token } = getConfig();
     if (!token) return { ok: false, error: "missing_token" };
     const code = encodeURIComponent(String(orderCode));
@@ -303,24 +401,21 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       strapi.log.info(`[anipo] http response endpoint=${endpoint} status=${res.status}`, {
         ...safeOrderSummary(res.data),
       });
-      if (!parsed) return { ok: false, error: "anipo_error" };
-      return { ok: true, data: parsed };
+      if (!parsed) return { ok: false, status: res.status, error: "anipo_error" };
+      return { ok: true, status: res.status, data: parsed };
     } catch (e: unknown) {
       const err = e as {
         message?: string;
         response?: { status?: number; data?: unknown };
         config?: { url?: string };
       };
-      strapi.log.error(
-        `[anipo] http error endpoint=${endpoint} message=${err?.message} status=${
-          err?.response?.status
-        } url=${err?.config?.url} response=${extractErrorMessage(
-          err?.response?.data,
-          "provider_error",
-        )}`
-      );
+      strapi.log.error("[anipo] order lookup failed", {
+        orderCode,
+        status: err?.response?.status ?? null,
+      });
       return {
         ok: false,
+        status: err?.response?.status,
         error: extractErrorMessage(err?.response?.data, "network_error"),
       };
     }

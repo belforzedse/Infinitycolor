@@ -46,17 +46,18 @@ const ORDER_TABS: { key: AdminOrderTab; label: string }[] = [
   { key: "shipped", label: "ارسال شده" },
   { key: "cancelled", label: "لغو شده یا ناموفق" },
   { key: "manual", label: "سفارش‌های دستی" },
+  { key: "anipo_attention", label: "نیاز به بررسی آنیپو" },
 ];
 
-// Fulfilment transitions only, in fulfilment order: «تکمیل شده» (Done) first,
-// then «ارسال شده» (Shipment). Cancel is a separate bulk action that hits
+// Marking an active order Done now also advances it to Shipment. The Shipment
+// action remains for older orders already at Done. Cancel still hits
 // `/admin/cancel` (refund/restock) instead of the status-transition endpoint.
 //
 // «در حال انجام» (Started) used to be offered here and could never succeed:
 // nothing in the backend's transition chain leads *to* Started — an order gets
 // there by being paid for. Only the two reachable steps are listed.
 const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
-  { status: "Done", label: "تکمیل شده" },
+  { status: "Done", label: "تکمیل و ارسال" },
   { status: "Shipment", label: "ارسال شده" },
 ];
 
@@ -287,10 +288,9 @@ export default function OrdersPage() {
         const skipped: { row: Order; reason: string }[] = [];
         const eligible: Order[] = [];
         for (const row of selectedRows) {
-          // The reserve window only blocks shipping, so it must not skip
-          // «تکمیل شده». Scoped to match the server, which refuses
-          // RESERVE_HOLD_ACTIVE for `Shipment` alone.
-          if (row.attributes.reserveIsHeld && statusKey === "Shipment") {
+          // Completing now ships automatically, so both actions are blocked
+          // during the reserve window, matching the server guard.
+          if (row.attributes.reserveIsHeld && (statusKey === "Done" || statusKey === "Shipment")) {
             skipped.push({ row, reason: "در مهلت رزرو" });
             continue;
           }

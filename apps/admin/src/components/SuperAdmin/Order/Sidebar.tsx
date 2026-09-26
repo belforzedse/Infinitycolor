@@ -104,6 +104,7 @@ export default function SuperAdminOrderSidebar({
   const barcodeUi = getAnipoBarcodeUi({
     shippingBarcode: barcode,
     state: workflowOverride?.state || orderData?.anipoBarcodeState,
+    submittedAt: workflowOverride?.submittedAt || orderData?.anipoSubmittedAt,
     orderStatus: orderData?.orderStatus,
     shippingMethodCode: orderData?.shippingMethodCode,
     providerMessage: workflowOverride?.message || orderData?.anipoLastMessage,
@@ -144,6 +145,7 @@ export default function SuperAdminOrderSidebar({
       setShowBarcodeDialog(false);
     } catch (error) {
       toast.error(workflowErrorMessage(error));
+      await onReload?.();
     } finally {
       setIsGenerating(false);
     }
@@ -158,6 +160,7 @@ export default function SuperAdminOrderSidebar({
       await applyWorkflowResponse(res);
     } catch (error) {
       toast.error(workflowErrorMessage(error));
+      await onReload?.();
     } finally {
       setIsGenerating(false);
     }
@@ -303,6 +306,14 @@ export default function SuperAdminOrderSidebar({
               </button>
               {barcodeUi.message ? (
                 <span className="text-xs leading-5 text-slate-500">{barcodeUi.message}</span>
+              ) : null}
+              {(orderData?.anipoBarcodeData?.barcodes?.length || 0) > 0 ? (
+                <div className="flex flex-col gap-1 text-xs text-slate-600">
+                  <span>بارکدها</span>
+                  {orderData!.anipoBarcodeData!.barcodes.map((code) => (
+                    <span key={code} dir="ltr" className="select-all text-left font-mono">{code}</span>
+                  ))}
+                </div>
               ) : null}
           </div>}
         </div>

@@ -10,6 +10,7 @@ import type { AnipoBarcodeWorkflowResponse } from "@/services/order";
 import type { AnipoBarcodeState } from "@/types/super-admin/order";
 import AnipoBarcodeDialog from "./AnipoBarcodeDialog";
 import { getAnipoBarcodeUi } from "./anipoBarcodeUi";
+import { useCan } from "@/hooks/useCan";
 
 interface OrderRowActionsProps {
   orderId: string;
@@ -19,6 +20,7 @@ interface OrderRowActionsProps {
   shippingWeight?: number;
   shippingBoxSizeId?: number;
   anipoBarcodeState?: AnipoBarcodeState;
+  anipoSubmittedAt?: string;
   anipoLastMessage?: string;
   anipoLastError?: string;
   /** Projected from the order's reserve group; the server enforces the hold. */
@@ -34,12 +36,15 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
     shippingWeight,
     shippingBoxSizeId,
     anipoBarcodeState,
+    anipoSubmittedAt,
     anipoLastMessage,
     anipoLastError,
     reserveIsHeld,
   } = props;
   const [, setRefresh] = useAtom(refreshTable);
   const [showBarcodeDialog, setShowBarcodeDialog] = useState(false);
+  const canManageShipping = useCan("order.shipping.manage");
+  const canPrint = useCan("order.print");
   const [isWorking, setIsWorking] = useState(false);
   const workflowBaseKey = [
     shippingBarcode || "",
@@ -56,6 +61,7 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
   const ui = getAnipoBarcodeUi({
     shippingBarcode: workflow?.barcode || shippingBarcode,
     state: workflow?.state || anipoBarcodeState,
+    submittedAt: workflow?.submittedAt || anipoSubmittedAt,
     orderStatus,
     shippingMethodCode,
     providerMessage: workflow?.message || anipoLastMessage,
@@ -102,6 +108,7 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
       setShowBarcodeDialog(false);
     } catch (error) {
       toast.error(errorMessage(error));
+      setRefresh(true);
     } finally {
       setIsWorking(false);
     }
@@ -114,6 +121,7 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
       applyResponse(await mod.default.checkAnipoBarcode(Number(orderId)));
     } catch (error) {
       toast.error(errorMessage(error));
+      setRefresh(true);
     } finally {
       setIsWorking(false);
     }
@@ -140,7 +148,7 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
           dataAttributes={{ id: orderId }}
         />
 
-        <button
+        {canPrint ? <button
           onClick={handlePrintReceipt}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 transition-colors hover:bg-blue-100"
           title="پرینت فاکتور"
@@ -151,9 +159,9 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
             <path d="m6,18 h12" />
             <path d="m6,14 h12 v4 h-12 z" />
           </svg>
-        </button>
+        </button> : null}
 
-        <button
+        {canManageShipping ? <button
           onClick={() => {
             if (ui.action === "submit") setShowBarcodeDialog(true);
             if (ui.action === "check") void handleCheckBarcode();
@@ -166,10 +174,10 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
           <span className="min-w-0 break-words text-right leading-5 lg:truncate">
             {isWorking ? "در حال بررسی..." : ui.label}
           </span>
-        </button>
+        </button> : null}
       </div>
 
-      {showBarcodeDialog ? (
+      {canManageShipping && showBarcodeDialog ? (
         <AnipoBarcodeDialog
           isOpen
           onClose={() => setShowBarcodeDialog(false)}

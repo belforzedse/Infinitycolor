@@ -14,6 +14,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   scheduledProductReconcile: "scheduledProducts.reconcile",
   cartCleanupReconcile: "cartCleanup.reconcile",
   anipoBarcodeReconcile: "anipoBarcodes.reconcile",
+  anipoRegisterOne: "anipoOrders.registerOne",
   anipoRecipientSyncOne: "anipoRecipients.syncOne",
   edgeCachePurge: "edgeCache.purge",
   staffOrderAlert: "staffAlerts.orderStarted",
@@ -103,6 +104,8 @@ export type AnipoRecipientSyncJobData = {
   orderId: number;
   expectedRevision: number;
 };
+
+export type AnipoRegistrationJobData = { orderId: number };
 
 /**
  * Refresh the gateway page cache and purge the edge for a set of storefront

@@ -118,6 +118,9 @@
       "type": "enumeration",
       "enum": ["Pending", "Issued", "NeedsAttention", "Stopped", "Voided"]
     },
+    "AnipoBarcodeData": {
+      "type": "json"
+    },
     "AnipoSubmittedAt": {
       "type": "datetime"
     },

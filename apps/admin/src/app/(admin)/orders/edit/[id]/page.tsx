@@ -65,6 +65,7 @@ type OrderResponse = {
     ShippingWeight?: number;
     ShippingBoxSizeId?: number;
     AnipoBarcodeState?: AnipoBarcodeState;
+    AnipoBarcodeData?: { expectedCount: number; barcodes: string[] } | null;
     AnipoSubmittedAt?: string;
     AnipoLastCheckedAt?: string;
     AnipoPollingDeadlineAt?: string;
@@ -446,6 +447,7 @@ export default function EditOrderPage() {
           shippingWeight: normalizedOrder?.ShippingWeight,
           shippingBoxSizeId: normalizedOrder?.ShippingBoxSizeId,
           anipoBarcodeState: normalizedOrder?.AnipoBarcodeState,
+          anipoBarcodeData: normalizedOrder?.AnipoBarcodeData,
           anipoSubmittedAt: normalizedOrder?.AnipoSubmittedAt,
           anipoLastCheckedAt: normalizedOrder?.AnipoLastCheckedAt,
           anipoPollingDeadlineAt: normalizedOrder?.AnipoPollingDeadlineAt,

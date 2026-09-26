@@ -62,6 +62,7 @@ describe("bounded admin orders list", () => {
     ["inprogress", { Status: { $in: ["Started"] } }],
     ["completed", { Status: { $in: ["Done"] } }],
     ["shipped", { Status: { $in: ["Shipment"] } }],
+    ["anipo_attention", { AnipoBarcodeState: { $eq: "NeedsAttention" } }],
   ])("keeps the %s status tab in its own server-side bucket", async (tab, expected) => {
     const { findMany } = installStrapi();
 
@@ -79,7 +80,8 @@ describe("bounded admin orders list", () => {
       .mockResolvedValueOnce(5)
       .mockResolvedValueOnce(6)
       .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(3);
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce(9);
     const ctx = createContext({
       search: "Ali",
       shippingMethodCodes: ["post"],
@@ -88,7 +90,7 @@ describe("bounded admin orders list", () => {
 
     await controller.counts(ctx);
 
-    expect(count).toHaveBeenCalledTimes(7);
+    expect(count).toHaveBeenCalledTimes(8);
     const baseConditions = [
       { Description: { $containsi: "vip" } },
       {
@@ -133,6 +135,7 @@ describe("bounded admin orders list", () => {
       Status: { $in: ["Returned", "Cancelled"] },
     });
     expect(count.mock.calls[6][0].where.$and).toContainEqual({ Type: { $eq: "Manual" } });
+    expect(count.mock.calls[7][0].where.$and).toContainEqual({ AnipoBarcodeState: { $eq: "NeedsAttention" } });
     expect(count.mock.calls[3][0].where.$and).not.toContainEqual({
       Type: { $ne: "Manual" },
     });
@@ -154,6 +157,7 @@ describe("bounded admin orders list", () => {
         shipped: 6,
         cancelled: 1,
         manual: 3,
+        anipo_attention: 9,
       },
       activeReserveGroups: 7,
     });
@@ -442,7 +446,7 @@ describe("bounded admin orders list", () => {
     count.mockClear();
     await controller.counts(createContext({ search: "A1b2C3d4" }));
     expect(transactionFindMany).toHaveBeenCalledTimes(1);
-    expect(count).toHaveBeenCalledTimes(7);
+    expect(count).toHaveBeenCalledTimes(8);
     for (const call of count.mock.calls) {
       expect(call[0].where.$and[0].$or).toContainEqual({ id: { $in: [771] } });
     }
