@@ -282,6 +282,18 @@ export default function SuperAdminOrderSidebar({
             <PrintIcon />
           </button>}
 
+          {canPrint && orderData?.reserveGroupId && (
+            <a
+              href={`/orders/print/reserve/${encodeURIComponent(orderData.reserveGroupId)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex h-11 w-full items-center justify-center gap-1 rounded-md bg-slate-100 text-sm text-neutral-500 md:h-10"
+            >
+              چاپ فاکتور کل بسته
+              <PrintIcon />
+            </a>
+          )}
+
           {/* Anipo Barcode Button - Full Width */}
           {canManageShipping && <div className="mt-2 flex w-full flex-col gap-1.5">
               <button

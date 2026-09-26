@@ -2,11 +2,10 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { apiClient } from "@/services";
 import Invoice, { type InvoiceOrder } from "@/components/invoice";
 import { getSiteIdentity } from "@/services/site-identity";
 import type { SiteIdentity } from "@/types/site-identity";
-import { normalizeOrderForInvoice } from "../normalizeOrder";
+import { loadInvoiceOrder } from "../loadInvoiceOrder";
 import { waitForInvoiceAssets } from "../waitForInvoiceAssets";
 import { receivePreInvoice } from "@/utils/preInvoiceTransfer";
 
@@ -43,26 +42,7 @@ export default function PrintOrderPage() {
           return;
         }
 
-        const res = await apiClient.get(
-          `/orders/${id}?populate[0]=user
-         &populate[1]=contract
-         &populate[2]=order_items
-         &populate[3]=order_items.product_variation.product.CoverImage
-         &populate[4]=order_items.product_variation.Price
-         &populate[5]=order_items.product_variation.DiscountPrice
-         &populate[6]=order_items.product_color
-         &populate[7]=order_items.product_size
-         &populate[8]=order_items.product_variation_model
-         &populate[9]=user.user_info
-         &populate[10]=delivery_address.shipping_city.shipping_province
-         &populate[11]=shipping
-         &populate[12]=contract.contract_transactions.payment_gateway`,
-        );
-
-        const normalizedOrder = normalizeOrderForInvoice(
-          (res as { data?: unknown }).data,
-          id as string,
-        );
+        const normalizedOrder = await loadInvoiceOrder(id as string);
         if (!normalizedOrder) {
           throw new Error("سفارش پیدا نشد");
         }

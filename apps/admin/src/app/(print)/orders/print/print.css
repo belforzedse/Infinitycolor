@@ -247,6 +247,12 @@ body:has(.factorchi-document) {
   font-weight: 700;
 }
 
+.factorchi-document .shop-meta-dates .fc-group-key {
+  direction: ltr;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+
 /*
   Reserve-order marker. Lives in the header meta cell rather than in the
   full-width `fc-document-type` banner for two reasons: that banner only renders
@@ -718,6 +724,12 @@ body:has(.factorchi-document) {
   font-weight: 400;
   line-height: var(--fc-line-height);
   white-space: nowrap;
+}
+
+.factorchi-document .fc-invoice-tearoff-fields .fc-tearoff-orders {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .factorchi-document .fc-invoice-tearoff-fields .fc-tearoff-item strong {
