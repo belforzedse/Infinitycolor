@@ -6,6 +6,7 @@ import { processMaintenanceJob } from "./processors";
 import { closeMediaQueues } from "./media";
 import { closeSnappayQueues } from "./snappay";
 import { closeAnipoRecipientQueues } from "./anipo-recipient";
+import { closeAnipoRegistrationQueues } from "./anipo-registration";
 import { closeStaffOrderAlertQueues } from "./staff-order-alert";
 import { createLoadedStrapi } from "./strapi-instance";
 import { terminateActiveMediaProcesses } from "../services/media/media-process";
@@ -43,6 +44,7 @@ async function closeAll(strapi: Strapi | undefined, workers: Closable[]) {
   // The SnappPay producer keeps a cached queue connection open for reuse.
   await closeSnappayQueues().catch(() => undefined);
   await closeAnipoRecipientQueues().catch(() => undefined);
+  await closeAnipoRegistrationQueues().catch(() => undefined);
   await closeStaffOrderAlertQueues().catch(() => undefined);
   await closeMediaQueues().catch(() => undefined);
   if (strapi && typeof (strapi as any).destroy === "function") {

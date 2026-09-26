@@ -763,6 +763,19 @@ describe("role permission templates", () => {
     );
   });
 
+  it("lets Seller 2 read the Anipo review tab and use the existing shipping actions", () => {
+    const seller2 = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "seller-2",
+    );
+    expect(hasCapability("seller2", "order.read")).toBe(true);
+    expect(hasCapability("seller2", "order.shipping.manage")).toBe(true);
+    expect(seller2["api::admin-order-list"].controllers["admin-order-list"].query.enabled).toBe(true);
+    expect(seller2["api::admin-order-list"].controllers["admin-order-list"].counts.enabled).toBe(true);
+    expect(seller2["api::order"].controllers.order.generateAnipoBarcode.enabled).toBe(true);
+    expect(seller2["api::order"].controllers.order.checkAnipoBarcode.enabled).toBe(true);
+  });
+
   it("wires capability-gated handlers for every staff role that holds the capability", () => {
     const strapiRoleType: Record<string, string> = {
       support: "support",

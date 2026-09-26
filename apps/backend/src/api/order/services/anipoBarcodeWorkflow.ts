@@ -4,9 +4,13 @@ import { writeAuditEvent } from "../../../audit/writer";
 import { runBackgroundJob } from "../../../jobs/backgroundJobRunner";
 import {
   mapOrderStatusToAnipo,
+  parseAnipoOrderResult,
   type AnipoCreateOrderPayload,
   type AnipoOrderResult,
+  type AnipoBatchBarcodeResult,
+  type AnipoApiResult,
 } from "../../shipping/services/anipo";
+import { enqueueAnipoRegistration } from "../../../queue/anipo-registration";
 import { buildAnipoOrderRecipient } from "../controllers/helpers/anipoOrder";
 import {
   claimGroupShippingBarcode,
@@ -39,6 +43,8 @@ export type AnipoWorkflowResponse = {
   pending: boolean;
   already?: boolean;
   barcode?: string;
+  barcodes?: string[];
+  expectedCount?: number;
   readyToIssue?: boolean;
   providerStatus?: string;
   message: string;
@@ -51,10 +57,13 @@ export type AnipoWorkflowResponse = {
 type AnipoService = {
   createOrUpdateOrder: (
     payload: AnipoCreateOrderPayload,
-  ) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  ) => Promise<AnipoApiResult<unknown>>;
   getOrder: (
     orderCode: string,
-  ) => Promise<{ ok: boolean; data?: AnipoOrderResult; error?: string }>;
+  ) => Promise<AnipoApiResult<AnipoOrderResult>>;
+  getOrderBarcodes: (
+    orderCodes: string[],
+  ) => Promise<AnipoApiResult<AnipoBatchBarcodeResult[]>>;
 };
 
 type SubmitOptions = {
@@ -62,6 +71,7 @@ type SubmitOptions = {
   boxSizeId?: unknown;
   actor?: AnipoWorkflowActor;
   now?: Date;
+  forceRetry?: boolean;
 };
 
 type RefreshOptions = {
@@ -95,6 +105,31 @@ function asDate(value: unknown): Date | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(String(value));
   return Number.isFinite(date.getTime()) ? date : null;
+}
+
+type StoredBarcodeData = { expectedCount: number; barcodes: string[] };
+
+function barcodeData(order: any, provider?: AnipoOrderResult): StoredBarcodeData {
+  const stored = order?.AnipoBarcodeData;
+  const prior = Array.isArray(stored?.barcodes) ? stored.barcodes : [];
+  const codes = [order?.ShippingBarcode, ...prior, provider?.barcode, ...(provider?.barcodes || [])]
+    .filter((code): code is string => typeof code === "string" && Boolean(code.trim()))
+    .map((code) => code.trim());
+  const unique = [...new Set(codes)];
+  const expectedCount = Math.max(
+    1,
+    Number(stored?.expectedCount) || 0,
+    Number(provider?.expectedCount) || 0,
+    unique.length,
+  );
+  return { expectedCount, barcodes: unique };
+}
+
+function safeError(error: unknown): string {
+  return String(error || "provider_error")
+    .replace(/(?:[0-9۰-۹٠-٩][\s().-]*){8,}/g, "[redacted]")
+    .replace(/["'«][^"'»]{8,}["'»]/g, "[redacted]")
+    .slice(0, 500);
 }
 
 function computeProductWeight(orderItems: unknown[]): number {
@@ -181,12 +216,15 @@ function workflowMessage(state: AnipoBarcodeState, providerMessage?: string): st
 function responseFromOrder(order: any, overrides: Partial<AnipoWorkflowResponse> = {}): AnipoWorkflowResponse {
   const state = (order?.AnipoBarcodeState || ANIPO_BARCODE_STATES.pending) as AnipoBarcodeState;
   const barcode = text(order?.ShippingBarcode);
+  const stored = barcodeData(order);
   return {
     success: true,
     state,
     issued: state === ANIPO_BARCODE_STATES.issued && Boolean(barcode),
     pending: state === ANIPO_BARCODE_STATES.pending,
     barcode,
+    barcodes: stored.barcodes,
+    expectedCount: stored.expectedCount,
     readyToIssue:
       typeof order?.AnipoReadyToIssue === "boolean" ? order.AnipoReadyToIssue : undefined,
     providerStatus: text(order?.AnipoProviderStatus),
@@ -382,16 +420,15 @@ export async function submitAnipoBarcode(
   options: SubmitOptions = {},
 ): Promise<AnipoWorkflowResponse> {
   const order = await loadOrder(strapi, orderId);
-  if (order.ShippingBarcode) {
+  if (order.AnipoBarcodeState === ANIPO_BARCODE_STATES.issued ||
+      (order.ShippingBarcode && !order.AnipoBarcodeState)) {
     return responseFromOrder(
       { ...order, AnipoBarcodeState: ANIPO_BARCODE_STATES.issued },
       { already: true },
     );
   }
-  if (
-    order.AnipoBarcodeState === ANIPO_BARCODE_STATES.pending ||
-    order.AnipoBarcodeState === ANIPO_BARCODE_STATES.needsAttention
-  ) {
+  if ((order.AnipoBarcodeState === ANIPO_BARCODE_STATES.pending && order.AnipoSubmittedAt) ||
+      (order.AnipoBarcodeState === ANIPO_BARCODE_STATES.needsAttention && !options.forceRetry)) {
     return responseFromOrder(order, { already: true });
   }
   if (
@@ -449,23 +486,37 @@ export async function submitAnipoBarcode(
     receiver_address: recipient.fullAddress,
     receiver_postal_code: recipient.postalCode,
     weight_g: packageData.weight,
+    package_count: 1,
     box_type: packageData.boxSizeId,
     parcel_content: "پوشاک",
     order_total: computeAnipoOrderTotalIrr(order),
     order_status: mapOrderStatusToAnipo(order.Status),
   });
   if (!createResult?.ok) {
+    const details = createResult.validationErrors
+      ? Object.entries(createResult.validationErrors)
+          .map(([field, errors]) => `${field}: ${errors.join("، ")}`)
+          .join("؛ ")
+      : "";
+    const message = createResult.status === 401
+      ? "تنظیمات اتصال آنیپو نامعتبر است"
+      : createResult.status === 422
+        ? details || "اطلاعات سفارش برای آنیپو نامعتبر است"
+        : `ارتباط با آنیپو ناموفق بود (${createResult.status || "network"})`;
     throw new AnipoWorkflowError(
-      502,
+      createResult.status || 502,
       "ANIPO_REGISTER_ERROR",
-      createResult?.error || "ثبت سفارش در آنیپو ناموفق بود",
+      safeError(message),
     );
   }
 
-  const providerResult = await anipo.getOrder(String(order.id));
-  const provider = providerResult?.ok ? providerResult.data : undefined;
-  const barcode = provider?.issued ? text(provider.barcode) : undefined;
-  const state = barcode ? ANIPO_BARCODE_STATES.issued : ANIPO_BARCODE_STATES.pending;
+  // Registration succeeds without a barcode. The scheduled batch poller picks
+  // it up later; there is no immediate per-order GET after every POST.
+  const provider = parseAnipoOrderResult(createResult.data) || undefined;
+  const data = barcodeData(order, provider);
+  const barcode = data.barcodes[0];
+  const state = provider?.issued && data.barcodes.length >= data.expectedCount
+    ? ANIPO_BARCODE_STATES.issued : ANIPO_BARCODE_STATES.pending;
   const updateData: Record<string, unknown> = {
     ShippingWeight: packageData.weight,
     ShippingBoxSizeId: packageData.boxSizeId,
@@ -473,27 +524,34 @@ export async function submitAnipoBarcode(
     AnipoSubmittedAt: now,
     AnipoLastCheckedAt: now,
     AnipoPollingDeadlineAt: deadline,
-    AnipoCheckCount: 1,
-    AnipoLastError: providerResult?.ok ? null : providerResult?.error || "status_check_failed",
+    AnipoCheckCount: 0,
+    AnipoLastError: null,
+    AnipoBarcodeData: data,
     ...providerStateData(provider),
   };
   if (barcode) {
     updateData.ShippingBarcode = barcode;
+  }
+  if (state === ANIPO_BARCODE_STATES.issued) {
     updateData.AnipoIssuedAt = asDate(provider?.issuedAt) || now;
   }
   const updated = await strapi.db.transaction(async ({ trx }) => {
     const persisted = await strapi.db.query("api::order.order").update({
-      where: { id: orderId },
+      where: {
+        id: orderId,
+        AnipoBarcodeState: order.AnipoBarcodeState || { $null: true },
+        AnipoSubmittedAt: order.AnipoSubmittedAt || { $null: true },
+      },
       data: updateData,
       transacting: trx,
     } as any);
-    if (barcode) {
+    if (persisted && barcode && state === ANIPO_BARCODE_STATES.issued) {
       await propagateBarcodeToReserveGroup(strapi, order, orderId, barcode, trx);
       await recordIssuedAudit(strapi, orderId, barcode, options.actor);
     }
     return persisted;
   });
-  return responseFromOrder(updated || { ...order, ...updateData });
+  return responseFromOrder(updated || (await loadOrder(strapi, orderId)));
 }
 
 export async function refreshAnipoBarcodeStatus(
@@ -502,7 +560,8 @@ export async function refreshAnipoBarcodeStatus(
   options: RefreshOptions,
 ): Promise<AnipoWorkflowResponse> {
   const order = await loadOrder(strapi, orderId);
-  if (order.ShippingBarcode) {
+  if (order.AnipoBarcodeState === ANIPO_BARCODE_STATES.issued ||
+      (order.ShippingBarcode && !order.AnipoBarcodeState)) {
     return responseFromOrder(
       { ...order, AnipoBarcodeState: ANIPO_BARCODE_STATES.issued },
       { already: true },
@@ -549,12 +608,14 @@ export async function refreshAnipoBarcodeStatus(
   const providerResult = await anipo.getOrder(String(order.id));
   const nextCheckCount = Number(order.AnipoCheckCount || 0) + 1;
   if (!providerResult?.ok || !providerResult.data) {
+    const missing = providerResult?.status === 404;
     await strapi.db.query("api::order.order").update({
       where: { id: orderId, AnipoBarcodeState: order.AnipoBarcodeState },
       data: {
+        ...(missing ? { AnipoBarcodeState: ANIPO_BARCODE_STATES.needsAttention } : {}),
         AnipoLastCheckedAt: now,
         AnipoCheckCount: nextCheckCount,
-        AnipoLastError: providerResult?.error || "status_check_failed",
+        AnipoLastError: missing ? "ANIPO_REMOTE_ORDER_NOT_FOUND" : safeError(providerResult?.error || "status_check_failed"),
       },
     });
     throw new AnipoWorkflowError(
@@ -565,8 +626,10 @@ export async function refreshAnipoBarcodeStatus(
   }
 
   const provider = providerResult.data;
-  const barcode = provider.issued ? text(provider.barcode) : undefined;
-  const state = barcode
+  const data = barcodeData(order, provider);
+  const barcode = data.barcodes[0];
+  const complete = Boolean(provider.issued && data.barcodes.length >= data.expectedCount);
+  const state = complete
     ? ANIPO_BARCODE_STATES.issued
     : order.AnipoBarcodeState === ANIPO_BARCODE_STATES.needsAttention
       ? ANIPO_BARCODE_STATES.needsAttention
@@ -576,23 +639,25 @@ export async function refreshAnipoBarcodeStatus(
     AnipoLastCheckedAt: now,
     AnipoCheckCount: nextCheckCount,
     AnipoLastError: null,
+    AnipoBarcodeData: data,
     ...providerStateData(provider),
   };
   if (barcode) {
     updateData.ShippingBarcode = barcode;
+  }
+  if (complete) {
     updateData.AnipoIssuedAt = asDate(provider.issuedAt) || now;
   }
   const updated = await strapi.db.transaction(async ({ trx }) => {
     const persisted = await strapi.db.query("api::order.order").update({
       where: {
         id: orderId,
-        ShippingBarcode: { $null: true },
         AnipoBarcodeState: order.AnipoBarcodeState,
       },
       data: updateData,
       transacting: trx,
     } as any);
-    if (barcode && persisted) {
+    if (complete && barcode && persisted) {
       await propagateBarcodeToReserveGroup(strapi, order, orderId, barcode, trx);
       await recordIssuedAudit(strapi, orderId, barcode, options.actor);
     }
@@ -600,6 +665,112 @@ export async function refreshAnipoBarcodeStatus(
   });
   const authoritative = updated || (await loadOrder(strapi, orderId));
   return responseFromOrder(authoritative);
+}
+
+export async function recordAnipoRegistrationFailure(
+  strapi: Strapi,
+  orderId: number,
+  error: unknown,
+  final: boolean,
+  allowSubmitted = false,
+): Promise<boolean> {
+  const message = safeError(error instanceof Error ? error.message : error);
+  const current = await strapi.db.query("api::order.order").findOne({
+    where: { id: orderId },
+    select: ["AnipoCheckCount", "AnipoBarcodeState"],
+  });
+  // Before submission this existing counter tracks registration attempts; a
+  // successful POST resets it, after which it tracks barcode checks again.
+  const attempts = Math.max(0, Number(current?.AnipoCheckCount || 0)) + 1;
+  const terminal = final || attempts >= 5;
+  await strapi.db.query("api::order.order").update({
+    where: {
+      id: orderId,
+      AnipoBarcodeState: current?.AnipoBarcodeState
+        ? { $in: [ANIPO_BARCODE_STATES.pending, ANIPO_BARCODE_STATES.needsAttention] }
+        : { $null: true },
+      ...(allowSubmitted ? {} : { AnipoSubmittedAt: { $null: true } }),
+    },
+    data: {
+      AnipoLastError: message,
+      AnipoLastCheckedAt: new Date(),
+      AnipoCheckCount: attempts,
+      ...(terminal ? { AnipoBarcodeState: ANIPO_BARCODE_STATES.needsAttention } : {}),
+    },
+  });
+  strapi.log.error("Anipo registration attempt failed", {
+    orderId,
+    status: error instanceof AnipoWorkflowError ? error.status : null,
+    final: terminal,
+    error: message,
+  });
+  return terminal;
+}
+
+export async function processAnipoRegistrationJob(
+  strapi: Strapi,
+  orderId: number,
+  attempt: number,
+  maxAttempts: number,
+): Promise<AnipoWorkflowResponse | { skipped: true }> {
+  const row = await strapi.db.query("api::order.order").findOne({
+    where: { id: orderId },
+    select: ["id", "Status", "AnipoBarcodeState", "AnipoSubmittedAt", "ShippingBarcode"],
+  });
+  if (!row || row.Status !== "Shipment" || row.AnipoSubmittedAt || row.ShippingBarcode ||
+      row.AnipoBarcodeState !== ANIPO_BARCODE_STATES.pending) return { skipped: true };
+  try {
+    return await submitAnipoBarcode(strapi, orderId, { weight: 500, boxSizeId: 3 });
+  } catch (error) {
+    const status = error instanceof AnipoWorkflowError ? error.status : 0;
+    const retryable = !status || status === 408 || status === 429 || status >= 500;
+    const final = !retryable || attempt >= maxAttempts;
+    const terminal = await recordAnipoRegistrationFailure(strapi, orderId, error, final);
+    if (!terminal) throw error;
+    return { skipped: true };
+  }
+}
+
+async function applyAnipoBatchResult(
+  strapi: Strapi,
+  row: any,
+  result: AnipoBatchBarcodeResult,
+  now: Date,
+): Promise<AnipoBarcodeState> {
+  const query = strapi.db.query("api::order.order");
+  if (!result.found) {
+    await query.update({
+      where: { id: row.id, AnipoBarcodeState: ANIPO_BARCODE_STATES.pending },
+      data: {
+        AnipoBarcodeState: ANIPO_BARCODE_STATES.needsAttention,
+        AnipoLastCheckedAt: now,
+        AnipoLastError: "ANIPO_REMOTE_ORDER_NOT_FOUND",
+      },
+    });
+    return ANIPO_BARCODE_STATES.needsAttention;
+  }
+  const data = barcodeData(row, result);
+  const complete = result.issued && data.barcodes.length >= data.expectedCount;
+  const barcode = data.barcodes[0];
+  const updated = await query.update({
+    where: { id: row.id, AnipoBarcodeState: ANIPO_BARCODE_STATES.pending },
+    data: {
+      AnipoBarcodeState: complete ? ANIPO_BARCODE_STATES.issued : ANIPO_BARCODE_STATES.pending,
+      AnipoBarcodeData: data,
+      ...(barcode ? { ShippingBarcode: barcode } : {}),
+      ...(complete ? { AnipoIssuedAt: asDate(result.issuedAt) || now } : {}),
+      AnipoLastCheckedAt: now,
+      AnipoCheckCount: Number(row.AnipoCheckCount || 0) + 1,
+      AnipoLastError: null,
+      ...providerStateData(result),
+    },
+  });
+  if (complete && barcode && updated) {
+    const fullOrder = await loadOrder(strapi, Number(row.id));
+    await propagateBarcodeToReserveGroup(strapi, fullOrder, Number(row.id), barcode);
+    await recordIssuedAudit(strapi, Number(row.id), barcode);
+  }
+  return complete ? ANIPO_BARCODE_STATES.issued : ANIPO_BARCODE_STATES.pending;
 }
 
 export async function runAnipoBarcodeReconciliation(strapi: Strapi) {
@@ -615,50 +786,154 @@ export async function runAnipoBarcodeReconciliation(strapi: Strapi) {
         1,
         Math.min(500, Number(process.env.ANIPO_BARCODE_RECONCILE_BATCH_SIZE || 50) || 50),
       );
-      const concurrency = Math.max(
-        1,
-        Math.min(10, Number(process.env.ANIPO_BARCODE_RECONCILE_CONCURRENCY || 3) || 3),
-      );
-      const rows = (await strapi.db.query("api::order.order").findMany({
-        where: { AnipoBarcodeState: ANIPO_BARCODE_STATES.pending },
+      const query = strapi.db.query("api::order.order");
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - POLLING_WINDOW_MS);
+      const postalShipment = {
+        Status: "Shipment",
+        $or: [{ ShippingMethodCode: "post" }, { shipping: { Code: "post" } }],
+      };
+      const unsubmitted = await query.findMany({
+        where: { ...postalShipment, AnipoBarcodeState: ANIPO_BARCODE_STATES.pending, AnipoSubmittedAt: { $null: true } },
         select: ["id"],
-        orderBy: [{ AnipoLastCheckedAt: "asc" }, { id: "asc" }],
         limit: batchSize,
-      })) as Array<{ id: number }>;
-
-      let cursor = 0;
-      let processed = 0;
-      let issued = 0;
-      let needsAttention = 0;
-      let stopped = 0;
-      let failed = 0;
-      const work = async () => {
-        while (cursor < rows.length) {
-          const row = rows[cursor++];
+      });
+      for (const row of unsubmitted) {
+        try {
+          await enqueueAnipoRegistration(Number(row.id));
+        } catch (error) {
+          strapi.log.error("Anipo registration recovery enqueue failed", {
+            orderId: row.id,
+            error: safeError(error instanceof Error ? error.message : error),
+          });
           try {
-            const result = await refreshAnipoBarcodeStatus(strapi, Number(row.id), {
-              source: "scheduler",
-            });
-            processed += 1;
-            if (result.state === ANIPO_BARCODE_STATES.issued) issued += 1;
-            if (result.state === ANIPO_BARCODE_STATES.needsAttention) needsAttention += 1;
-            if (result.state === ANIPO_BARCODE_STATES.stopped) stopped += 1;
-          } catch (error) {
-            failed += 1;
-            strapi.log.error("Anipo barcode reconciliation failed for order", {
+            await recordAnipoRegistrationFailure(strapi, Number(row.id), error, false);
+          } catch (recordError) {
+            strapi.log.error("Anipo recovery state update failed", {
               orderId: row.id,
-              error: error instanceof Error ? error.message : String(error),
+              error: safeError(recordError instanceof Error ? recordError.message : recordError),
             });
           }
         }
-      };
-      await Promise.all(Array.from({ length: Math.min(concurrency, rows.length || 1) }, work));
+      }
+
+      const expired = await query.findMany({
+        where: {
+          $and: [
+            postalShipment,
+            { $or: [
+              { AnipoPollingDeadlineAt: { $lte: now } },
+              { AnipoPollingDeadlineAt: { $null: true }, AnipoSubmittedAt: { $lte: sevenDaysAgo } },
+            ] },
+          ],
+          AnipoBarcodeState: ANIPO_BARCODE_STATES.pending,
+          AnipoSubmittedAt: { $notNull: true },
+        },
+        select: ["id"],
+        limit: batchSize,
+      });
+      let failed = 0;
+      let needsAttention = 0;
+      for (const row of expired) {
+        try {
+          await query.update({
+            where: { id: row.id, AnipoBarcodeState: ANIPO_BARCODE_STATES.pending },
+            data: {
+              AnipoBarcodeState: ANIPO_BARCODE_STATES.needsAttention,
+              AnipoLastMessage: "مهلت هفت‌روزه پیگیری خودکار آنیپو تمام شد",
+            },
+          });
+          needsAttention += 1;
+        } catch (error) {
+          failed += 1;
+          strapi.log.error("Anipo barcode expiry update failed", {
+            orderId: row.id,
+            error: safeError(error instanceof Error ? error.message : error),
+          });
+        }
+      }
+
+      const rows = await query.findMany({
+        where: {
+          $and: [
+            postalShipment,
+            { $or: [
+              { AnipoPollingDeadlineAt: { $gt: now } },
+              { AnipoPollingDeadlineAt: { $null: true }, AnipoSubmittedAt: { $gt: sevenDaysAgo } },
+            ] },
+          ],
+          AnipoBarcodeState: ANIPO_BARCODE_STATES.pending,
+          AnipoSubmittedAt: { $notNull: true },
+        },
+        select: ["id", "ShippingBarcode", "AnipoBarcodeData", "AnipoCheckCount"],
+        orderBy: [{ AnipoLastCheckedAt: "asc" }, { id: "asc" }],
+        limit: batchSize,
+      });
+      let processed = 0;
+      let issued = 0;
+      const anipo = rows.length > 0
+        ? strapi.service("api::shipping.anipo") as AnipoService
+        : null;
+      for (let offset = 0; offset < rows.length; offset += 200) {
+        const chunk = rows.slice(offset, offset + 200);
+        let response: AnipoApiResult<AnipoBatchBarcodeResult[]>;
+        try {
+          response = await anipo!.getOrderBarcodes(chunk.map((row: any) => String(row.id)));
+        } catch (error) {
+          failed += chunk.length;
+          strapi.log.error("Anipo barcode batch request failed", {
+            count: chunk.length,
+            error: safeError(error instanceof Error ? error.message : error),
+          });
+          continue;
+        }
+        if (!response.ok || !response.data) {
+          failed += chunk.length;
+          if (response.status === 401 || response.status === 422) {
+            for (const row of chunk) {
+              try {
+                await query.update({
+                  where: { id: row.id, AnipoBarcodeState: ANIPO_BARCODE_STATES.pending },
+                  data: { AnipoBarcodeState: ANIPO_BARCODE_STATES.needsAttention, AnipoLastError: response.status === 401 ? "تنظیمات اتصال آنیپو نامعتبر است" : "پاسخ آنیپو برای استعلام بارکد نامعتبر است" },
+                });
+                needsAttention += 1;
+              } catch (error) {
+                strapi.log.error("Anipo barcode review update failed", {
+                  orderId: row.id,
+                  error: safeError(error instanceof Error ? error.message : error),
+                });
+              }
+            }
+          }
+          continue;
+        }
+        const byCode = new Map(response.data.map((result) => [result.orderCode, result]));
+        for (const row of chunk) {
+          const result = byCode.get(String(row.id));
+          if (!result) {
+            failed += 1;
+            continue;
+          }
+          try {
+            const state = await applyAnipoBatchResult(strapi, row, result, now);
+            processed += 1;
+            if (state === ANIPO_BARCODE_STATES.issued) issued += 1;
+            if (state === ANIPO_BARCODE_STATES.needsAttention) needsAttention += 1;
+          } catch (error) {
+            failed += 1;
+            strapi.log.error("Anipo barcode result failed", {
+              orderId: row.id,
+              error: safeError(error instanceof Error ? error.message : error),
+            });
+          }
+        }
+      }
       return {
         scanned: rows.length,
         processed,
         issued,
         needsAttention,
-        stopped,
+        stopped: 0,
         failed,
       };
     },

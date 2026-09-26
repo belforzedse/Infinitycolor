@@ -48,5 +48,6 @@ describe("Anipo order recipient", () => {
     expect(normalizeAnipoLocationName("  كهگيلويه   و بويراحمد  ")).toBe("کهگیلویه و بویراحمد");
     expect(normalizeAnipoPostalCode("0000000000")).toBeUndefined();
     expect(normalizeAnipoPostalCode("12345")).toBeUndefined();
+    expect(normalizeAnipoPostalCode("1234567890123")).toBeUndefined();
   });
 });

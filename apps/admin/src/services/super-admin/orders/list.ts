@@ -14,7 +14,8 @@ export type AdminOrderTab =
   | "completed"
   | "shipped"
   | "cancelled"
-  | "manual";
+  | "manual"
+  | "anipo_attention";
 
 export type AdminOrdersListInput = {
   page: number;

@@ -101,6 +101,13 @@ export async function processMaintenanceJob(
       const recipient = await runAnipoRecipientSyncReconciliation(strapi);
       return { barcode, recipient };
     }
+    case COMMERCE_MAINTENANCE_JOBS.anipoRegisterOne: {
+      const { orderId } = job.data as { orderId: number };
+      const { processAnipoRegistrationJob } = await import(
+        "../api/order/services/anipoBarcodeWorkflow"
+      );
+      return processAnipoRegistrationJob(strapi, orderId, (job.attemptsMade ?? 0) + 1, Number(job.opts.attempts || 1));
+    }
     case COMMERCE_MAINTENANCE_JOBS.anipoRecipientSyncOne: {
       const { orderId, expectedRevision } = job.data as {
         orderId: number;

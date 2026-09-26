@@ -1,24 +1,29 @@
 import { getAnipoBarcodeUi } from "../anipoBarcodeUi";
 
 describe("getAnipoBarcodeUi", () => {
-  it("treats a persisted barcode as issued regardless of stale workflow state", () => {
+  it("keeps a partial barcode pending until all parcels are issued", () => {
     expect(
-      getAnipoBarcodeUi({ shippingBarcode: "123", state: "Pending" }),
-    ).toMatchObject({ action: null, tone: "green" });
+      getAnipoBarcodeUi({ shippingBarcode: "123", state: "Pending", submittedAt: "2026-09-26" }),
+    ).toMatchObject({ action: "check", tone: "amber" });
   });
 
   it("offers a status check instead of another submission while pending", () => {
-    expect(getAnipoBarcodeUi({ state: "Pending" })).toMatchObject({
+    expect(getAnipoBarcodeUi({ state: "Pending", submittedAt: "2026-09-26" })).toMatchObject({
       action: "check",
       tone: "amber",
     });
   });
 
   it("offers manual re-check after automatic polling needs attention", () => {
-    expect(getAnipoBarcodeUi({ state: "NeedsAttention" })).toMatchObject({
+    expect(getAnipoBarcodeUi({ state: "NeedsAttention", submittedAt: "2026-09-20" })).toMatchObject({
       action: "check",
       tone: "red",
     });
+  });
+
+  it("offers registration retry for an unsubmitted or provider-missing order", () => {
+    expect(getAnipoBarcodeUi({ state: "NeedsAttention" })).toMatchObject({ action: "submit", tone: "red" });
+    expect(getAnipoBarcodeUi({ state: "NeedsAttention", submittedAt: "2026-09-20", lastError: "ANIPO_REMOTE_ORDER_NOT_FOUND" })).toMatchObject({ action: "submit", message: "سفارش در آنیپو پیدا نشد" });
   });
 
   it("refuses barcode submission while the reserve window is still open", () => {

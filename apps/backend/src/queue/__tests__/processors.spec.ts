@@ -33,6 +33,7 @@ jest.mock("../../jobs/analyticsOutboxRepair", () => ({
 }));
 jest.mock("../../api/order/services/anipoBarcodeWorkflow", () => ({
   runAnipoBarcodeReconciliation: jest.fn(),
+  processAnipoRegistrationJob: jest.fn(),
 }));
 jest.mock("../../api/order/services/anipoRecipientSync", () => ({
   processAnipoRecipientSync: jest.fn(),
@@ -70,7 +71,7 @@ import {
 } from "../../api/payment-gateway/services/snappay-orchestrator";
 import { runAnalyticsDailyRollupTick } from "../../jobs/analyticsDailyRollup";
 import { runAnalyticsOutboxRepairTick } from "../../jobs/analyticsOutboxRepair";
-import { runAnipoBarcodeReconciliation } from "../../api/order/services/anipoBarcodeWorkflow";
+import { processAnipoRegistrationJob, runAnipoBarcodeReconciliation } from "../../api/order/services/anipoBarcodeWorkflow";
 import {
   processAnipoRecipientSync,
   runAnipoRecipientSyncReconciliation,
@@ -218,6 +219,18 @@ describe("queue processors", () => {
 
     expect(mockedRunAnipoBarcodeReconciliation).toHaveBeenCalledWith(strapi);
     expect(mockedRunAnipoRecipientSyncReconciliation).toHaveBeenCalledWith(strapi);
+  });
+
+  it("dispatches a single Anipo registration with the worker retry budget", async () => {
+    const strapi = createMockStrapi();
+    (processAnipoRegistrationJob as jest.Mock).mockResolvedValue({ state: "Pending" });
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.anipoRegisterOne,
+      data: { orderId: 42 },
+      attemptsMade: 1,
+      opts: { attempts: 5 },
+    } as any);
+    expect(processAnipoRegistrationJob).toHaveBeenCalledWith(strapi, 42, 2, 5);
   });
 
   it("dispatches one Anipo recipient synchronization", async () => {

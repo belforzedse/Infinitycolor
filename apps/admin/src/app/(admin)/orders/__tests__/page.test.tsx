@@ -97,6 +97,7 @@ describe("orders page bounded data ownership", () => {
         completed: 5,
         cancelled: 1,
         manual: 3,
+        anipo_attention: 2,
       },
       activeReserveGroups: 2,
       loading: false,
@@ -186,6 +187,14 @@ describe("orders page bounded data ownership", () => {
     expect(listAdminOrders).toHaveBeenLastCalledWith(
       expect.objectContaining({ tab: "paying" }),
     );
+  });
+
+  it("shows Seller 2 the counted Anipo review tab through the existing order list", async () => {
+    mockCapabilities = new Set(["order.read", "order.shipping.manage"]);
+    render(<OrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: /نیاز به بررسی آنیپو ۲/ }));
+    await mockTableProps.dataLoader({ page: 1, pageSize: 25, filters: [], signal: new AbortController().signal });
+    expect(listAdminOrders).toHaveBeenLastCalledWith(expect.objectContaining({ tab: "anipo_attention" }));
   });
 
   it("shows Persian counters for every order tab and keeps active reserves separate", () => {
@@ -376,11 +385,7 @@ describe("orders page bounded data ownership", () => {
       expect(changeOrderStatus).toHaveBeenCalledWith("1", "Done");
     });
 
-    /**
-     * The 48h reserve window blocks shipping only. Completing an order inside it
-     * is allowed, and the bulk pre-skip used to drop those rows for every status.
-     */
-    it("still completes a held order, because the reserve hold only blocks shipping", async () => {
+    it("skips held reserve orders when completing would automatically ship them", async () => {
       render(<OrdersPage />);
 
       await mockTableProps.onBulkAction("status-Done", [
@@ -388,8 +393,8 @@ describe("orders page bounded data ownership", () => {
         row("2", false, "Started"),
       ]);
 
-      expect(changeOrderStatus).toHaveBeenCalledTimes(2);
-      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Done");
+      expect(changeOrderStatus).toHaveBeenCalledTimes(1);
+      expect(changeOrderStatus).not.toHaveBeenCalledWith("1", "Done");
       expect(changeOrderStatus).toHaveBeenCalledWith("2", "Done");
     });
 

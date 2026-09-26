@@ -64,6 +64,7 @@ export type Order = {
     ShippingWeight?: number;
     ShippingBoxSizeId?: number;
     AnipoBarcodeState?: AnipoBarcodeState;
+    AnipoBarcodeData?: { expectedCount: number; barcodes: string[] } | null;
     AnipoSubmittedAt?: string;
     AnipoLastCheckedAt?: string;
     AnipoPollingDeadlineAt?: string;
@@ -203,13 +204,24 @@ export const columns: ColumnDef<Order>[] = [
             >
               در مهلت رزرو — ارسال متوقف
             </span>
+            {row.original.attributes.AnipoBarcodeState === "NeedsAttention" ? (
+              <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-700 ring-1 ring-red-600/20">نیاز به بررسی آنیپو</span>
+            ) : null}
           </div>
         );
       }
       const status = row.original?.attributes?.Status;
       const meta = getOrderStatusMeta(status);
-
-      return <StatusBadge label={meta.label} tone={meta.tone} />;
+      return (
+        <div className="flex flex-col items-start gap-1">
+          <StatusBadge label={meta.label} tone={meta.tone} />
+          {row.original.attributes.AnipoBarcodeState === "NeedsAttention" ? (
+            <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-700 ring-1 ring-red-600/20">
+              نیاز به بررسی آنیپو
+            </span>
+          ) : null}
+        </div>
+      );
     },
   },
   {
@@ -231,7 +243,8 @@ export const columns: ColumnDef<Order>[] = [
     cell: ({ row }) => {
       const barcode = row.original?.attributes?.ShippingBarcode;
 
-      return <span className="text-sm text-foreground-primary">{barcode || "-"}</span>;
+      const count = row.original?.attributes?.AnipoBarcodeData?.barcodes?.length || 0;
+      return <span className="text-sm text-foreground-primary">{barcode || "-"}{count > 1 ? ` (+${count - 1})` : ""}</span>;
     },
   },
   {
@@ -251,6 +264,7 @@ export const columns: ColumnDef<Order>[] = [
           shippingWeight={row.original.attributes.ShippingWeight}
           shippingBoxSizeId={row.original.attributes.ShippingBoxSizeId}
           anipoBarcodeState={row.original.attributes.AnipoBarcodeState}
+          anipoSubmittedAt={row.original.attributes.AnipoSubmittedAt}
           anipoLastMessage={row.original.attributes.AnipoLastMessage}
           anipoLastError={row.original.attributes.AnipoLastError}
           reserveIsHeld={row.original.attributes.reserveIsHeld}
@@ -343,7 +357,14 @@ export const MobileTable = ({ data, selectionProps }: Props) => {
                 <CopyableId value={row.id} label="کپی شماره سفارش" />
               </span>
             }
-            badge={<StatusBadge label={statusMeta.label} tone={statusMeta.tone} />}
+            badge={
+              <span className="flex flex-col items-start gap-1">
+                <StatusBadge label={statusMeta.label} tone={statusMeta.tone} />
+                {row.attributes.AnipoBarcodeState === "NeedsAttention" ? (
+                  <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-700">نیاز به بررسی آنیپو</span>
+                ) : null}
+              </span>
+            }
             value={
               amount ? priceFormatter(amount, " تومان") : "سفارش دستی"
             }
@@ -377,6 +398,7 @@ export const MobileTable = ({ data, selectionProps }: Props) => {
                 shippingWeight={row.attributes.ShippingWeight}
                 shippingBoxSizeId={row.attributes.ShippingBoxSizeId}
                 anipoBarcodeState={row.attributes.AnipoBarcodeState}
+                anipoSubmittedAt={row.attributes.AnipoSubmittedAt}
                 anipoLastMessage={row.attributes.AnipoLastMessage}
                 anipoLastError={row.attributes.AnipoLastError}
                 reserveIsHeld={row.attributes.reserveIsHeld}

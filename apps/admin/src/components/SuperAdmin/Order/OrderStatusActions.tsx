@@ -29,12 +29,11 @@ type PendingAction =
   | { kind: "cancel" }
   | null;
 
-// Quick status transitions offered as prominent buttons, listed in fulfilment
-// order: «تکمیل شده» first, then «ارسال». Each targets a single backend Status;
-// the bucket labels match the storefront categories.
+// Completing an active order advances it to Shipment. The Shipment action
+// remains available for older orders already at Done.
 const STATUS_ACTIONS: { status: OrderLifecycleStatus; label: string; bucket: PersianOrderStatus }[] =
   [
-    { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.INPROGRESS },
+    { status: "Done", label: "تکمیل و ارسال", bucket: PersianOrderStatus.INPROGRESS },
     { status: "Shipment", label: "تحویل به ارسال", bucket: PersianOrderStatus.DELIVERED },
   ];
 
@@ -57,7 +56,7 @@ export default function OrderStatusActions({
   const isCancelled = order.orderStatus === "Cancelled";
   const cancelDisabled = isCancelled || isReturned;
   /*
-   * The server refuses `Started -> Shipment` while the reserve window is open
+   * The server refuses completion or shipment while the reserve window is open
    * (`RESERVE_HOLD_ACTIVE`). Disabling the button is presentation only -- the
    * guard that matters lives in `adminTransition` -- but an operator should see
    * why the action is unavailable instead of discovering it from an error toast.
@@ -168,7 +167,7 @@ export default function OrderStatusActions({
           className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900"
         >
           این سفارش عضو یک بسته رزروی فعال است. تا پایان مهلت رزرو یا آزادسازی زودهنگام توسط
-          مشتری، تحویل به ارسال و صدور بارکد برای آن انجام نمی‌شود.
+          مشتری، تکمیل، ارسال و صدور بارکد برای آن انجام نمی‌شود.
           {order.reserveGroupId && (
             <>
               {" "}
@@ -189,7 +188,7 @@ export default function OrderStatusActions({
           // One rule, shared with the bulk path and mirroring the backend, instead
           // of a third hardcoded copy of the chain.
           const isAllowed = !isCurrent && canTransitionOrder(order.orderStatus, action.status);
-          const blockedByReserve = isReserveHeld && action.status === "Shipment";
+          const blockedByReserve = isReserveHeld && (action.status === "Done" || action.status === "Shipment");
           return (
             <button
               key={action.status}

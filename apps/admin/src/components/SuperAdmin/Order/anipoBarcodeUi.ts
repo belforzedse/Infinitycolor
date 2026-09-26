@@ -13,6 +13,7 @@ export type AnipoBarcodeUi = {
 type AnipoBarcodeUiInput = {
   shippingBarcode?: string | null;
   state?: AnipoBarcodeState | null;
+  submittedAt?: string | null;
   orderStatus?: string | null;
   shippingMethodCode?: string | null;
   providerMessage?: string | null;
@@ -26,10 +27,10 @@ type AnipoBarcodeUiInput = {
   reserveExpiresAt?: string | null;
 };
 
-const ELIGIBLE_STATUSES = new Set(["Started", "Shipment"]);
+const ELIGIBLE_STATUSES = new Set(["Started", "Done", "Shipment"]);
 
 export function getAnipoBarcodeUi(input: AnipoBarcodeUiInput): AnipoBarcodeUi {
-  if (input.shippingBarcode?.trim()) {
+  if (input.state === "Issued" || (input.shippingBarcode?.trim() && !input.state)) {
     return { action: null, tone: "green", label: "بارکد صادر شده" };
   }
 
@@ -46,6 +47,9 @@ export function getAnipoBarcodeUi(input: AnipoBarcodeUiInput): AnipoBarcodeUi {
   }
 
   if (input.state === "Pending") {
+    if (!input.submittedAt) {
+      return { action: null, tone: "amber", label: "در صف ثبت آنیپو", message: input.lastError || undefined };
+    }
     return {
       action: "check",
       tone: "amber",
@@ -54,11 +58,14 @@ export function getAnipoBarcodeUi(input: AnipoBarcodeUiInput): AnipoBarcodeUi {
     };
   }
   if (input.state === "NeedsAttention") {
+    const resubmit = !input.submittedAt || input.lastError === "ANIPO_REMOTE_ORDER_NOT_FOUND";
     return {
-      action: "check",
+      action: resubmit ? "submit" : "check",
       tone: "red",
-      label: "نیاز به بررسی — استعلام مجدد",
-      message: input.lastError || input.providerMessage || "صدور بارکد بیش از هفت روز در انتظار مانده است",
+      label: resubmit ? "نیاز به بررسی — ثبت مجدد" : "نیاز به بررسی — استعلام مجدد",
+      message: input.lastError === "ANIPO_REMOTE_ORDER_NOT_FOUND"
+        ? "سفارش در آنیپو پیدا نشد"
+        : input.lastError || input.providerMessage || "صدور بارکد بیش از هفت روز در انتظار مانده است",
     };
   }
   if (input.state === "Stopped") {
