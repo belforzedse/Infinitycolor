@@ -38,7 +38,7 @@ import {
   wherePublicProduct,
 } from "../../../utils/productVisibility";
 import { generateUnicodeSlug } from "../../../utils/unicodeSlug";
-import { resolveAdminActor } from "../../../utils/adminAuthorization";
+import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import { recordAdminAudit } from "../../../utils/adminAudit";
 import {
   executePublicationCommand,
@@ -593,7 +593,8 @@ async function findProductBySlugInternal(
 
 type LifecycleHttpActor = {
   actor: LifecycleActor;
-  role: string;
+  /** What this caller holds: a role's capabilities, or only the one a service token was checked for. */
+  capabilities: readonly string[];
 };
 
 function adminActorLabel(user: any): string | null {
@@ -606,18 +607,29 @@ function adminActorLabel(user: any): string | null {
 }
 
 /**
- * The verified staff member behind a lifecycle request. Routes carry their own
- * capability policy; this resolves the same user again for attribution
- * (removedBy, audit actor) and for the per-action checks of the bulk route.
+ * Authorizes a lifecycle request through the same `requireCapability` every
+ * capability-gated route uses — so a refusal is answered and audited as
+ * `security.access_denied`, and API tokens follow the shared token rules — and
+ * returns who acted, for attribution (removedBy, audit actor, Undo).
+ *
+ * Routes with a capability policy have already run this check; running it
+ * again here is idempotent and is what the bulk route and the core DELETE
+ * (whose capability depends on the request) rely on.
  */
-async function resolveLifecycleActor(ctx: any, strapi: any): Promise<LifecycleHttpActor | null> {
-  const adminActor = await resolveAdminActor(strapi, ctx.state?.user);
+async function authorizeLifecycle(
+  ctx: any,
+  strapi: any,
+  capability: string,
+): Promise<LifecycleHttpActor | null> {
+  const adminActor = await requireCapability(ctx, strapi, capability as any);
   if (!adminActor) return null;
   const user = adminActor.user;
+  // A service token is not a person: never record its token id as a user id.
+  const isService = user?.role?.type === "service";
   return {
-    role: adminActor.role,
+    capabilities: adminActor.capabilities,
     actor: {
-      id: Number(user.id),
+      id: isService ? 0 : Number(user.id),
       name: user.username || user.email || null,
       label: adminActorLabel(user),
       role: user.role?.name || null,
@@ -672,6 +684,7 @@ async function runSingleLifecycleCommand(
   ctx: any,
   strapi: any,
   label: string,
+  capability: string,
   command: (productId: number, http: LifecycleHttpActor) => Promise<LifecycleResult>,
 ) {
   const productId = Number(ctx.params?.id);
@@ -687,8 +700,8 @@ async function runSingleLifecycleCommand(
     };
     return;
   }
-  const http = await resolveLifecycleActor(ctx, strapi);
-  if (!http) return ctx.forbidden("Lifecycle action is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
+  const http = await authorizeLifecycle(ctx, strapi, capability);
+  if (!http) return;
   try {
     const result = await command(productId, http);
     ctx.set("Cache-Control", "private, no-store");
@@ -726,7 +739,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
    * generic create/update path so no role can bypass these commands.
    */
   async softDelete(ctx) {
-    return runSingleLifecycleCommand(ctx, strapi, "trash", (productId, http) =>
+    return runSingleLifecycleCommand(ctx, strapi, "trash", "product.softDelete", (productId, http) =>
       trashProduct(strapi, productId, { origin: "admin", actor: http.actor }),
     );
   },
@@ -734,22 +747,24 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   async restore(ctx) {
     const body = ctx.request?.body?.data || ctx.request?.body || {};
     const undoToken = typeof body.undoToken === "string" ? body.undoToken : null;
-    return runSingleLifecycleCommand(ctx, strapi, "restore", (productId, http) =>
+    return runSingleLifecycleCommand(ctx, strapi, "restore", "product.restore", (productId, http) =>
       restoreProduct(
         strapi,
         productId,
         { origin: "admin", actor: http.actor },
         {
           undoToken,
-          canPublish: hasCapability(http.role, "product.publish"),
-          canSchedule: hasCapability(http.role, "product.schedule"),
+          // Undo may put a product back on the storefront, so it also needs the
+          // capability that would have published or scheduled it.
+          canPublish: http.capabilities.includes("product.publish"),
+          canSchedule: http.capabilities.includes("product.schedule"),
         },
       ),
     );
   },
 
   async permanentDelete(ctx) {
-    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", (productId, http) =>
+    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", "product.delete", (productId, http) =>
       purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
     );
   },
@@ -765,11 +780,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     if (isTrustedWordPressMigrationRequest()) {
       return (super.delete as any)(ctx);
     }
-    const http = await resolveLifecycleActor(ctx, strapi);
-    if (!http || !hasCapability(http.role, "product.delete")) {
-      return ctx.forbidden("Permanent deletion is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
-    }
-    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", (productId) =>
+    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", "product.delete", (productId, http) =>
       purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
     );
   },
@@ -784,10 +795,9 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     };
     if (!capability) return reject(400, "LIFECYCLE_ACTION_INVALID");
 
-    const http = await resolveLifecycleActor(ctx, strapi);
-    if (!http || !hasCapability(http.role, capability as any)) {
-      return ctx.forbidden("Lifecycle action is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
-    }
+    // One route, many actions: the capability required is the requested action's.
+    const http = await authorizeLifecycle(ctx, strapi, capability);
+    if (!http) return;
 
     let ids: number[];
     try {
@@ -834,8 +844,8 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       };
       return;
     }
-    const http = await resolveLifecycleActor(ctx, strapi);
-    if (!http) return ctx.forbidden("Lifecycle action is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
+    const http = await authorizeLifecycle(ctx, strapi, "product.delete");
+    if (!http) return;
     try {
       const result = await emptyTrash(strapi, { origin: "admin", actor: http.actor }, { trashedBefore });
       ctx.set("Cache-Control", "private, no-store");

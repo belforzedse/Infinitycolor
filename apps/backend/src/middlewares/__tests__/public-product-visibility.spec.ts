@@ -54,17 +54,31 @@ describe("public product visibility middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("leaves staff with product.read and server tokens untouched", async () => {
+  it("leaves staff holding product.read untouched", async () => {
     const { strapi } = makeStrapi();
     const middleware = createMiddleware({ mode: "owner", uid: "api::product-variation.product-variation" }, { strapi });
-    for (const state of [
-      { user: { role: { type: "store-manager", name: "Store Manager" } } },
-      { auth: { strategy: { name: "api-token" } } },
-    ]) {
-      const request = ctx({ state, query: { filters: { SKU: { $eq: "A" } } } });
-      await middleware(request, jest.fn());
-      expect(request.query.filters).toEqual({ SKU: { $eq: "A" } });
-    }
+    const request = ctx({
+      state: { user: { role: { type: "store-manager", name: "Store Manager" } } },
+      query: { filters: { SKU: { $eq: "A" } } },
+    });
+    await middleware(request, jest.fn());
+    expect(request.query.filters).toEqual({ SKU: { $eq: "A" } });
+  });
+
+  it("gives API tokens the public view, as the product routes do", async () => {
+    const { strapi } = makeStrapi();
+    const middleware = createMiddleware({ mode: "owner", uid: "api::product-variation.product-variation" }, { strapi });
+    const request = ctx({ state: { auth: { strategy: { name: "api-token" } } } });
+    await middleware(request, jest.fn());
+    expect(request.query.filters).toEqual({ product: VISIBLE });
+  });
+
+  it("keeps staff without product.read on the public view", async () => {
+    const { strapi } = makeStrapi();
+    const middleware = createMiddleware({ mode: "owner", uid: "api::product-review.product-review" }, { strapi });
+    const request = ctx({ state: { user: { role: { type: "editor", name: "Editor" } } } });
+    await middleware(request, jest.fn());
+    expect(request.query.filters).toEqual({ product: VISIBLE });
   });
 
   it("keeps customers on the public view", async () => {

@@ -1,4 +1,5 @@
 import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
+import { isTrustedWordPressMigrationRequest } from "../utils/migration-context";
 import { publicProductFilters } from "../utils/productVisibility";
 
 /**
@@ -16,8 +17,11 @@ import { publicProductFilters } from "../utils/productVisibility";
  *  - `strip` types reference many products (`products`, `product_others`,
  *    `owner_product`): public callers cannot populate or filter by them.
  *
- * Staff holding `product.read` and server-side API tokens are untouched, so the
- * admin keeps editing drafts through these same routes.
+ * Only a signed-in staff member holding `product.read` (or a trusted migration
+ * request) sees past it, so the admin keeps editing drafts through these same
+ * routes. API tokens get the public view — the same rule the product routes
+ * apply (`applyPublicProductFilters`) — because a server-side token such as the
+ * storefront's is not a staff member.
  */
 
 type OwnerConfig = { mode: "owner"; uid: string; relation?: string };
@@ -25,9 +29,7 @@ type StripConfig = { mode: "strip"; uid: string; relations: string[] };
 export type PublicProductVisibilityConfig = OwnerConfig | StripConfig;
 
 function callerSeesUnpublished(ctx: any): boolean {
-  const strategy = ctx?.state?.auth?.strategy;
-  const strategyName = typeof strategy === "string" ? strategy : String(strategy?.name || "");
-  if (strategyName.includes("api-token")) return true;
+  if (isTrustedWordPressMigrationRequest()) return true;
   const user = ctx?.state?.user;
   if (!user) return false;
   const role = normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name);

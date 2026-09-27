@@ -348,7 +348,7 @@ export async function trashProductInTransaction(
     const publicationRevision = Number(row.publication_revision || 0);
     const update = {
       removed_at: now,
-      removed_by_id: context.actor?.id ?? null,
+      removed_by_id: context.actor?.id || null,
       removed_by_label: actorLabel(context.actor),
       pre_removal_status: status,
       pre_removal_scheduled_publish_at: wasScheduled ? row.scheduled_publish_at : null,
@@ -774,7 +774,7 @@ export async function purgeProductInTransaction(
 
     await productTable(trx).where({ id: productId }).update({
       purged_at: now,
-      purged_by_id: context.actor?.id ?? null,
+      purged_by_id: context.actor?.id || null,
       external_id: null,
       updated_at: now,
     });
