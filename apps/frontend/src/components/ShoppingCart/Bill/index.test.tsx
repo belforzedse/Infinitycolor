@@ -133,6 +133,7 @@ jest.mock("./InformationForm", () => ({
         type="button"
         data-testid="select-checkout-customer"
         onClick={() => {
+          setValue("fullName", "حدیث شعبانی");
           setValue("phoneNumber", "09123456789");
           setValue("address", { id: 5, label: "Test address" });
         }}
@@ -621,10 +622,14 @@ describe("ShoppingCartBillForm auth gate", () => {
     await waitFor(() => {
       expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
     });
+    // The typed recipient travels with a saved address too, so the order doesn't
+    // show whoever that address was first used for.
+    const recipient = { FullName: "حدیث شعبانی", Phone: "09123456789" };
     expect(CartService.getCheckoutQuote).toHaveBeenCalledWith(
       expect.objectContaining({
         shipping: 7,
         addressId: 5,
+        recipient,
         gateway: "snappay",
         mobile: "09123456789",
       }),
@@ -633,6 +638,7 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect.objectContaining({
         shipping: 7,
         addressId: 5,
+        recipient,
         gateway: "snappay",
         mobile: "09123456789",
         quoteHash: "sha256:snappay-quote",

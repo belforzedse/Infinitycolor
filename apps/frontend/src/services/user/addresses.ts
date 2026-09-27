@@ -27,6 +27,9 @@ export interface UserAddress {
   PostalCode: string;
   Description: string;
   FullAddress: string;
+  /** Recipient stored with the address, when it was saved from checkout. */
+  FullName?: string | null;
+  Phone?: string | null;
   IsTemporary?: boolean;
   createdAt: string;
   shipping_city: ShippingCity;

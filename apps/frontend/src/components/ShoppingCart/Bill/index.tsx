@@ -619,6 +619,7 @@ function ShoppingCartBillForm({}: Props) {
           orderCount: d.orderCount,
           shippingMethodTitle: d.shippingMethodTitle ?? null,
           destination: formatReserveDestination(d.deliveryAddress),
+          recipientName: d.deliveryAddress?.FullName ?? null,
           rootOrderId: d.rootOrderId ?? null,
         });
         if (!sameGroup) setMergeChoice(null);
@@ -1421,6 +1422,13 @@ function ShoppingCartBillForm({}: Props) {
             callbackURL: "/orders/payment-callback",
             addressId: selectedAddressId,
             addressPayload,
+            // Sent with a saved address too: the server gives the order its own
+            // copy when the recipient differs, instead of showing whoever the
+            // saved address was first used for.
+            recipient: {
+              FullName: (data.fullName || "").trim() || undefined,
+              Phone: cleanPhone || undefined,
+            },
             gateway: submittedGateway,
             walletAmountToman: walletContribution.walletToman || undefined,
             supersedeAttemptId: supersedeCandidateId,
@@ -1967,6 +1975,7 @@ function ShoppingCartBillForm({}: Props) {
           control={control}
           setValue={setValue}
           hideAddressFields={isMergeMode}
+          reserveRecipientName={activeReserve?.recipientName}
         />
 
         <div className="mb-20 flex flex-col gap-6">

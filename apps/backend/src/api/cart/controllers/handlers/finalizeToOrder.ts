@@ -1,4 +1,5 @@
 import { Strapi } from "@strapi/strapi";
+import { canonicalIranPhone } from "@repo/auth-core";
 import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../../utils/roles";
 import {
   cancelOrderAndRelease,
@@ -32,6 +33,12 @@ import {
   hasPaidMember,
 } from "../../../reserve-group/lib/reserve-group";
 
+const cleanRecipientName = (value: unknown) =>
+  String(value ?? "").normalize("NFC").trim().replace(/\s+/g, " ").slice(0, 255);
+const cleanRecipientPhone = (value: unknown) => String(value ?? "").trim().slice(0, 32);
+const comparablePhone = (value: unknown) =>
+  canonicalIranPhone(value) || String(value ?? "").replace(/\D/g, "");
+
 export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
     shipping,
@@ -50,7 +57,14 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     analyticsCorrelationId,
     walletAmountToman,
     supersedeAttemptId,
+    recipient,
   } = ctx.request.body;
+
+  // Who receives the parcel, as typed at checkout. It can differ from the
+  // account placing the order (staff order on a customer's behalf), so it is
+  // stored on the order's delivery address rather than read from the profile.
+  const recipientName = cleanRecipientName(recipient?.FullName);
+  const recipientPhone = cleanRecipientPhone(recipient?.Phone);
 
   // The browser correlation id is opaque and never used for authorization. It
   // is persisted only to join a later server-side settlement event with the
@@ -125,6 +139,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       resumeDecision === "replay" && Boolean(checkoutAttemptOrderId(existingAttempt));
 
     let resolvedAddressId = addressId;
+    // Set only when the order would link a saved address-book row.
+    let savedAddress: any = null;
     let resolvedShippingId = shipping;
     let resolvedShippingCost = 0;
     let shippingSnapshot: { code?: string; title?: string } = {};
@@ -300,8 +316,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         // ordering on a customer's behalf), so this is stored separately from
         // `user`, which stays the authenticated account. Empty/whitespace-only
         // values fall back to the account's own name/phone at render time.
-        FullName: String(FullName || "").trim().slice(0, 255) || undefined,
-        Phone: String(Phone || mobile || "").trim().slice(0, 32) || undefined,
+        FullName: cleanRecipientName(FullName) || recipientName || undefined,
+        Phone: cleanRecipientPhone(Phone || recipientPhone || mobile) || undefined,
         IsTemporary: !save,
         user: user.id,
       };
@@ -366,6 +382,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             },
           });
         }
+
+        if (addressId) savedAddress = address;
       } catch (err) {
         strapi.log.error("Failed to validate address:", err);
         return ctx.badRequest("خطا در بررسی آدرس", {
@@ -419,6 +437,47 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         return ctx.badRequest("پیش‌فاکتور پرداخت الزامی است", {
           data: { success: false, errorCode: "CHECKOUT_QUOTE_REQUIRED" },
         });
+      }
+    }
+
+    // A saved address is shared by every order that ever used it, so a
+    // different recipient must not be written onto it -- that would rename the
+    // recipient of past orders too. The order gets its own copy instead, the
+    // same snapshot the admin recipient editor makes.
+    if (!resumeExistingCheckout && savedAddress) {
+      const nameChanged =
+        Boolean(recipientName) && recipientName !== cleanRecipientName(savedAddress.FullName);
+      const phoneChanged =
+        Boolean(recipientPhone) &&
+        comparablePhone(recipientPhone) !== comparablePhone(savedAddress.Phone);
+      if (nameChanged || phoneChanged) {
+        try {
+          const snapshot = await strapi.entityService.create(
+            "api::local-user-address.local-user-address",
+            {
+              data: {
+                shipping_city: savedAddress.shipping_city?.id ?? savedAddress.shipping_city,
+                PostalCode: savedAddress.PostalCode,
+                FullAddress: savedAddress.FullAddress,
+                Description: savedAddress.Description || undefined,
+                FullName: recipientName || savedAddress.FullName || undefined,
+                Phone: recipientPhone || savedAddress.Phone || undefined,
+                IsTemporary: true,
+                user: user.id,
+              },
+            },
+          );
+          resolvedAddressId = snapshot.id;
+        } catch (err) {
+          strapi.log.error("Failed to snapshot checkout recipient during finalize", err);
+          return ctx.badRequest("خطا در ثبت آدرس", {
+            data: {
+              success: false,
+              errorCode: "ADDRESS_CREATION_FAILED",
+              message: "خطا در ثبت آدرس",
+            },
+          });
+        }
       }
     }
 

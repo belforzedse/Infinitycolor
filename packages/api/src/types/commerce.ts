@@ -17,6 +17,18 @@ export interface CheckoutAddressPayload {
   FullAddress: string;
   Description?: string;
   save?: boolean;
+  FullName?: string;
+  Phone?: string;
+}
+
+/**
+ * Who receives the parcel, as typed at checkout. It can differ from the account
+ * placing the order (staff ordering for a customer), so the server stores it on
+ * the order's own delivery address rather than reading the profile.
+ */
+export interface CheckoutRecipient {
+  FullName?: string;
+  Phone?: string;
 }
 
 export interface CheckoutQuoteRequest {
@@ -26,6 +38,8 @@ export interface CheckoutQuoteRequest {
   callbackURL?: string;
   addressId?: number;
   addressPayload?: CheckoutAddressPayload;
+  /** Sent on every checkout that is not attaching to a reserve shipment. */
+  recipient?: CheckoutRecipient;
   gateway?: CheckoutGatewayCode;
   mobile?: string;
   discountCode?: string;
