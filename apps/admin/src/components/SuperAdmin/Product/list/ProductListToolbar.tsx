@@ -83,13 +83,6 @@ export default function ProductListToolbar({
   onClear: () => void;
 }) {
   const [draft, setDraft] = useState(search);
-  // Follow the URL (Back/Forward, "clear filters") without ever writing to it
-  // here — React's store-the-previous-prop pattern rather than an effect.
-  const [followedSearch, setFollowedSearch] = useState(search);
-  if (search !== followedSearch) {
-    setFollowedSearch(search);
-    setDraft(search);
-  }
   const [categories, setCategories] = useState<CategoryOption[] | null>(null);
   const [categoriesFailed, setCategoriesFailed] = useState(false);
 
@@ -105,6 +98,15 @@ export default function ProductListToolbar({
 
   const commitSearch = useDebouncedCallback((value: string) => onSearch(value), 500);
   useEffect(() => () => commitSearch.cancel(), [commitSearch]);
+
+  // Follow the URL (Back/Forward, "clear filters") without ever writing to it
+  // here — React's store-the-previous-prop pattern rather than an effect — but
+  // never over keystrokes still waiting to be committed.
+  const [followedSearch, setFollowedSearch] = useState(search);
+  if (search !== followedSearch) {
+    setFollowedSearch(search);
+    if (!commitSearch.isPending()) setDraft(search);
+  }
 
   const pending = draft !== search;
 

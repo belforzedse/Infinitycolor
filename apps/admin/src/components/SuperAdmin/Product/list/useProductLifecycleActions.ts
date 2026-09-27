@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import toast from "react-hot-toast";
 import { changeProductPublication, PRODUCT_PUBLICATION_TIMEZONE } from "@/services/super-admin/product/publication";
 import {
@@ -217,5 +217,9 @@ export function useProductLifecycleActions({ onChanged }: { onChanged: () => voi
     [onChanged],
   );
 
-  return { trash, restore, purge, setPublication, bulk, emptyTrash, preview, duplicate };
+  // Stable identity, so the page's column and bulk-action memos hold.
+  return useMemo(
+    () => ({ trash, restore, purge, setPublication, bulk, emptyTrash, preview, duplicate }),
+    [bulk, duplicate, emptyTrash, preview, purge, restore, setPublication, trash],
+  );
 }

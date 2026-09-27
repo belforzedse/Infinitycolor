@@ -109,12 +109,12 @@ export default function OverflowMenu({
         <MoreVertical className="h-5 w-5" aria-hidden />
       </MenuButton>
       <MenuItems
-        // RTL: `end` means the right edge of the trigger, which is the visual
-        // start of the reading direction.
-        className={cn(
-          "absolute z-50 mt-2 w-56 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg focus:outline-none",
-          align === "end" ? "left-0" : "right-0",
-        )}
+        // Anchored and portalled, so a menu opened inside a scrolling table or a
+        // clipped card is never cut off. Floating UI reads the menu's RTL
+        // direction: `end` lines the menu's left edge up with the trigger's, the
+        // placement the old `left-0` gave.
+        anchor={align === "end" ? "bottom end" : "bottom start"}
+        className="z-50 w-56 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg [--anchor-gap:8px] focus:outline-none"
         dir="rtl"
       >
         {routine.map(renderItem)}

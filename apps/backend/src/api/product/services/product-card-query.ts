@@ -142,6 +142,8 @@ const PRODUCT_COLUMN_MAP: Record<string, string> = {
   createdAt: "created_at",
   updatedAt: "updated_at",
   removedAt: "removed_at",
+  // Staff catalog reads exclude permanently deleted tombstones with this.
+  purgedAt: "purged_at",
   LastEditedByAdminAt: "last_edited_by_admin_at",
   PublishedAt: "published_at",
 };
@@ -480,7 +482,7 @@ const applyVariationFilter = (
   });
 };
 
-const applyProductFilters = (
+export const applyProductFilters = (
   knex: any,
   query: any,
   strapi: any,

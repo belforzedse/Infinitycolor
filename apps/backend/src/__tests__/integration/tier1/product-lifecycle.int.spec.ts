@@ -389,6 +389,24 @@ describe("product lifecycle on real PostgreSQL", () => {
       criteria({ search: tag, filters: [{ Title: { $containsi: "pub_" } }] }),
     );
     expect(advanced).toEqual(expect.objectContaining({ all: 2, published: 2 }));
+
+    // A relation-path advanced filter goes through Strapi's compiled subquery
+    // (joins + DISTINCT) inside the list's WHERE … IN.
+    const sku = (await strapi.db.connection("product_variations as pv")
+      .join("product_variations_product_links as l", "l.product_variation_id", "pv.id")
+      .where("l.product_id", scheduled.id)
+      .first("pv.sku")).sku as string;
+    const bySku = await findProductListPage(
+      strapi,
+      criteria({ view: "scheduled", filters: [{ product_variations: { SKU: { $containsi: sku } } }] }),
+    );
+    expect(bySku).toEqual({ ids: [scheduled.id], total: 1 });
+
+    // The 30-day sales sort compiles its paid-orders CTE on Postgres and keeps
+    // products without sales in the list.
+    const bySales = await findProductListPage(strapi, criteria({ search: tag, sort: "sales-desc" }));
+    expect(bySales.total).toBe(4);
+    expect(bySales.ids).toHaveLength(4);
   });
 
   it("runs bulk commands per product with partial failures reported", async () => {
