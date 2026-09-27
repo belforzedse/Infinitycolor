@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/utils/tailwind";
@@ -41,6 +42,17 @@ export default function SubNav({
   ariaLabel?: string;
 }) {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+  const activeKey = activeId ?? pathname;
+
+  // On a phone the strip scrolls sideways; opening a tab from a link (say
+  // `?view=trash`) must not leave the active tab off-screen.
+  useEffect(() => {
+    const active = navRef.current?.querySelector<HTMLElement>("[aria-current]");
+    if (typeof active?.scrollIntoView === "function") {
+      active.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [activeKey]);
 
   if (items.length === 0) return null;
 
@@ -67,6 +79,7 @@ export default function SubNav({
 
   return (
     <nav
+      ref={navRef}
       aria-label={ariaLabel}
       className={cn(
         // Negative margin lets the strip bleed to the screen edge on phones so

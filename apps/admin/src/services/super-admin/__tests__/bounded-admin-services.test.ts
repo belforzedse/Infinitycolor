@@ -16,7 +16,9 @@ import {
   listAdminShippingMethods,
 } from "../orders/list";
 import {
+  ADMIN_PRODUCTS_COUNTS_ENDPOINT,
   ADMIN_PRODUCTS_LIST_ENDPOINT,
+  getAdminProductCounts,
   listAdminProducts,
 } from "../product/list";
 import {
@@ -162,23 +164,46 @@ describe("bounded admin read services", () => {
       },
     });
     await listAdminProducts({
+      view: "trash",
       page: 2,
       pageSize: 25,
-      removed: false,
       sort: "stock-desc",
       search: "synthetic-product",
+      categoryId: 12,
+      stock: "out",
     });
 
     expect(ADMIN_PRODUCTS_LIST_ENDPOINT).toBe("/admin/products-list/query");
     expect(mockPost).toHaveBeenCalledWith(
       ADMIN_PRODUCTS_LIST_ENDPOINT,
       expect.objectContaining({
+        view: "trash",
         page: 2,
         pageSize: 25,
-        removed: false,
         sort: "stock-desc",
         search: "synthetic-product",
+        categoryId: 12,
+        stock: "out",
+        filters: [],
       }),
+      expect.objectContaining({ retries: 0 }),
+    );
+  });
+
+  it("counts the lifecycle tabs with the list's criteria but no tab", async () => {
+    mockPost.mockResolvedValueOnce({
+      data: { counts: { all: 1, published: 1, drafts: 0, scheduled: 0, trash: 2 }, trashRetentionDays: 30 },
+    });
+
+    await expect(
+      getAdminProductCounts({ search: "  shirt ", productType: "Simple" }),
+    ).resolves.toEqual({
+      counts: { all: 1, published: 1, drafts: 0, scheduled: 0, trash: 2 },
+      trashRetentionDays: 30,
+    });
+    expect(mockPost).toHaveBeenCalledWith(
+      ADMIN_PRODUCTS_COUNTS_ENDPOINT,
+      { search: "shirt", categoryId: undefined, stock: undefined, productType: "Simple", filters: [] },
       expect.objectContaining({ retries: 0 }),
     );
   });

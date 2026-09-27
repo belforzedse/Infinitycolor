@@ -15,7 +15,19 @@ export type OverflowAction = {
   disabled?: boolean;
   /** Renders in red and is separated from the routine actions above it. */
   destructive?: boolean;
+  /** `data-testid` (plus `data-*` extras) for end-to-end selectors. */
+  testId?: string;
+  dataAttributes?: Record<string, string | number>;
 };
+
+function dataProps(testId?: string, dataAttributes?: Record<string, string | number>) {
+  return {
+    ...(testId ? { "data-testid": testId } : {}),
+    ...Object.fromEntries(
+      Object.entries(dataAttributes || {}).map(([key, value]) => [`data-${key}`, String(value)]),
+    ),
+  };
+}
 
 /**
  * Home for rare, secondary, destructive and administrative actions.
@@ -29,11 +41,15 @@ export default function OverflowMenu({
   label = "عملیات بیشتر",
   align = "end",
   className,
+  triggerTestId,
+  triggerDataAttributes,
 }: {
   actions: OverflowAction[];
   label?: string;
   align?: "start" | "end";
   className?: string;
+  triggerTestId?: string;
+  triggerDataAttributes?: Record<string, string | number>;
 }) {
   const visible = actions.filter(Boolean);
   if (visible.length === 0) return null;
@@ -54,7 +70,11 @@ export default function OverflowMenu({
       <MenuItem key={action.id} disabled={action.disabled}>
         {({ focus }) =>
           action.href && !action.disabled ? (
-            <Link href={action.href} className={itemClass(focus)}>
+            <Link
+              href={action.href}
+              className={itemClass(focus)}
+              {...dataProps(action.testId, action.dataAttributes)}
+            >
               {action.icon}
               <span className="min-w-0 break-words">{action.label}</span>
             </Link>
@@ -64,6 +84,7 @@ export default function OverflowMenu({
               disabled={action.disabled}
               onClick={action.onSelect}
               className={itemClass(focus)}
+              {...dataProps(action.testId, action.dataAttributes)}
             >
               {action.icon}
               <span className="min-w-0 break-words">{action.label}</span>
@@ -78,6 +99,7 @@ export default function OverflowMenu({
     <Menu as="div" className={cn("relative", className)}>
       <MenuButton
         aria-label={label}
+        {...dataProps(triggerTestId, triggerDataAttributes)}
         className={cn(
           ICON_BUTTON,
           FOCUS_RING,

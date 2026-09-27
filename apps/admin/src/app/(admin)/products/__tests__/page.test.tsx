@@ -1,14 +1,18 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { NuqsTestingAdapter, type UrlUpdateEvent } from "nuqs/adapters/testing";
 
 let mockTableProps: any;
 let mockWrapperProps: any;
 
 jest.mock("@/components/SuperAdmin/Table", () => ({
-  refreshTable: {},
+  refreshTable: require("jotai").atom(false),
   SuperAdminTable: (props: any) => {
     mockTableProps = props;
     return <div data-testid="products-table" />;
   },
+}));
+jest.mock("@/components/SuperAdmin/Table/refreshTableAtom", () => ({
+  refreshTable: jest.requireMock("@/components/SuperAdmin/Table").refreshTable,
 }));
 jest.mock("@/components/SuperAdmin/Layout/ContentWrapper", () => ({
   __esModule: true,
@@ -17,165 +21,194 @@ jest.mock("@/components/SuperAdmin/Layout/ContentWrapper", () => ({
     return <div>{props.children}</div>;
   },
 }));
-jest.mock("../table", () => ({ columns: [], MobileTable: () => null }));
-jest.mock("@/services/super-admin/product/list", () => ({
-  listAdminProducts: jest.fn(),
-}));
+jest.mock("@/services/super-admin/product/list", () => {
+  const actual = jest.requireActual("@/services/super-admin/product/list");
+  return {
+    ...actual,
+    listAdminProducts: jest.fn(),
+    getAdminProductCounts: jest.fn(),
+  };
+});
 jest.mock("@/services", () => ({
-  apiClient: { put: jest.fn(), delete: jest.fn() },
-}));
-jest.mock("@/hooks/useCurrentUser", () => ({
-  useCurrentUser: () => ({ isStoreManager: false, isFounder: false }),
+  apiClient: { get: jest.fn().mockResolvedValue({ data: [] }), put: jest.fn(), post: jest.fn() },
 }));
 let mockCapabilities = new Set<string>();
 jest.mock("@/hooks/useCan", () => ({
   useCan: (capability: string) => mockCapabilities.has(capability),
 }));
-jest.mock("@/hooks/useEditorRedirect", () => ({
-  useEditorRedirect: jest.fn(),
+jest.mock("@/hooks/useLegacyFilterQueryCleanup", () => ({
+  useLegacyFilterQueryCleanup: jest.fn(),
 }));
-jest.mock("@/components/Kits/ConfirmDialog", () => () => null);
-jest.mock("jotai", () => ({ useAtom: () => [false, jest.fn()] }));
-jest.mock("nuqs", () => ({ useQueryState: () => ["1", jest.fn()] }));
-jest.mock("use-debounce", () => ({
-  useDebouncedCallback: (callback: (...args: any[]) => void) => {
-    const debounced = (...args: any[]) => callback(...args);
-    debounced.cancel = jest.fn();
-    return debounced;
-  },
-}));
+jest.mock("zaman", () => ({ DatePicker: () => null, TimePicker: () => null }));
 
 import ProductsPage from "../page";
-import { listAdminProducts } from "@/services/super-admin/product/list";
+import { getAdminProductCounts, listAdminProducts } from "@/services/super-admin/product/list";
 
-describe("products page bounded data ownership", () => {
+const COUNTS = { all: 12, published: 7, drafts: 3, scheduled: 2, trash: 4 };
+
+function renderPage(searchParams = "", onUrlUpdate?: (event: UrlUpdateEvent) => void) {
+  return render(
+    <NuqsTestingAdapter searchParams={searchParams} onUrlUpdate={onUrlUpdate}>
+      <ProductsPage />
+    </NuqsTestingAdapter>,
+  );
+}
+
+async function loadFirstPage() {
+  const controller = new AbortController();
+  await act(async () => {
+    await mockTableProps.dataLoader({ page: 1, pageSize: 25, filters: [], signal: controller.signal });
+  });
+  return controller;
+}
+
+const bulkIds = () => (mockTableProps.bulkOptions as Array<{ id: string }>).map((option) => option.id);
+
+describe("products lifecycle page", () => {
   beforeEach(() => {
     mockTableProps = undefined;
     mockWrapperProps = undefined;
+    mockCapabilities = new Set(["product.read"]);
+    (getAdminProductCounts as jest.Mock).mockReset().mockResolvedValue({
+      counts: COUNTS,
+      trashRetentionDays: 0,
+    });
     (listAdminProducts as jest.Mock).mockReset().mockResolvedValue({
       data: [],
       meta: {
         pagination: { page: 1, pageSize: 25, pageCount: 0, total: 0 },
-        recycleCount: 0,
+        counts: COUNTS,
+        recycleCount: 4,
+        trashRetentionDays: 0,
       },
     });
   });
 
-  it("uses one server-side loader for standard, stock, and sales sorts", async () => {
-    render(<ProductsPage />);
+  it("shows the five lifecycle tabs with their counts", async () => {
+    renderPage();
 
-    expect(screen.getByTestId("products-table")).toBeInTheDocument();
+    for (const [label, count] of [
+      ["همه", "۱۲"],
+      ["منتشر شده", "۷"],
+      ["پیش‌نویس‌ها", "۳"],
+      ["زمان‌بندی شده", "۲"],
+      ["سطل زباله", "۴"],
+    ]) {
+      const tab = await screen.findByRole("button", { name: new RegExp(label) });
+      await waitFor(() => expect(tab).toHaveTextContent(count));
+    }
+  });
+
+  it("loads the All tab server-side by default, never the Trash", async () => {
+    renderPage();
+    const controller = await loadFirstPage();
+
     expect(mockTableProps.url).toBeUndefined();
-    expect(mockTableProps.dataLoader).toEqual(expect.any(Function));
-    expect(mockTableProps.refreshOnVisibility).toBe(false);
-    expect(mockWrapperProps.apiUrl).toBeUndefined();
-    expect(mockWrapperProps.filters).toEqual([]);
+    expect(listAdminProducts).toHaveBeenCalledWith(
+      expect.objectContaining({ view: "all", sort: "last-edited", page: 1, pageSize: 25, signal: controller.signal }),
+    );
+    expect(mockWrapperProps.hasRecycleBin).toBeFalsy();
+  });
 
-    const controller = new AbortController();
-    await mockTableProps.dataLoader({
-      page: 1,
-      pageSize: 25,
-      filters: [],
-      signal: controller.signal,
-    });
+  it("restores the tab, search, filters and sort from the URL", async () => {
+    renderPage("?view=scheduled&q=iphone&category=12&stock=out&sort=scheduled-desc");
+    await loadFirstPage();
+
     expect(listAdminProducts).toHaveBeenCalledWith(
       expect.objectContaining({
-        page: 1,
-        pageSize: 25,
-        removed: false,
-        sort: "last-edited",
-        signal: controller.signal,
+        view: "scheduled",
+        sort: "scheduled-desc",
+        search: "iphone",
+        categoryId: 12,
+        stock: "out",
       }),
     );
-  });
-});
-
-
-/**
- * Bulk actions had no capability coverage at all — `useCan` was mocked to a
- * blanket `true`, so nothing caught a gating regression. That matters most for
- * the removal pair: `product.softDelete` is the reversible recycle-bin move
- * available from Seller 1 up, while `product.delete` is permanent and
- * Superadmin-only, and the UI used to gate both on the latter.
- */
-describe("products page bulk action gating", () => {
-  const ids = () =>
-    (mockTableProps.bulkOptions as { id: string }[]).map((option) => option.id);
-
-  beforeEach(() => {
-    mockTableProps = undefined;
-    (listAdminProducts as jest.Mock).mockReset().mockResolvedValue({
-      data: [],
-      meta: {
-        pagination: { page: 1, pageSize: 25, pageCount: 0, total: 0 },
-        recycleCount: 0,
-      },
-    });
+    expect(getAdminProductCounts).toHaveBeenCalledWith(
+      expect.objectContaining({ search: "iphone", categoryId: 12, stock: "out" }),
+    );
   });
 
-  afterEach(() => {
-    mockCapabilities = new Set(["product.read"]);
+  it("switches tabs through the URL and resets the page", async () => {
+    const onUrlUpdate = jest.fn();
+    renderPage("?q=shirt&page=3", onUrlUpdate);
+
+    fireEvent.click(await screen.findByRole("button", { name: /سطل زباله/ }));
+
+    await waitFor(() => expect(onUrlUpdate).toHaveBeenCalled());
+    const update: UrlUpdateEvent = onUrlUpdate.mock.calls.at(-1)[0];
+    expect(update.searchParams.get("view")).toBe("trash");
+    expect(update.searchParams.get("q")).toBe("shirt");
+    expect(update.searchParams.has("page")).toBe(false);
+    expect(update.options.history).toBe("push");
   });
 
-  it("offers nothing, and no selection, without any write capability", () => {
-    mockCapabilities = new Set(["product.read"]);
-    render(<ProductsPage />);
+  it("offers Trash only restore and permanent delete, by capability", async () => {
+    mockCapabilities = new Set(["product.read", "product.restore"]);
+    const { unmount } = renderPage("?view=trash");
+    await screen.findByTestId("products-table");
+    expect(bulkIds()).toEqual(["restore"]);
+    unmount();
 
-    expect(ids()).toEqual([]);
+    mockCapabilities = new Set(["product.read", "product.restore", "product.delete"]);
+    renderPage("?view=trash");
+    await screen.findByTestId("products-table");
+    expect(bulkIds()).toEqual(["restore", "purge"]);
+  });
+
+  it("never offers permanent deletion outside Trash", async () => {
+    mockCapabilities = new Set([
+      "product.read",
+      "product.publish",
+      "product.schedule",
+      "product.softDelete",
+      "product.restore",
+      "product.delete",
+      "product.stock.update",
+    ]);
+    for (const view of ["", "?view=published", "?view=drafts", "?view=scheduled"]) {
+      const { unmount } = renderPage(view);
+      await screen.findByTestId("products-table");
+      expect(bulkIds()).not.toContain("purge");
+      expect(bulkIds()).toContain("trash");
+      unmount();
+    }
+  });
+
+  it("gives each tab its own bulk actions", async () => {
+    mockCapabilities = new Set(["product.read", "product.publish", "product.schedule", "product.softDelete"]);
+    const expectations: Array<[string, string[]]> = [
+      ["?view=published", ["unpublish", "trash"]],
+      ["?view=drafts", ["publish", "schedule", "trash"]],
+      ["?view=scheduled", ["publish", "schedule", "unpublish", "trash"]],
+    ];
+    for (const [query, expected] of expectations) {
+      const { unmount } = renderPage(query);
+      await screen.findByTestId("products-table");
+      expect(bulkIds()).toEqual(expected);
+      unmount();
+    }
+  });
+
+  it("offers no selection without any lifecycle capability", async () => {
+    renderPage();
+    await screen.findByTestId("products-table");
     expect(mockTableProps.enableSelection).toBe(false);
   });
 
-  it("lets a seller soft-delete without granting permanent deletion", () => {
-    mockCapabilities = new Set(["product.read", "product.softDelete"]);
-    render(<ProductsPage />);
+  it("explains retention and offers Empty Trash to those who may delete permanently", async () => {
+    mockCapabilities = new Set(["product.read", "product.delete"]);
+    (getAdminProductCounts as jest.Mock).mockResolvedValue({ counts: COUNTS, trashRetentionDays: 30 });
+    renderPage("?view=trash");
 
-    expect(ids()).toEqual(["soft_delete"]);
-    expect(ids()).not.toContain("permanent_delete");
-    expect(mockWrapperProps.hasRecycleBin).toBe(true);
+    const notice = await screen.findByTestId("admin-products-trash-notice");
+    await waitFor(() => expect(notice).toHaveTextContent("پس از ۳۰ روز برای همیشه حذف می‌شوند"));
+    expect(await screen.findByTestId("admin-products-empty-trash")).toBeInTheDocument();
   });
 
-  it("confirms before removing a selection, as permanent delete already did", () => {
-    mockCapabilities = new Set(["product.read", "product.softDelete"]);
-    render(<ProductsPage />);
-
-    const softDelete = (mockTableProps.bulkOptions as any[]).find(
-      (option) => option.id === "soft_delete",
-    );
-    expect(softDelete.variant).toBe("danger");
-    expect(softDelete.confirm).toBeTruthy();
-  });
-
-  it("asks for the value instead of using a native prompt", () => {
-    mockCapabilities = new Set(["product.read", "product.stock.update"]);
-    render(<ProductsPage />);
-
-    const setStock = (mockTableProps.bulkOptions as any[]).find(
-      (option) => option.id === "set_stock",
-    );
-    expect(setStock.confirm.input.type).toBe("number");
-    expect(setStock.confirm.input.validate("")).toBeTruthy();
-    expect(setStock.confirm.input.validate("-1")).toBeTruthy();
-    expect(setStock.confirm.input.validate("5")).toBeNull();
-  });
-
-  it("keeps permanent deletion behind product.delete in the recycle bin", () => {
-    mockCapabilities = new Set([
-      "product.read",
-      "product.softDelete",
-      "product.restore",
-    ]);
-    render(<ProductsPage />);
-
-    act(() => mockWrapperProps.setIsRecycleBinOpen(true));
-    expect(ids()).toEqual(["restore"]);
-
-    mockCapabilities = new Set([
-      "product.read",
-      "product.restore",
-      "product.delete",
-    ]);
-    render(<ProductsPage />);
-    act(() => mockWrapperProps.setIsRecycleBinOpen(true));
-    expect(ids()).toContain("permanent_delete");
+  it("uses the tab's own empty state", async () => {
+    renderPage("?view=scheduled");
+    await screen.findByTestId("products-table");
+    render(mockTableProps.emptyState);
+    expect(screen.getByText("هیچ محصولی برای انتشار زمان‌بندی نشده است.")).toBeInTheDocument();
   });
 });
