@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 type OrderStatus = "Paying" | "Started" | "Shipment" | "Done" | "Returned" | "Cancelled";
 type OrderType = "Manual" | "Automatic";
@@ -122,7 +123,8 @@ export const createOrderAndItems = async (
       // Use a default SKU if missing instead of failing
       // You can change this to throw an error if SKU is mandatory
     }
-    if (!variation.Price || Number(variation.Price) < 0) {
+    // Price comes back from Postgres as a string, so "0" slipped past a truthiness check.
+    if (chargeableVariationPrice(variation) <= 0) {
       console.error("=== VALIDATION ERROR: Invalid price ===", {
         variationId: variation.id,
         price: variation.Price,
@@ -190,8 +192,7 @@ export const createOrderAndItems = async (
 
   for (const item of cart.cart_items) {
     const variation = item.product_variation;
-    // Use DiscountPrice if available, otherwise fall back to Price
-    const itemPrice = Number(variation?.DiscountPrice ?? variation?.Price ?? 0);
+    const itemPrice = chargeableVariationPrice(variation);
     const itemCount = Number(item?.Count || 0);
     subtotal += itemPrice * itemCount;
 

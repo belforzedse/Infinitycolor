@@ -1,5 +1,6 @@
 import { Strapi } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../../utils/roles";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
   const { code, shippingId, addressId, addressPayload } = ctx.request.body || {};
@@ -24,12 +25,12 @@ export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     // Compute subtotal from cart
-    // Use DiscountPrice if available, otherwise fall back to Price (same logic as order item creation)
+    // Same unit price order item creation charges
     let subtotal = 0;
     for (const item of cart.cart_items) {
-      const price = item?.product_variation?.DiscountPrice ?? item?.product_variation?.Price ?? 0;
+      const price = chargeableVariationPrice(item?.product_variation);
       const count = Number(item?.Count || 0);
-      subtotal += Number(price) * count;
+      subtotal += price * count;
     }
 
     let finalShipping = 0;
@@ -98,12 +99,9 @@ export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
       for (const item of cart.cart_items) {
         const productId = Number(item?.product_variation?.product?.id);
         if (productIds.has(productId)) {
-          const price =
-            item?.product_variation?.DiscountPrice ??
-            item?.product_variation?.Price ??
-            0;
+          const price = chargeableVariationPrice(item?.product_variation);
           const count = Number(item?.Count || 0);
-          eligibleSubtotal += Number(price) * count;
+          eligibleSubtotal += price * count;
         }
       }
       if (eligibleSubtotal <= 0) {

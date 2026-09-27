@@ -807,7 +807,12 @@ export const FeaturesTable = ({
       if (!result.created) {
         toast("هیچ تنوع جدیدی برای ایجاد وجود نداشت");
       } else {
-        toast.success(`${result.created} تنوع جدید با موفقیت ایجاد شد`);
+        // New variations start at price 0 and can't be sold until priced -- a
+        // bulk price set just before generating does not reach them.
+        toast.success(
+          `${result.created} تنوع جدید ایجاد شد. قیمت و موجودی آن‌ها را وارد کنید؛ تنوع بدون قیمت فروخته نمی‌شود.`,
+          { duration: 8000 },
+        );
       }
     } catch (error) {
       console.error("Error generating variations:", error);

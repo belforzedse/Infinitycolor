@@ -3,6 +3,7 @@ import EditIcon from "@/components/SuperAdmin/Layout/Icons/EditIcon";
 import clsx from "clsx";
 import React from "react";
 import type { ProductVariableDisplay } from "./types";
+import { UnpricedBadge } from "./Row";
 
 interface ProductVariableCardProps {
   item: ProductVariableDisplay;
@@ -33,18 +34,22 @@ export const ProductVariableCard: React.FC<ProductVariableCardProps> = ({
       {/* Price */}
       <div className="text-sm flex flex-col gap-0.5 pt-2">
         <span className="text-gray-500">قیمت</span>
-        <div className="flex flex-col">
-          {item.discountPrice && (
-            <span className="text-sm font-medium text-infinity-primary">
-              {item.discountPrice.toLocaleString()} تومان
+        {Number(item.price) <= 0 ? (
+          <UnpricedBadge />
+        ) : (
+          <div className="flex flex-col">
+            {item.discountPrice && (
+              <span className="text-sm font-medium text-infinity-primary">
+                {item.discountPrice.toLocaleString()} تومان
+              </span>
+            )}
+            <span
+              className={item.discountPrice ? "text-xs text-gray-500 line-through" : "text-gray-900"}
+            >
+              {item.price.toLocaleString()} تومان
             </span>
-          )}
-          <span
-            className={item.discountPrice ? "text-xs text-gray-500 line-through" : "text-gray-900"}
-          >
-            {item.price.toLocaleString()} تومان
-          </span>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Stock */}

@@ -1,5 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
 import { getAvailableStockCount } from "../lib/stock";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 export const addCartItemOp = async (
   strapi: Strapi,
@@ -27,6 +28,11 @@ export const addCartItemOp = async (
 
   // Validate variation is published
   if (productVariation.IsPublished === false) {
+    return { success: false, message: "Product variation is not available" };
+  }
+
+  // A variation without a price (e.g. just generated, not priced yet) is never for sale.
+  if (chargeableVariationPrice(productVariation) <= 0) {
     return { success: false, message: "Product variation is not available" };
   }
 

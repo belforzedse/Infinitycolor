@@ -13,6 +13,16 @@ interface ProductVariableRowProps {
   onDelete?: (id: number) => void;
 }
 
+/** Unpriced variations can't be bought; generated ones start like this. */
+export const UnpricedBadge: React.FC = () => (
+  <span
+    data-testid="variation-unpriced"
+    className="inline-block rounded-lg bg-red-50 px-3 py-1 text-xs font-medium text-red-600"
+  >
+    بدون قیمت
+  </span>
+);
+
 export const ProductVariableRow: React.FC<ProductVariableRowProps> = ({
   item,
   isLast,
@@ -42,16 +52,20 @@ export const ProductVariableRow: React.FC<ProductVariableRowProps> = ({
         </div>
       </td>
       <td className="text-sm border-r border-slate-100 p-4 text-neutral-400">
-        <div className="flex flex-col">
-          {item.discountPrice && (
-            <span className="text-sm font-medium text-infinity-primary">
-              {item.discountPrice.toLocaleString()} تومان
+        {Number(item.price) <= 0 ? (
+          <UnpricedBadge />
+        ) : (
+          <div className="flex flex-col">
+            {item.discountPrice && (
+              <span className="text-sm font-medium text-infinity-primary">
+                {item.discountPrice.toLocaleString()} تومان
+              </span>
+            )}
+            <span className={item.discountPrice ? "text-xs text-gray-500 line-through" : "text-sm"}>
+              {item.price.toLocaleString()} تومان
             </span>
-          )}
-          <span className={item.discountPrice ? "text-xs text-gray-500 line-through" : "text-sm"}>
-            {item.price.toLocaleString()} تومان
-          </span>
-        </div>
+          </div>
+        )}
       </td>
       <td className="text-sm border-r border-slate-100 p-4 text-neutral-400">
         {item.stock} عدد در انبار

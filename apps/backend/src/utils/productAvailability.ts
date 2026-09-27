@@ -9,6 +9,22 @@ const toNumber = (value: unknown): number => {
   return 0;
 };
 
+/**
+ * The unit price a shopper is charged for a variation. It follows the same rule
+ * the storefront displays (`buildProductDisplayPriceSql`): the discount counts
+ * only when it is above zero and below the base price. 0 means the variation is
+ * not for sale -- a missing price or a stray DiscountPrice of 0 must never let
+ * an item through checkout for free.
+ */
+export const chargeableVariationPrice = (
+  variation: { Price?: unknown; DiscountPrice?: unknown } | null | undefined,
+): number => {
+  const price = toNumber(variation?.Price);
+  if (price <= 0) return 0;
+  const discount = toNumber(variation?.DiscountPrice);
+  return discount > 0 && discount < price ? discount : price;
+};
+
 export type VariationAvailabilityInput = {
   IsPublished?: boolean | null;
   Price?: number | string | null;
