@@ -39,13 +39,14 @@ function isActiveRegistration(order: any): boolean {
 
 function buildPayload(order: any): AnipoCreateOrderPayload {
   const recipient = buildAnipoOrderRecipient(order);
+  // No postal code check: the placeholder is omitted, exactly as when the
+  // barcode workflow registered the order in the first place.
   if (
     !recipient.receiverName ||
     !recipient.provinceName ||
     !recipient.cityName ||
     !recipient.mobile ||
-    !recipient.fullAddress ||
-    !recipient.postalCode
+    !recipient.fullAddress
   ) {
     throw new Error("اطلاعات گیرنده برای همگام‌سازی آنیپو کامل نیست");
   }
