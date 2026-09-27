@@ -68,6 +68,7 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
           rows={data?.gateways ?? []}
           totalSales={data?.totals.gatewaySales ?? 0}
           ordersCount={data?.totals.ordersCount ?? 0}
+          paymentMix={data?.paymentMix}
         />
       </BreakdownCard>
 

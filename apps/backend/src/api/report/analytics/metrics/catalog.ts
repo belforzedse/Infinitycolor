@@ -437,7 +437,7 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     limitations: [
       "corrected from IRR to Toman as of decision D4",
       "@2 (decision D13): identical to products/breakdown's gateway table (same query, gated on report.finance.read). @1 grouped by the payment_gateways row linked to each transaction — duplicate rows, no Mellat row, 20k unlinked transactions — which is why the pie showed «نامشخص».",
-      "per-row order counts do not sum to paidOrdersCount: a split payment sits under two channels",
+      "per-row order counts do not sum to paidOrdersCount: a split payment sits under two channels; paymentMix splits paidOrdersCount into single- and multi-channel orders to reconcile them",
       "legs are attributed by settlement_gateway only for rows the WooCommerce importer wrote; live checkout transactions fall back to orders.payment_gateway",
     ],
     status: "implemented",

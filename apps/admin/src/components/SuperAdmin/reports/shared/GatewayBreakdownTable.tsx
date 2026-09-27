@@ -3,9 +3,10 @@
 import { useMemo } from "react";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
+import { cn } from "@/utils/tailwind";
 import PaymentGatewayBadge from "@/components/PaymentGateway/PaymentGatewayBadge";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
-import type { GatewayBreakdownRow } from "@/services/super-admin/reports/products";
+import type { GatewayBreakdownRow, PaymentMix } from "@/services/super-admin/reports/products";
 import { ShareCell } from "./AnalyticsTable";
 import { ShareSummary, ShareTip } from "./ShareBar";
 import { buildShares } from "./shares";
@@ -38,15 +39,22 @@ function gatewayKey(gateway: string) {
  * per-row order counts can add up to more than `ordersCount`, which is the
  * distinct number of paid orders. The amounts are per leg and do partition
  * the total, which is why the share bar is drawn over amounts.
+ *
+ * The footer spells that out with `paymentMix`: orders paid one way, orders
+ * split across channels, and all paid orders — the first two add up to the
+ * third in both columns. Without it (an API older than the field) the footer
+ * falls back to the single total row.
  */
 export default function GatewayBreakdownTable({
   rows,
   totalSales,
   ordersCount,
+  paymentMix,
 }: {
   rows: GatewayBreakdownRow[];
   totalSales: number;
   ordersCount: number;
+  paymentMix?: PaymentMix;
 }) {
   const byKey = useMemo(() => new Map(rows.map((row) => [gatewayKey(row.gateway), row])), [rows]);
   const shares = useMemo(
@@ -115,15 +123,107 @@ export default function GatewayBreakdownTable({
         </tbody>
         {rows.length > 0 && (
           <tfoot>
-            <tr className="border-t border-neutral-200 text-xs font-semibold text-neutral-700">
-              <td className="py-2.5">مجموع</td>
-              <td className="py-2.5 text-left tabular-nums">{faNum(ordersCount)}</td>
-              <td className="py-2.5 text-left tabular-nums">{priceFormatter(totalSales, " تومان")}</td>
-              <td className="py-2.5" />
-            </tr>
+            {paymentMix ? (
+              <PaymentMixRows
+                mix={paymentMix}
+                rowCountSum={rows.reduce((sum, row) => sum + Number(row.ordersCount || 0), 0)}
+                totalSales={totalSales}
+                ordersCount={ordersCount}
+              />
+            ) : (
+              <FooterRow label="مجموع" count={ordersCount} amount={totalSales} divider strong />
+            )}
           </tfoot>
         )}
       </table>
     </div>
+  );
+}
+
+function PaymentMixRows({
+  mix,
+  rowCountSum,
+  totalSales,
+  ordersCount,
+}: {
+  mix: PaymentMix;
+  rowCountSum: number;
+  totalSales: number;
+  ordersCount: number;
+}) {
+  // Every row appearance beyond one per order belongs to a mixed order.
+  const mixedAppearances = rowCountSum - mix.singleOrdersCount;
+  // Only the «completed» fallback can count a paid order with no settled leg.
+  const unsettled = ordersCount - mix.singleOrdersCount - mix.mixedOrdersCount;
+  return (
+    <>
+      <FooterRow
+        label="پرداخت با یک روش"
+        hint="هر سفارش فقط در یک ردیف بالا آمده است"
+        count={mix.singleOrdersCount}
+        amount={mix.singleTotal}
+        divider
+      />
+      <FooterRow
+        label="پرداخت ترکیبی"
+        hint={
+          mix.mixedOrdersCount > 0
+            ? `مثل کیف پول + درگاه؛ هر سفارش در ردیف همه روش‌هایش آمده و در ستون «تعداد سفارش» جمعاً ${faNum(mixedAppearances)} بار شمرده شده است`
+            : "مثل کیف پول + درگاه؛ هر سفارش در ردیف همه روش‌هایش آمده است"
+        }
+        count={mix.mixedOrdersCount}
+        amount={mix.mixedTotal}
+      />
+      {unsettled > 0 && (
+        <FooterRow
+          label="بدون تراکنش موفق"
+          hint="در هیچ ردیفی نیامده است"
+          count={unsettled}
+          amount={0}
+        />
+      )}
+      <FooterRow
+        label="مجموع سفارش‌های پرداخت‌شده"
+        hint="هر سفارش یک بار شمرده شده است"
+        count={ordersCount}
+        amount={totalSales}
+        divider
+        strong
+      />
+    </>
+  );
+}
+
+function FooterRow({
+  label,
+  hint,
+  count,
+  amount,
+  divider = false,
+  strong = false,
+}: {
+  label: string;
+  hint?: string;
+  count: number;
+  amount: number;
+  divider?: boolean;
+  strong?: boolean;
+}) {
+  return (
+    <tr
+      className={cn(
+        "text-xs",
+        divider && "border-t border-neutral-200",
+        strong ? "font-semibold text-neutral-700" : "text-neutral-600",
+      )}
+    >
+      <td className="py-2.5">
+        <div className={strong ? undefined : "font-medium text-neutral-700"}>{label}</div>
+        {hint ? <div className="mt-0.5 text-[11px] font-normal text-neutral-500">{hint}</div> : null}
+      </td>
+      <td className="py-2.5 text-left align-top tabular-nums">{faNum(count)}</td>
+      <td className="py-2.5 text-left align-top tabular-nums">{priceFormatter(amount, " تومان")}</td>
+      <td className="py-2.5" />
+    </tr>
   );
 }

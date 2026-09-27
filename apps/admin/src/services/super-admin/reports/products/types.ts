@@ -139,6 +139,21 @@ export interface GatewayBreakdownRow {
   sharePct: number | null;
 }
 
+/**
+ * The gateway table's paid orders split by how many rows each one sits under.
+ * Single + mixed partition both the distinct paid orders and the rows' total
+ * amount; the row counts sum higher because each mixed order (a wallet +
+ * gateway split) is counted under every channel it used.
+ */
+export interface PaymentMix {
+  singleOrdersCount: number;
+  /** Toman. */
+  singleTotal: number;
+  mixedOrdersCount: number;
+  /** Toman: the mixed orders' whole net settlement, every leg. */
+  mixedTotal: number;
+}
+
 export interface ShippingBreakdownRow {
   /** Shipping method title, or "نامشخص" for missing/legacy values. */
   method: string;
@@ -162,6 +177,8 @@ export interface ProductBreakdown {
   range: { start: string; end: string };
   currency: string;
   totals: { gatewaySales: number; shippingRevenue: number; ordersCount: number };
+  /** Optional: absent against an API older than the field. */
+  paymentMix?: PaymentMix;
   gateways: GatewayBreakdownRow[];
   shippingMethods: ShippingBreakdownRow[];
   dataQualityWarnings?: DataQualityWarning[];
