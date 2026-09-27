@@ -1,5 +1,6 @@
 import { getPatternCode, loadSmsConfig, type SmsConfig } from "./config";
 import { normalizeIranMobile } from "./phone";
+import { isE2EFixturePhone } from "../../utils/e2eFixtures";
 import { maskPhone, maskSecret } from "./redaction";
 import type {
   SmsNotificationType,
@@ -106,6 +107,11 @@ export async function sendPatternSms(input: PatternSmsInput): Promise<SmsSendRes
       recipient: maskPhone(input.phone),
     });
     return { ok: false, skipped: true, reason: "invalid_phone" };
+  }
+
+  if (isE2EFixturePhone(recipient)) {
+    logger?.debug?.("[sms] skipped staging E2E fixture recipient", { type: input.type });
+    return { ok: false, skipped: true, reason: "e2e_fixture" };
   }
 
   const patternCode = input.patternCode || getPatternCode(config, input.type);

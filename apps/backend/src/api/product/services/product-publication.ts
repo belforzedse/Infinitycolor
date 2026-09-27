@@ -18,7 +18,14 @@ export const PRODUCT_UID = "api::product.product" as const;
 export const BUSINESS_TIMEZONE = "Asia/Tehran";
 
 export type ProductPublicationStatus = "Active" | "InActive" | "Scheduled";
-export type PublicationOrigin = "admin" | "scheduler" | "importer" | "reconciler" | "retention";
+export type PublicationOrigin =
+  | "admin"
+  | "scheduler"
+  | "importer"
+  | "reconciler"
+  | "retention"
+  // The staging E2E fixture API (api/e2e-fixture) publishing its own products.
+  | "e2e-fixture";
 export type PublicationAction = "schedule" | "publish-now" | "cancel" | "retry" | "unpublish";
 export type QueueState = "queued" | "pending-reconciliation" | "not-required";
 
@@ -359,6 +366,9 @@ function publicationOrigin(origin: PublicationOrigin): AuditOrigin {
 }
 
 function automaticPublicationActor(origin: PublicationOrigin): AuditPrincipal<AuditActorType> {
+  if (origin === "e2e-fixture") {
+    return { type: "service_account", id: "e2e-fixtures", label: "E2E Fixtures" };
+  }
   if (origin === "importer") {
     return { type: "background_worker", id: "product-importer", label: "Product Import Worker" };
   }

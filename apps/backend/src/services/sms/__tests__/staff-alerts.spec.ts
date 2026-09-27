@@ -396,4 +396,18 @@ describe("staff order alerts", () => {
     expect(result.reason).toBe("disabled");
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  it("does not page staff about a staging E2E fixture shopper's order", async () => {
+    process.env.E2E_FIXTURES_ENABLED = "true";
+    const strapi = createStrapi({
+      order: { ...STARTED_ORDER, user: { id: 9, phone: "+989000003001" } },
+      alertSetting: TWO_RECIPIENTS,
+    });
+
+    const result = await notifyStaffOrderStartedSms(strapi as any, { orderId: 501 });
+
+    expect(result).toMatchObject({ skipped: true, reason: "e2e_fixture" });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(orderLogPayload(strapi)).toMatchObject({ reason: "e2e_fixture", sent: 0 });
+  });
 });

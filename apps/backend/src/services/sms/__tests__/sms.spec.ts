@@ -411,6 +411,62 @@ describe("sms service", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("never texts a staging E2E fixture shopper, and records why", async () => {
+    process.env.SMS_ENABLED = "true";
+    process.env.E2E_FIXTURES_ENABLED = "true";
+    process.env.IP_PANEL_API_KEY = "secret-key";
+    process.env.IP_PANEL_PATTERN_CODE = "pattern";
+    process.env.IP_PANEL_SENDER = "+983000505";
+    const redis: any = await RedisClient;
+    redis.set.mockResolvedValue("OK");
+    const createOrderLog = jest.fn().mockResolvedValue({ id: 1 });
+    const strapi: any = {
+      log: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+      entityService: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 12,
+          Status: "Started",
+          user: { id: 7, phone: "+989000003004" },
+          contract: { Amount: 1000 },
+        }),
+      },
+      db: { query: jest.fn(() => ({ create: createOrderLog })) },
+    };
+
+    await expect(
+      notifyOrderStatusSms(strapi, { orderId: 12, oldStatus: "Paying", newStatus: "Started" }),
+    ).resolves.toMatchObject({ ok: false, skipped: true, reason: "e2e_fixture" });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(createOrderLog).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        Changes: expect.objectContaining({ outcome: "skipped", reason: "e2e_fixture" }),
+      }),
+    });
+  });
+
+  it("skips fixture recipients at the provider only where fixtures are enabled", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      createResponse(200, { data: { message_outbox_ids: [1] }, meta: { status: true } }),
+    );
+    const config = loadSmsConfig({
+      SMS_ENABLED: "true",
+      IP_PANEL_API_KEY: "secret-key",
+      IP_PANEL_PATTERN_CODE: "pattern",
+      IP_PANEL_SENDER: "+983000505",
+    });
+    const send = () =>
+      sendPatternSms({ type: "order_created", phone: "09000003004", params: { orderId: 1 }, config });
+
+    process.env.E2E_FIXTURES_ENABLED = "true";
+    await expect(send()).resolves.toMatchObject({ ok: false, skipped: true, reason: "e2e_fixture" });
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    // Production never sets the flag: the same number is an ordinary recipient there.
+    delete process.env.E2E_FIXTURES_ENABLED;
+    await expect(send()).resolves.toMatchObject({ ok: true });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("persists a customer-visible notification outcome for operational follow-up", async () => {
     process.env.SMS_ENABLED = "false";
     const createOrderLog = jest.fn().mockResolvedValue({ id: 1 });

@@ -75,31 +75,62 @@ function isImage(buffer) {
   );
 }
 
-async function sanitizeTraceArchive(filePath, secretValues) {
-  const archive = await JSZip.loadAsync(await readFile(filePath));
-  const names = Object.keys(archive.files);
-  if (!names.some((name) => name.endsWith("trace.trace") || name.endsWith("trace.network"))) return;
+const DEFLATE = { type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } };
 
+/**
+ * A sanitized copy of a zip, or null when there is nothing to change. Handles
+ * a Playwright trace, and archives that carry traces inside them — a sharded
+ * run's blob report stores each test's trace as a nested zip.
+ */
+async function sanitizeArchive(buffer, secretValues) {
+  const archive = await JSZip.loadAsync(buffer);
+  const names = Object.keys(archive.files);
+  if (names.some((name) => name.endsWith("trace.trace") || name.endsWith("trace.network"))) {
+    for (const name of names) {
+      const entry = archive.files[name];
+      if (entry.dir) continue;
+      if (name.endsWith("trace.network")) {
+        archive.remove(name);
+        continue;
+      }
+      if (name.includes("/resources/") || name.startsWith("resources/")) {
+        const content = await entry.async("nodebuffer");
+        if (!isImage(content)) archive.remove(name);
+        continue;
+      }
+      const content = await entry.async("string");
+      archive.file(name, sanitizeJsonLines(content, secretValues));
+    }
+    return archive.generateAsync(DEFLATE);
+  }
+
+  let changed = false;
   for (const name of names) {
     const entry = archive.files[name];
     if (entry.dir) continue;
-    if (name.endsWith("trace.network")) {
-      archive.remove(name);
-      continue;
+    if (name.toLowerCase().endsWith(".zip")) {
+      const inner = await sanitizeArchive(await entry.async("nodebuffer"), secretValues);
+      if (inner) {
+        archive.file(name, inner);
+        changed = true;
+      }
+    } else if (/\.(jsonl|json|md|txt|log)$/i.test(name)) {
+      // Structure-preserving: only string contents change (queries, bearer
+      // tokens, cookie lines, configured secret values).
+      const content = await entry.async("string");
+      const sanitized = sanitizeText(content, secretValues);
+      if (sanitized !== content) {
+        archive.file(name, sanitized);
+        changed = true;
+      }
     }
-    if (name.includes("/resources/") || name.startsWith("resources/")) {
-      const buffer = await entry.async("nodebuffer");
-      if (!isImage(buffer)) archive.remove(name);
-      continue;
-    }
-    const content = await entry.async("string");
-    archive.file(name, sanitizeJsonLines(content, secretValues));
   }
+  return changed ? archive.generateAsync(DEFLATE) : null;
+}
 
-  await writeFile(
-    filePath,
-    await archive.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } }),
-  );
+async function sanitizeTraceArchive(filePath, secretValues) {
+  const sanitized = await sanitizeArchive(await readFile(filePath), secretValues);
+  if (sanitized) await writeFile(filePath, sanitized);
 }
 
 async function walk(root) {
@@ -134,21 +165,26 @@ export async function sanitizeAdminArtifacts({ roots, authDir, secretValues = co
 const isCli = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isCli) {
   const cwd = process.cwd();
-  const roots = [
-    path.join(cwd, "apps/e2e/e2e-admin-results.xml"),
-    path.join(cwd, "apps/e2e/playwright-report/admin"),
-    path.join(cwd, "apps/e2e/test-results/admin"),
-  ];
+  // Paths to sanitize may be given (the staging jobs pass theirs); the admin
+  // smoke job relies on these defaults.
+  const requested = process.argv.slice(2);
+  const roots = requested.length
+    ? requested.map((root) => path.resolve(cwd, root))
+    : [
+        path.join(cwd, "apps/e2e/e2e-admin-results.xml"),
+        path.join(cwd, "apps/e2e/playwright-report/admin"),
+        path.join(cwd, "apps/e2e/test-results/admin"),
+      ];
   const authDir = path.join(cwd, "apps/e2e/.auth");
   try {
     await sanitizeAdminArtifacts({ roots, authDir });
-    console.info("Sanitized admin Playwright artifacts and removed authentication state.");
+    console.info("Sanitized Playwright artifacts and removed authentication state.");
   } catch {
     // Artifacts are collected even for failed jobs. If sanitization cannot be
     // proven, delete the exact diagnostic roots so raw credentials cannot be
     // uploaded by an `artifacts: when: always` policy.
     await Promise.all([...roots, authDir].map((target) => rm(target, { recursive: true, force: true })));
-    console.error("Admin artifact sanitization failed; unsafe diagnostics were removed.");
+    console.error("Artifact sanitization failed; unsafe diagnostics were removed.");
     process.exitCode = 70;
   }
 }

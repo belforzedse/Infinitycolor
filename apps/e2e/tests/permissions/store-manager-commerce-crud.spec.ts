@@ -59,7 +59,7 @@ test.describe("Store manager operational commerce CRUD", () => {
     }
   });
 
-  test("@permissions completes variation, promotion, shipping, and category workflows while sensitive APIs stay closed", async ({
+  test("@permissions @api completes variation, promotion, shipping, and category workflows while sensitive APIs stay closed", async ({
     request,
   }) => {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

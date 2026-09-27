@@ -38,6 +38,8 @@ const projects = [
 export default defineConfig({
   ...baseConfig,
   testMatch: ["**/static-parity.spec.ts"],
+  // The base config ignores this spec; testMatch alone decides here.
+  testIgnore: [],
   fullyParallel: false,
   outputDir: "test-results/static-parity",
   reporter: [

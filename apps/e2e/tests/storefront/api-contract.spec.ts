@@ -26,7 +26,7 @@ function withCacheBust(url: URL) {
 }
 
 test.describe("storefront API contract", () => {
-  test("@smoke backend health and seeded product card contract", async ({
+  test("@smoke @api backend health and seeded product card contract", async ({
     request,
   }) => {
     const health = await request.get(`${strapiOrigin()}/_health`);
@@ -72,7 +72,7 @@ test.describe("storefront API contract", () => {
     expect(fixtureUploadResponse.headers()["content-type"]).toContain("image/");
   });
 
-  test("@smoke homepage sections include the seeded storefront product", async ({
+  test("@smoke @api homepage sections include the seeded storefront product", async ({
     request,
   }) => {
     const url = withCacheBust(
@@ -102,7 +102,7 @@ test.describe("storefront API contract", () => {
     expect(seededCard?.attributes?.IsAvailable).toBe(true);
   });
 
-  test("@smoke PDP detail contract exposes stock, media, and hexless color variation", async ({
+  test("@smoke @api PDP detail contract exposes stock, media, and hexless color variation", async ({
     request,
   }) => {
     const url = withCacheBust(

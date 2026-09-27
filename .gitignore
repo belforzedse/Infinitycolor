@@ -117,6 +117,8 @@ apps/e2e/e2e-admin-results.xml
 apps/e2e/e2e-results.xml
 apps/e2e/*-e2e-results.xml
 apps/e2e/.auth/
+apps/e2e/reports/
+apps/e2e/blob-report/
 apps/admin/coverage/
 apps/admin/junit.xml
 tmp/*
