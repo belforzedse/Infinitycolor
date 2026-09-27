@@ -27,6 +27,7 @@ export type QueueSettings = {
     snappaySweep: string;
     walletTopupReconcile: string;
     anipoBarcodeReconcile: string;
+    productTrashRetention: string;
   };
 };
 
@@ -85,6 +86,10 @@ export function getQueueSettings(env: NodeJS.ProcessEnv = process.env): QueueSet
         env.QUEUE_CRON_WALLET_TOPUP_RECONCILE || "*/1 * * * *",
       anipoBarcodeReconcile:
         env.QUEUE_CRON_ANIPO_BARCODE_RECONCILE || "*/15 * * * *",
+      // Daily and quiet. The sweep itself is a no-op until
+      // PRODUCT_TRASH_RETENTION_DAYS is set (src/jobs/purgeExpiredTrashedProducts.ts).
+      productTrashRetention:
+        env.QUEUE_CRON_PRODUCT_TRASH_RETENTION || "30 3 * * *",
     },
   };
 }

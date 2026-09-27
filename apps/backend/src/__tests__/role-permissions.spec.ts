@@ -94,6 +94,9 @@ function createActionTree() {
           softDelete: action(),
           restore: action(),
           delete: action(),
+          permanentDelete: action(),
+          emptyTrash: action(),
+          bulkLifecycle: action(),
         },
       },
     },
@@ -304,7 +307,7 @@ function createActionTree() {
     },
     "api::admin-product-list": {
       controllers: {
-        "admin-product-list": { query: action() },
+        "admin-product-list": { query: action(), counts: action() },
       },
     },
     "api::admin-media-library": {
@@ -766,6 +769,12 @@ describe("role permission templates", () => {
     expect(editor["api::admin-product-list"].controllers["admin-product-list"].query.enabled).toBe(
       false,
     );
+    expect(
+      seller1["api::admin-product-list"].controllers["admin-product-list"].counts.enabled,
+    ).toBe(true);
+    expect(editor["api::admin-product-list"].controllers["admin-product-list"].counts.enabled).toBe(
+      false,
+    );
   });
 
   it("lets Seller 2 read the Anipo review tab and use the existing shipping actions", () => {
@@ -801,6 +810,7 @@ describe("role permission templates", () => {
         capabilities: ["product.read"],
         actions: [
           "api::admin-product-list.admin-product-list.query",
+          "api::admin-product-list.admin-product-list.counts",
           "api::product.product.createPreviewDraft",
         ],
       },
@@ -838,6 +848,25 @@ describe("role permission templates", () => {
       {
         capabilities: ["product.restore"],
         actions: ["api::product.product.restore"],
+      },
+      {
+        // One bulk route for every lifecycle action; the controller checks the
+        // capability of the action requested.
+        capabilities: [
+          "product.publish",
+          "product.schedule",
+          "product.softDelete",
+          "product.restore",
+          "product.delete",
+        ],
+        actions: ["api::product.product.bulkLifecycle"],
+      },
+      {
+        capabilities: ["product.delete"],
+        actions: [
+          "api::product.product.permanentDelete",
+          "api::product.product.emptyTrash",
+        ],
       },
       {
         capabilities: ["product.homepage.manage"],
@@ -1354,9 +1383,10 @@ describe("role permission templates", () => {
       enabledActionNames(tree[typeKey].controllers[controllerName]);
 
     // softDelete/restore are the reversible recycle-bin pair, inherited from
-    // Seller 1. Note "delete" is still absent: permanent deletion stays
-    // Superadmin-only.
+    // Seller 1. Note "delete", "permanentDelete" and "emptyTrash" are still
+    // absent: permanent deletion stays Superadmin-only.
     expect(enabled("api::product", "product")).toEqual([
+      "bulkLifecycle",
       "create",
       "createPreviewDraft",
       "find",

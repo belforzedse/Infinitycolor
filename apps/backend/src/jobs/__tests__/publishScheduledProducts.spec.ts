@@ -77,6 +77,7 @@ function resolvedQuery<T>(value: T) {
   for (const method of [
     "select",
     "where",
+    "whereNull",
     "whereNotNull",
     "andWhere",
     "whereRaw",
@@ -186,9 +187,11 @@ describe("scheduled product reconciliation", () => {
       scheduled_publish_next_retry_at: null,
     }];
     const effects = [{ id: 11, publication_revision: 7 }];
+    const scheduleQuery = resolvedQuery(schedules);
+    const effectsQuery = resolvedQuery(effects);
     const connection = jest.fn()
-      .mockReturnValueOnce(resolvedQuery(schedules))
-      .mockReturnValueOnce(resolvedQuery(effects));
+      .mockReturnValueOnce(scheduleQuery)
+      .mockReturnValueOnce(effectsQuery);
     mockedJobExists.mockResolvedValue(false);
     mockedEnqueue.mockResolvedValue({} as any);
     mockedEffects.mockResolvedValue({ completed: true, revision: 7 });
@@ -207,6 +210,10 @@ describe("scheduled product reconciliation", () => {
     });
     expect(mockedEnqueue).toHaveBeenCalledWith(jobData);
     expect(mockedEffects).toHaveBeenCalledWith(expect.anything(), 11, 7);
+    // A trashed product never gets its schedule re-queued, but a trashed
+    // product's pending cache effects (its move out of the storefront) still run.
+    expect(scheduleQuery.whereNull).toHaveBeenCalledWith("removed_at");
+    expect(effectsQuery.whereNull).not.toHaveBeenCalled();
   });
 
   it("does not automatically retry a permanent schedule failure", async () => {

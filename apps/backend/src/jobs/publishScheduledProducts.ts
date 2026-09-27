@@ -160,6 +160,9 @@ export async function runScheduledProductsReconciliation(
       "scheduled_publish_audit_context",
     ])
     .where({ status: "Scheduled" })
+    // A trashed row keeps no live schedule (trash retires it), but legacy or
+    // rolled-back rows can; never re-queue a publish for a product in Trash.
+    .whereNull("removed_at")
     .whereNotNull("scheduled_publish_at")
     .andWhere("scheduled_publish_at", "<=", horizon)
     .orderBy("scheduled_publish_at", "asc")
@@ -180,6 +183,8 @@ export async function runScheduledProductsReconciliation(
     }
   }
 
+  // Deliberately not filtered on removed_at: moving a published product to
+  // Trash bumps its revision precisely so these cache effects run.
   const pendingEffects = (await strapi.db.connection("products")
     .select(["id", "publication_revision"])
     .whereRaw("publication_revision > publication_effects_completed_revision")

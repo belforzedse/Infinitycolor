@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../utils/productVisibility";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import {
@@ -165,7 +166,7 @@ export default factories.createCoreController(
         }
 
         const product = await strapi.entityService.findOne("api::product.product", productId);
-        if (!product || product.removedAt || product.Status !== "Active") {
+        if (!isProductPubliclyVisible(product)) {
           return ctx.notFound("Product not found");
         }
 

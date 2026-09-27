@@ -90,6 +90,10 @@ export async function processMaintenanceJob(
       const { runReconcileCartCleanupTick } = await import("../jobs/reconcileCartCleanup");
       return runReconcileCartCleanupTick(strapi);
     }
+    case COMMERCE_MAINTENANCE_JOBS.productTrashRetention: {
+      const { runTrashRetentionSweep } = await import("../jobs/purgeExpiredTrashedProducts");
+      return runTrashRetentionSweep(strapi);
+    }
     case COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile: {
       const { runAnipoBarcodeReconciliation } = await import(
         "../api/order/services/anipoBarcodeWorkflow"

@@ -92,7 +92,9 @@ const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // queryReserveGroups / getReserveGroup;
   // without this, Seller 1+ pass the product.read capability policy but
   // Strapi U&P still 403s the route.
-  "api::admin-product-list": { "admin-product-list": ["query"] },
+  // `counts` backs the lifecycle tab badges (All / Published / Drafts /
+  // Scheduled / Trash) on the same page.
+  "api::admin-product-list": { "admin-product-list": ["query", "counts"] },
   // createPreviewDraft never touches the live product row (it's an ephemeral
   // overlay token) and is already gated by capabilityPolicy("product.read") on
   // the route — same U&P-grant omission pattern as admin-product-list above:
@@ -162,9 +164,12 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   "product.read": PRODUCT_READ_GRANTS,
   "product.create": { "api::product": { product: ["create"] } },
   "product.update": { "api::product": { product: ["update"] } },
-  "product.publish": { "api::product": { product: ["publication"] } },
+  // `bulkLifecycle` is one route for every lifecycle action; the controller
+  // checks the capability of the action requested, so each capability that owns
+  // a bulk action must also grant the route.
+  "product.publish": { "api::product": { product: ["publication", "bulkLifecycle"] } },
   "product.schedule": {
-    "api::product": { product: ["publication", "updateDisplayDate"] },
+    "api::product": { product: ["publication", "updateDisplayDate", "bulkLifecycle"] },
   },
   "product.stock.update": {
     "api::product-stock": { "product-stock": CREATE_UPDATE_ACTIONS },
@@ -206,9 +211,13 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   // The capability policy on these routes is not enough on its own — Strapi U&P
   // still 403s a route whose action the role has no permission row for, the same
   // way it does for admin-product-list.query above.
-  "product.softDelete": { "api::product": { product: ["softDelete"] } },
-  "product.restore": { "api::product": { product: ["restore"] } },
-  "product.delete": { "api::product": { product: ["delete"] } },
+  "product.softDelete": { "api::product": { product: ["softDelete", "bulkLifecycle"] } },
+  "product.restore": { "api::product": { product: ["restore", "bulkLifecycle"] } },
+  "product.delete": {
+    "api::product": {
+      product: ["delete", "permanentDelete", "emptyTrash", "bulkLifecycle"],
+    },
+  },
   "product.homepage.manage": {
     "api::settings": {
       settings: [

@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { productUnavailableReason } from "../../../../utils/productVisibility";
 import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 type OrderStatus = "Paying" | "Started" | "Shipment" | "Done" | "Returned" | "Cancelled";
@@ -64,8 +65,12 @@ export const createOrderAndItems = async (
       throw new Error(`INVALID_ITEM: Cart item ${item.id} missing product variation`);
     }
 
+    // One visibility rule for the whole storefront (utils/productVisibility.ts);
+    // the two codes below are what the checkout UI keys on.
+    const unavailableReason = productUnavailableReason(variation.product);
+
     // Validate product is not soft-deleted
-    if (variation.product?.removedAt) {
+    if (unavailableReason === "PRODUCT_DELETED") {
       strapi.log.error("=== VALIDATION ERROR: Product is soft-deleted ===", {
         variationId: variation.id,
         productId: variation.product?.id,
@@ -78,7 +83,7 @@ export const createOrderAndItems = async (
     }
 
     // Validate product is active
-    if (variation.product?.Status !== "Active") {
+    if (unavailableReason) {
       strapi.log.error("=== VALIDATION ERROR: Product is inactive ===", {
         variationId: variation.id,
         productId: variation.product?.id,

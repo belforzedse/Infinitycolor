@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
 import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
@@ -34,7 +35,7 @@ export const updateCartItemOp = async (
 
   const variation = cartItem.product_variation;
   const product = variation?.product;
-  if (!product || product.removedAt || product.Status !== "Active") {
+  if (!isProductPubliclyVisible(product)) {
     return { success: false, message: "Product is not available" };
   }
   if (variation?.IsPublished === false) {

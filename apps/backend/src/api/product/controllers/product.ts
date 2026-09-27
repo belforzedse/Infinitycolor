@@ -30,6 +30,13 @@ import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-con
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
 import { validateProductSlug } from "../../../utils/productSlug";
+import {
+  catalogProductFilters,
+  isProductPubliclyVisible,
+  isProductPurged,
+  publicProductFilters,
+  wherePublicProduct,
+} from "../../../utils/productVisibility";
 import { generateUnicodeSlug } from "../../../utils/unicodeSlug";
 import { resolveAdminActor } from "../../../utils/adminAuthorization";
 import { recordAdminAudit } from "../../../utils/adminAudit";
@@ -42,6 +49,18 @@ import {
   enqueueScheduledProductPublication,
   removeScheduledProductPublication,
 } from "../../../queue/product-publication-queue";
+import {
+  BULK_ACTION_CAPABILITY,
+  emptyTrash,
+  parseBulkProductIds,
+  purgeProduct,
+  restoreProduct,
+  runLifecycleBulk,
+  trashProduct,
+  type BulkLifecycleAction,
+  type LifecycleActor,
+  type LifecycleResult,
+} from "../services/product-lifecycle";
 import {
   createProductPreviewDraft,
   readProductPreviewDraft,
@@ -86,6 +105,38 @@ const PUBLICATION_CONTROL_FIELDS = new Set([
   "publicationEffectsCompletedRevision",
   "publicationEffectsLastError",
 ]);
+
+/**
+ * Trash and permanent deletion are commands with their own capabilities, audit
+ * and cache effects (services/product-lifecycle.ts). Their columns are never
+ * writable through the generic create/update path, for any role.
+ */
+const LIFECYCLE_CONTROL_FIELDS = new Set([
+  "removedAt",
+  "removedById",
+  "removedByLabel",
+  "preRemovalStatus",
+  "preRemovalScheduledPublishAt",
+  "purgedAt",
+  "purgedById",
+]);
+
+function rejectLifecycleFields(ctx: any): boolean {
+  const data = ctx.request?.body?.data;
+  if (!data || typeof data !== "object") return false;
+  const found = Object.keys(data).filter((field) => LIFECYCLE_CONTROL_FIELDS.has(field));
+  if (found.length === 0) return false;
+  ctx.status = 400;
+  ctx.body = {
+    error: {
+      status: 400,
+      name: "LifecycleCommandRequired",
+      message: "Trash state must be changed through the product lifecycle routes",
+      details: { code: "LIFECYCLE_COMMAND_REQUIRED", fields: found },
+    },
+  };
+  return true;
+}
 
 function rejectPublicationFields(ctx: any): boolean {
   const data = ctx.request?.body?.data;
@@ -166,14 +217,6 @@ function isAdminUser(user: any): boolean {
   if (!user) return false;
   const role = normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name);
   return role ? hasCapability(role, "product.read") : false;
-}
-
-function readProductStatus(product: any): string | undefined {
-  return product?.attributes?.Status || product?.Status;
-}
-
-function readProductRemovedAt(product: any): string | null | undefined {
-  return product?.attributes?.removedAt || product?.removedAt;
 }
 
 function setCacheHeaderIfEnabled(ctx: any, status: CacheStatus) {
@@ -344,11 +387,8 @@ async function loadProductById(
 ): Promise<any | null> {
   const foundFilters: any = {
     id: productId,
-    removedAt: { $null: true },
+    ...catalogProductFilters(isAdmin),
   };
-  if (!isAdmin) {
-    foundFilters.Status = "Active";
-  }
   const foundProducts = await strapi.entityService.findMany("api::product.product", {
     filters: foundFilters,
     populate,
@@ -472,12 +512,8 @@ async function findProductBySlugInternal(
   const candidates = buildProductSlugCandidates(inboundSlug);
   const filters: any = {
     Slug: { $in: candidates },
-    removedAt: { $null: true },
+    ...catalogProductFilters(isAdmin),
   };
-
-  if (!isAdmin) {
-    filters.Status = "Active";
-  }
 
   let products = await strapi.entityService.findMany("api::product.product", {
     filters,
@@ -493,11 +529,8 @@ async function findProductBySlugInternal(
     );
     try {
       const knex = strapi.db.connection;
-      let rawQuery = knex("products").whereIn("slug", candidates).whereNull("removed_at");
-
-      if (!isAdmin) {
-        rawQuery = rawQuery.where("status", "Active");
-      }
+      let rawQuery = knex("products").whereIn("slug", candidates);
+      rawQuery = isAdmin ? rawQuery.whereNull("removed_at") : wherePublicProduct(rawQuery);
 
       const rawProducts = await rawQuery.limit(1);
       if (rawProducts.length > 0) {
@@ -558,50 +591,118 @@ async function findProductBySlugInternal(
   return product;
 }
 
+type LifecycleHttpActor = {
+  actor: LifecycleActor;
+  role: string;
+};
+
+function adminActorLabel(user: any): string | null {
+  const info = user?.user_info || {};
+  const fullName = [info.FirstName, info.LastName]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  return fullName || user?.username || user?.phone || user?.email || null;
+}
+
 /**
- * Shared body of the soft-delete / restore handlers. `removedAt` is the only
- * field either one writes.
+ * The verified staff member behind a lifecycle request. Routes carry their own
+ * capability policy; this resolves the same user again for attribution
+ * (removedBy, audit actor) and for the per-action checks of the bulk route.
  */
-async function setProductRemovedAt(ctx: any, strapi: any, removedAt: string | null) {
+async function resolveLifecycleActor(ctx: any, strapi: any): Promise<LifecycleHttpActor | null> {
+  const adminActor = await resolveAdminActor(strapi, ctx.state?.user);
+  if (!adminActor) return null;
+  const user = adminActor.user;
+  return {
+    role: adminActor.role,
+    actor: {
+      id: Number(user.id),
+      name: user.username || user.email || null,
+      label: adminActorLabel(user),
+      role: user.role?.name || null,
+      ip: ctx.request?.ip || ctx.ip || null,
+      userAgent: ctx.request?.headers?.["user-agent"] || null,
+    },
+  };
+}
+
+function sendLifecycleError(ctx: any, strapi: any, error: unknown, label: string) {
+  if (error instanceof PublicationCommandError) {
+    ctx.status = error.status;
+    ctx.body = {
+      error: {
+        status: error.status,
+        name: "ProductLifecycleError",
+        message: error.code,
+        details: { code: error.code },
+      },
+    };
+    return;
+  }
+  strapi.log.error(`[product-lifecycle] ${label} failed`, {
+    productId: ctx.params?.id,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  ctx.status = 500;
+  ctx.body = {
+    error: {
+      status: 500,
+      name: "ProductLifecycleError",
+      message: "LIFECYCLE_COMMAND_FAILED",
+      details: { code: "LIFECYCLE_COMMAND_FAILED" },
+    },
+  };
+}
+
+function lifecycleResponse(result: LifecycleResult) {
+  return {
+    id: result.productId,
+    state: result.state,
+    Status: result.status,
+    removedAt: result.removedAt,
+    previousStatus: result.previousStatus ?? null,
+    warnings: result.warnings || [],
+    /** True when the product was already in the requested state; nothing changed. */
+    unchanged: !result.changed,
+  };
+}
+
+async function runSingleLifecycleCommand(
+  ctx: any,
+  strapi: any,
+  label: string,
+  command: (productId: number, http: LifecycleHttpActor) => Promise<LifecycleResult>,
+) {
   const productId = Number(ctx.params?.id);
   if (!Number.isSafeInteger(productId) || productId <= 0) {
     ctx.status = 400;
     ctx.body = {
-      error: { code: "INVALID_PRODUCT_ID", message: "A valid product ID is required" },
+      error: {
+        status: 400,
+        name: "ProductLifecycleError",
+        message: "INVALID_PRODUCT_ID",
+        details: { code: "INVALID_PRODUCT_ID" },
+      },
     };
     return;
   }
-
-  const existing = await strapi.db
-    .query("api::product.product")
-    .findOne({ where: { id: productId }, select: ["id", "removedAt"] });
-  if (!existing) {
-    return ctx.notFound("Product not found");
+  const http = await resolveLifecycleActor(ctx, strapi);
+  if (!http) return ctx.forbidden("Lifecycle action is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
+  try {
+    const result = await command(productId, http);
+    ctx.set("Cache-Control", "private, no-store");
+    ctx.body = { data: lifecycleResponse(result) };
+  } catch (error) {
+    sendLifecycleError(ctx, strapi, error, label);
   }
-
-  // Idempotent: repeating the action (a double-click, a retried bulk item) is a
-  // no-op rather than a second audit entry with a fresh timestamp.
-  const alreadyInTargetState = Boolean(existing.removedAt) === Boolean(removedAt);
-  if (alreadyInTargetState) {
-    ctx.body = {
-      data: { id: productId, removedAt: existing.removedAt ?? null, unchanged: true },
-    };
-    return;
-  }
-
-  const product = await strapi.entityService.update("api::product.product", productId, {
-    data: { removedAt },
-  });
-
-  ctx.body = {
-    data: { id: product.id, removedAt: product.removedAt ?? null, unchanged: false },
-  };
 }
 
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
   async create(ctx) {
     discardLegacyDraftStatusOnCreate(ctx);
     if (rejectPublicationFields(ctx)) return;
+    if (rejectLifecycleFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     if (await rejectInvalidManualSlug(ctx, strapi)) return;
     ctx.request.body = ctx.request.body || {};
@@ -611,34 +712,137 @@ export default factories.createCoreController("api::product.product", ({ strapi 
 
   async update(ctx) {
     if (rejectPublicationFields(ctx)) return;
+    if (rejectLifecycleFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     if (await rejectInvalidManualSlug(ctx, strapi)) return;
     return super.update(ctx);
   },
 
   /**
-   * Reversible removal to the recycle bin, and its undo.
-   *
-   * `removedAt` is deliberately absent from OPERATIONAL_PRODUCT_FIELDS, so a
-   * plain `PUT /products/:id` carrying it is rejected for every non-Superadmin by
-   * `enforceOperationalDataFields`. Rather than widening that allowlist — which
-   * would let any role with product.update stamp the field through the generic
-   * update path — removal gets dedicated routes gated on their own capabilities,
-   * the same shape as `publication` and `updateDisplayDate`.
-   *
-   * Authorization lives in the router (`global::require-capability`):
-   * product.softDelete here, product.restore below. Permanent deletion is a
-   * different capability entirely and is not reachable from either.
-   *
-   * Both go through entityService so the product lifecycle hook fires and writes
-   * the admin-audit entry that distinguishes a removal from a restore.
+   * Product lifecycle: Trash, restore/Undo and permanent deletion. Each route
+   * carries its own capability policy (product.softDelete / product.restore /
+   * product.delete); the state rules live in services/product-lifecycle.ts,
+   * never here. `removedAt` and the other lifecycle columns are rejected on the
+   * generic create/update path so no role can bypass these commands.
    */
   async softDelete(ctx) {
-    return setProductRemovedAt(ctx, strapi, new Date().toISOString());
+    return runSingleLifecycleCommand(ctx, strapi, "trash", (productId, http) =>
+      trashProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    );
   },
 
   async restore(ctx) {
-    return setProductRemovedAt(ctx, strapi, null);
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const undoToken = typeof body.undoToken === "string" ? body.undoToken : null;
+    return runSingleLifecycleCommand(ctx, strapi, "restore", (productId, http) =>
+      restoreProduct(
+        strapi,
+        productId,
+        { origin: "admin", actor: http.actor },
+        {
+          undoToken,
+          canPublish: hasCapability(http.role, "product.publish"),
+          canSchedule: hasCapability(http.role, "product.schedule"),
+        },
+      ),
+    );
+  },
+
+  async permanentDelete(ctx) {
+    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", (productId, http) =>
+      purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    );
+  },
+
+  /**
+   * The core DELETE used to hard-delete any product. It now means the same as
+   * permanent deletion: the product must already be in Trash and becomes a
+   * tombstone, so order history and reports keep their product. Trusted
+   * migration requests (the WooCommerce dedup script) keep the old row delete
+   * for importer-made duplicates.
+   */
+  async delete(ctx) {
+    if (isTrustedWordPressMigrationRequest()) {
+      return (super.delete as any)(ctx);
+    }
+    const http = await resolveLifecycleActor(ctx, strapi);
+    if (!http || !hasCapability(http.role, "product.delete")) {
+      return ctx.forbidden("Permanent deletion is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
+    }
+    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", (productId) =>
+      purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    );
+  },
+
+  async bulkLifecycle(ctx) {
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const action = String(body.action || "") as BulkLifecycleAction;
+    const capability = BULK_ACTION_CAPABILITY[action];
+    const reject = (status: number, code: string) => {
+      ctx.status = status;
+      ctx.body = { error: { status, name: "ProductLifecycleError", message: code, details: { code } } };
+    };
+    if (!capability) return reject(400, "LIFECYCLE_ACTION_INVALID");
+
+    const http = await resolveLifecycleActor(ctx, strapi);
+    if (!http || !hasCapability(http.role, capability as any)) {
+      return ctx.forbidden("Lifecycle action is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
+    }
+
+    let ids: number[];
+    try {
+      ids = parseBulkProductIds(body.ids);
+    } catch (error) {
+      return sendLifecycleError(ctx, strapi, error, "bulk");
+    }
+    if (action === "schedule") {
+      const publishAt = typeof body.publishAt === "string" ? body.publishAt : "";
+      if (!publishAt || !(Date.parse(publishAt) > Date.now())) {
+        return reject(422, "INVALID_PUBLICATION_TIME");
+      }
+    }
+
+    try {
+      const result = await runLifecycleBulk(
+        strapi,
+        action,
+        ids,
+        { origin: "admin", actor: http.actor },
+        { publishAt: body.publishAt, timezone: body.timezone },
+      );
+      ctx.set("Cache-Control", "private, no-store");
+      ctx.body = { data: result };
+    } catch (error) {
+      sendLifecycleError(ctx, strapi, error, "bulk");
+    }
+  },
+
+  async emptyTrash(ctx) {
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const trashedBefore = new Date(String(body.trashedBefore || ""));
+    // The client sends when it loaded the Trash list; allow a little clock skew
+    // but never a cut-off in the future that would sweep unseen products.
+    if (Number.isNaN(trashedBefore.getTime()) || trashedBefore.getTime() > Date.now() + 5 * 60 * 1000) {
+      ctx.status = 400;
+      ctx.body = {
+        error: {
+          status: 400,
+          name: "ProductLifecycleError",
+          message: "TRASHED_BEFORE_INVALID",
+          details: { code: "TRASHED_BEFORE_INVALID" },
+        },
+      };
+      return;
+    }
+    const http = await resolveLifecycleActor(ctx, strapi);
+    if (!http) return ctx.forbidden("Lifecycle action is not allowed", { code: "LIFECYCLE_FORBIDDEN" });
+    try {
+      const result = await emptyTrash(strapi, { origin: "admin", actor: http.actor }, { trashedBefore });
+      ctx.set("Cache-Control", "private, no-store");
+      ctx.body = { data: result };
+    } catch (error) {
+      sendLifecycleError(ctx, strapi, error, "empty trash");
+    }
   },
 
   async updateDisplayDate(ctx) {
@@ -945,10 +1149,6 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   applyPublicProductFilters(ctx) {
     const user = ctx.state.user;
     const isAdmin = isAdminUser(user);
-    if (isAdmin) {
-      return false;
-    }
-
     const existingFilters = ctx.query?.filters || {};
     const andConditions: any[] = [];
 
@@ -963,13 +1163,23 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       andConditions.push(existingFilters);
     }
 
-    andConditions.push({ removedAt: { $null: true } });
+    if (isAdmin) {
+      // Staff read drafts, scheduled and trashed products through the core
+      // routes, but a permanently deleted product is a tombstone that no
+      // catalog surface may return.
+      andConditions.push({ purgedAt: { $null: true } });
+      ctx.query = { ...ctx.query, filters: { $and: andConditions } };
+      return false;
+    }
+
     // A fully trusted migration request must see an existing inactive product
     // by external_id so the idempotent importer updates it instead of trying a
     // duplicate create. Trashed products remain excluded.
-    if (!isTrustedWordPressMigrationRequest()) {
-      andConditions.push({ Status: "Active" });
-    }
+    andConditions.push(
+      isTrustedWordPressMigrationRequest()
+        ? { removedAt: { $null: true } }
+        : publicProductFilters(),
+    );
 
     ctx.query = {
       ...ctx.query,
@@ -1195,18 +1405,18 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     const response: any = await (super.findOne as any)(ctx, next);
 
     if (!filtersApplied) {
+      // findOne ignores `filters`, so the tombstone rule is enforced on the result.
+      if (isProductPurged(response?.data)) return ctx.notFound("Product not found");
       return response;
     }
 
     const product = response?.data;
-    const status = readProductStatus(product);
-    const removedAt = readProductRemovedAt(product);
-    if (status !== "Active" || removedAt) {
+    if (!isProductPubliclyVisible(product)) {
       return ctx.notFound("Product not found");
     }
 
     const isAdmin = isAdminUser(user);
-    if (!isAdmin && status === "Active" && product?.id) {
+    if (!isAdmin && product?.id) {
       try {
         const productViewService = strapi.service("api::product-view.product-view") as {
           queueProductView: (productId: number) => Promise<void>;
@@ -1348,9 +1558,8 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       }
 
       const productData = payload.data;
-      const status = readProductStatus(productData);
-      const removedAt = readProductRemovedAt(productData);
-      if (!isAdmin && (status !== "Active" || removedAt)) {
+      const isPublic = isProductPubliclyVisible(productData);
+      if (!isAdmin && !isPublic) {
         return ctx.notFound("Product not found");
       }
 
@@ -1358,7 +1567,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         `[Product.findBySlug] Successfully found product: ${productData.id} (${productData.Title || "N/A"})`,
       );
 
-      if (!isAdmin && status === "Active" && productData?.id) {
+      if (!isAdmin && isPublic && productData?.id) {
         try {
           const productViewService = strapi.service("api::product-view.product-view") as {
             queueProductView: (productId: number) => Promise<void>;

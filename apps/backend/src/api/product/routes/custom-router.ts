@@ -41,11 +41,10 @@ export default {
         middlewares: [],
       },
     },
-    // Reversible removal to the recycle bin and its undo. Separate routes rather
-    // than a `removedAt` write through the generic update path, so each half is
-    // gated on its own capability and `removedAt` stays out of the operational
-    // free-write allowlist. Permanent deletion is `product.delete` and is not
-    // reachable from either of these.
+    // Product lifecycle (services/product-lifecycle.ts). Move to Trash, restore
+    // (always to draft, or the bounded Undo) and permanent deletion are separate
+    // routes on separate capabilities; none of their columns is writable through
+    // the generic update path. Permanent deletion needs the product in Trash.
     {
       method: "POST",
       path: "/products/:id/soft-delete",
@@ -63,6 +62,39 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.restore")],
+        middlewares: [],
+      },
+    },
+    {
+      method: "POST",
+      path: "/products/:id/permanent-delete",
+      handler: "product.permanentDelete",
+      config: {
+        auth: { scope: [] },
+        policies: [capabilityPolicy("product.delete")],
+        middlewares: [],
+      },
+    },
+    {
+      method: "POST",
+      path: "/products/lifecycle/bulk",
+      handler: "product.bulkLifecycle",
+      config: {
+        auth: { scope: [] },
+        // One route for every lifecycle action: the controller checks the
+        // capability of the requested action (publish, schedule, softDelete,
+        // restore or delete), the same shape as `/products/:id/publication`.
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
+      method: "POST",
+      path: "/products/trash/empty",
+      handler: "product.emptyTrash",
+      config: {
+        auth: { scope: [] },
+        policies: [capabilityPolicy("product.delete")],
         middlewares: [],
       },
     },

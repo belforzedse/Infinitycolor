@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { isProductPubliclyVisible, publicProductFilters } from "../../../utils/productVisibility";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController(
@@ -23,10 +24,14 @@ export default factories.createCoreController(
         const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
         if (!pluginUserId) return;
 
-        // Check if product exists
-        const product = await strapi.entityService.findOne("api::product.product", productId);
+        // Check if product exists. A draft, scheduled or trashed product answers
+        // exactly like a missing one, so liking can't probe unpublished ids; an
+        // explicit un-like is still allowed so a shopper can clear a stale entry.
+        const product = await strapi.entityService.findOne("api::product.product", productId, {
+          fields: ["id", "Status", "removedAt"],
+        });
 
-        if (!product) {
+        if (!product || (isFavorite !== false && !isProductPubliclyVisible(product))) {
           return ctx.notFound("Product not found");
         }
 
@@ -72,10 +77,7 @@ export default factories.createCoreController(
           strapi.db.query("api::product-like.product-like").findMany({
             where: {
               user: pluginUserId,
-              product: {
-                Status: "Active",
-                removedAt: null,
-              },
+              product: publicProductFilters(),
             },
             populate: {
               product: {
@@ -100,10 +102,7 @@ export default factories.createCoreController(
           strapi.db.query("api::product-like.product-like").count({
             where: {
               user: pluginUserId,
-              product: {
-                Status: "Active",
-                removedAt: null,
-              },
+              product: publicProductFilters(),
             },
           }),
         ]);

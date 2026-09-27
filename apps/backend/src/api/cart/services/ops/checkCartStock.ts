@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible, isProductRemoved } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
 import {
   findLiveCheckoutHoldForUser,
@@ -173,14 +174,14 @@ export const checkCartStockOp = async (
     const product = variation?.product;
 
     // Check if product is soft-deleted or inactive
-    if (product?.removedAt || product?.Status !== "Active") {
+    if (!isProductPubliclyVisible(product)) {
       if (await removeOwnedItem(item.id)) {
         removals.push({
           cartItemId: item.id,
           productVariationId: variation?.id,
           productTitle: product?.Title,
           message: "Product is no longer available, item removed from cart",
-          reason: product?.removedAt ? "soft_deleted" : "inactive",
+          reason: isProductRemoved(product) ? "soft_deleted" : "inactive",
         });
       }
       continue;

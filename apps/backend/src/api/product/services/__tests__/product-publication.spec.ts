@@ -36,6 +36,7 @@ import {
   publishScheduledProduct,
   recordScheduledPublicationTransientFailure,
   runPublicationEffects,
+  runPublicationEffectsBatch,
 } from "../product-publication";
 
 const mockedPurge = delByPatternStrict as jest.MockedFunction<typeof delByPatternStrict>;
@@ -131,6 +132,16 @@ function makeStrapi(
       return this;
     }
 
+    whereNull(column: string) {
+      this.filters.push((row) => row[column] === null || row[column] === undefined);
+      return this;
+    }
+
+    whereNot(column: string, value: unknown) {
+      this.filters.push((row) => row[column] !== value);
+      return this;
+    }
+
     select(...columns: string[]) {
       this.columns = columns.flat();
       return this;
@@ -173,7 +184,10 @@ function makeStrapi(
     if (!store) throw new Error(`Unexpected table in publication query: ${table}`);
     return new Query(store);
   });
-  const trx = (table: string) => connection(table);
+  // The active-slug guard takes the same advisory lock as the prod trigger.
+  const trx = Object.assign((table: string) => connection(table), {
+    raw: jest.fn().mockResolvedValue({ rows: [] }),
+  });
   const entityCreate = jest.fn().mockResolvedValue({ id: 99 });
   const cover = Object.prototype.hasOwnProperty.call(opts, "cover") ? opts.cover : { id: 7 };
   const strapi = {
@@ -702,4 +716,145 @@ describe("canonical product publication service", () => {
       "ProductPublication",
     );
   });
+
+  describe("lifecycle guards", () => {
+    it.each([
+      ["publish-now", {}],
+      ["schedule", { publishAt: firstAt, timezone: "Asia/Tehran" }],
+      ["unpublish", {}],
+      ["retry", {}],
+      ["cancel", {}],
+    ])("refuses %s on a product in Trash without touching it", async (action, extra) => {
+      const strapi = makeStrapi([
+        productRow({ status: "InActive", removed_at: new Date("2026-08-01T00:00:00.000Z") }),
+      ]);
+
+      await expect(
+        executePublicationCommand(strapi, 1, { action: action as any, ...extra }, { origin: "admin", now }),
+      ).rejects.toMatchObject({ code: "PRODUCT_REMOVED", status: 422 });
+      expect(strapi.__row()).toEqual(expect.objectContaining({ status: "InActive", publication_revision: 0 }));
+      expect(mockedWriteAudit).not.toHaveBeenCalled();
+    });
+
+    it("refuses every publication command on a permanently deleted tombstone", async () => {
+      const strapi = makeStrapi([
+        productRow({
+          removed_at: new Date("2026-08-01T00:00:00.000Z"),
+          purged_at: new Date("2026-08-02T00:00:00.000Z"),
+        }),
+      ]);
+
+      await expect(
+        executePublicationCommand(strapi, 1, { action: "publish-now" }, { origin: "admin", now }),
+      ).rejects.toMatchObject({ code: "PRODUCT_PURGED", status: 409 });
+    });
+
+    it("refuses to publish into a slug another live product already owns", async () => {
+      const strapi = makeStrapi([
+        productRow({ id: 1, slug: "shared-slug", status: "InActive" }),
+        productRow({ id: 2, slug: "shared-slug", status: "Active" }),
+      ]);
+
+      await expect(
+        executePublicationCommand(strapi, 1, { action: "publish-now" }, { origin: "admin", now }),
+      ).rejects.toMatchObject({ code: "PRODUCT_SLUG_CONFLICT", status: 409 });
+      expect(strapi.__row(1).status).toBe("InActive");
+    });
+
+    it("lets the slug be reused once the live holder is in Trash", async () => {
+      const strapi = makeStrapi([
+        productRow({ id: 1, slug: "shared-slug", status: "InActive" }),
+        productRow({
+          id: 2,
+          slug: "shared-slug",
+          status: "InActive",
+          removed_at: new Date("2026-08-01T00:00:00.000Z"),
+        }),
+      ]);
+
+      await expect(
+        executePublicationCommand(strapi, 1, { action: "publish-now" }, { origin: "admin", now }),
+      ).resolves.toEqual(expect.objectContaining({ status: "Active", changed: true }));
+    });
+
+    it("maps a slug violation raised by the database trigger to the same controlled error", async () => {
+      const strapi = makeStrapi([productRow()]);
+      const violation = Object.assign(new Error("PRODUCT_ACTIVE_SLUG_DUPLICATE"), { code: "23505" });
+      strapi.db.transaction.mockRejectedValueOnce(violation);
+
+      await expect(
+        executePublicationCommand(strapi, 1, { action: "publish-now" }, { origin: "admin", now }),
+      ).rejects.toMatchObject({ code: "PRODUCT_SLUG_CONFLICT", status: 409 });
+    });
+
+    it("parks a due schedule whose slug was taken as a permanent failure instead of retrying", async () => {
+      const strapi = makeStrapi([
+        productRow({
+          id: 1,
+          slug: "shared-slug",
+          status: "Scheduled",
+          scheduled_publish_at: new Date(firstAt),
+          scheduled_publish_revision: 1,
+        }),
+        productRow({ id: 2, slug: "shared-slug", status: "Active" }),
+      ]);
+
+      const attempt = await publishScheduledProduct(strapi, {
+        productId: 1,
+        scheduleRevision: 1,
+        expectedPublishAt: firstAt,
+        now: new Date("2026-08-08T12:00:01.000Z"),
+      });
+
+      expect(attempt).toEqual(expect.objectContaining({ outcome: "permanent-failure", code: "PRODUCT_SLUG_CONFLICT" }));
+      expect(strapi.__row(1)).toEqual(expect.objectContaining({
+        status: "Scheduled",
+        scheduled_publish_failure_kind: "Permanent",
+      }));
+    });
+  });
+
+  describe("publication effects", () => {
+    it("also clears the rest-cache product lists and schedules the homepage refresh", async () => {
+      const strapi = makeStrapi([productRow({
+        status: "Active",
+        publication_revision: 2,
+        publication_effects_completed_revision: 1,
+      })]);
+      const clearByUid = jest.fn().mockResolvedValue(undefined);
+      strapi.plugin = jest.fn(() => ({ service: () => ({ clearByUid }) }));
+
+      await expect(runPublicationEffects(strapi, 1, 2)).resolves.toEqual({ completed: true, revision: 2 });
+
+      expect(clearByUid).toHaveBeenCalledWith("api::product.product", {}, true);
+      expect(mockedHomeRevalidate).toHaveBeenCalled();
+    });
+
+    it("purges shared caches once for a batch and revalidates each product's own page", async () => {
+      const strapi = makeStrapi([
+        productRow({ id: 1, slug: "one", publication_revision: 2, publication_effects_completed_revision: 1 }),
+        productRow({ id: 2, slug: "two", publication_revision: 5, publication_effects_completed_revision: 4 }),
+        productRow({ id: 3, slug: "done", publication_revision: 1, publication_effects_completed_revision: 1 }),
+      ]);
+      mockedRevalidate
+        .mockResolvedValueOnce({ attempted: 1, successful: 1, failed: 0 })
+        .mockResolvedValueOnce({ attempted: 1, successful: 0, failed: 1 });
+
+      const summary = await runPublicationEffectsBatch(strapi, [1, 2, 3, 2]);
+
+      expect(mockedPurge).toHaveBeenCalledTimes(1);
+      expect(mockedRevalidate).toHaveBeenCalledTimes(2);
+      expect(summary.completed).toHaveLength(1);
+      expect(summary.failed).toHaveLength(1);
+      const failedId = summary.failed[0];
+      const completedId = summary.completed[0];
+      expect(strapi.__row(completedId).publication_effects_last_error).toBeNull();
+      expect(strapi.__row(failedId)).toEqual(expect.objectContaining({
+        publication_effects_last_error: "STOREFRONT_REVALIDATION_FAILED",
+      }));
+      // Nothing pending for product 3, so it is left alone.
+      expect(strapi.__row(3).publication_effects_completed_revision).toBe(1);
+    });
+  });
 });
+

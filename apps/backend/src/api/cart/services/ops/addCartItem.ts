@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { productUnavailableReason } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
 import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
@@ -38,15 +39,16 @@ export const addCartItemOp = async (
 
   // Validate product exists and is not soft-deleted or inactive
   const product = productVariation.product;
-  if (!product) {
+  const unavailableReason = productUnavailableReason(product);
+  if (unavailableReason === "PRODUCT_NOT_FOUND") {
     return { success: false, message: "Product not found" };
   }
 
-  if (product.removedAt) {
+  if (unavailableReason === "PRODUCT_DELETED") {
     return { success: false, message: "Product is no longer available" };
   }
 
-  if (product.Status !== "Active") {
+  if (unavailableReason) {
     return { success: false, message: "Product is currently unavailable" };
   }
 

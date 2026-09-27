@@ -36,6 +36,25 @@ export default ({ env }) => {
     redisConnection.password = redisPassword;
   }
 
+  // Catalog responses that depend on who asks: staff see drafts, scheduled and
+  // trashed products that public readers must not (product controller filters,
+  // middlewares/public-product-visibility.ts). The cache key is the URL alone,
+  // so an authenticated request neither reads nor fills the shared cache.
+  const CALLER_DEPENDENT_CATALOG_TYPES = new Set([
+    "api::product.product",
+    "api::product-variation.product-variation",
+    "api::product-category.product-category",
+    "api::product-tag.product-tag",
+    "api::product-faq.product-faq",
+    "api::product-size-helper.product-size-helper",
+    "api::product-review.product-review",
+  ]);
+  const bypassWhenAuthenticated = (ctx: any) => Boolean(ctx?.request?.headers?.authorization);
+  const restCacheContentType = (uid: string) =>
+    CALLER_DEPENDENT_CATALOG_TYPES.has(uid)
+      ? { contentType: uid, hitpass: bypassWhenAuthenticated }
+      : uid;
+
   const restCacheProviderOptions =
     restCacheProviderName === "redis"
       ? {
@@ -75,7 +94,7 @@ export default ({ env }) => {
         },
         strategy: {
           maxAge: 5 * 60 * 1000, // 5 min TTL per cached response (plugin default is 1h)
-          contentTypes: [
+          contentTypes: ([
             // Semi-dynamic: 5 min TTL, invalidate on content update
             "api::footer.footer",
             "api::navigation.navigation",
@@ -103,7 +122,7 @@ export default ({ env }) => {
             "api::blog-author.blog-author",
             "api::faq-category.faq-category",
             "api::faq-question.faq-question",
-          ],
+          ] as string[]).map(restCacheContentType),
           // Not cached: post, post-like, post-comment, post-comment-like, cart, order, stock, wallet, address, transactions (real-time/user-specific)
         },
       },

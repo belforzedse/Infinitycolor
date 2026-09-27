@@ -2933,6 +2933,9 @@ export interface ApiProductLogProductLog extends Schema.CollectionType {
         "CancelSchedule",
         "Publish",
         "Unpublish",
+        "Trash",
+        "Restore",
+        "PermanentDelete",
       ]
     > &
       Attribute.Required;
@@ -3557,6 +3560,8 @@ export interface ApiProductProduct extends Schema.CollectionType {
       "oneToMany",
       "api::product-attribute.product-attribute"
     >;
+    preRemovalScheduledPublishAt: Attribute.DateTime;
+    preRemovalStatus: Attribute.Enumeration<["Active", "InActive", "Scheduled"]>;
     product_attribute_assignments: Attribute.Relation<
       "api::product.product",
       "oneToMany",
@@ -3621,8 +3626,12 @@ export interface ApiProductProduct extends Schema.CollectionType {
       > &
       Attribute.DefaultTo<0>;
     PublishedAt: Attribute.DateTime;
+    purgedAt: Attribute.DateTime;
+    purgedById: Attribute.Integer;
     RatingCount: Attribute.Integer;
     removedAt: Attribute.DateTime;
+    removedById: Attribute.Integer;
+    removedByLabel: Attribute.String;
     ReturnConditions: Attribute.Text;
     scheduledPublishAt: Attribute.DateTime;
     scheduledPublishAttemptCount: Attribute.Integer &

@@ -77,6 +77,19 @@ export async function registerMaintenanceSchedulers(
     },
   );
 
+  await queues.commerce.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.productTrashRetention,
+    {
+      pattern: settings.crons.productTrashRetention,
+      tz: settings.timezone,
+    },
+    {
+      name: COMMERCE_MAINTENANCE_JOBS.productTrashRetention,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    },
+  );
+
   await queues.analytics.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.viewCounterFlush,
     {

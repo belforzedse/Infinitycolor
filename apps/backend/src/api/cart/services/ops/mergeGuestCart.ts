@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
 import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 import { resolveUserCartId } from "../lib/user-cart-identity";
@@ -62,9 +63,7 @@ export async function mergeGuestCart(
         !variation ||
         variation.IsPublished === false ||
         chargeableVariationPrice(variation) <= 0 ||
-        !product ||
-        product.removedAt ||
-        product.Status !== "Active"
+        !isProductPubliclyVisible(product)
       ) {
         rejected.push({ ...item, reason: "UNAVAILABLE" });
         continue;

@@ -14,6 +14,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   scheduledProductReconcile: "scheduledProducts.reconcile",
   cartCleanupReconcile: "cartCleanup.reconcile",
   anipoBarcodeReconcile: "anipoBarcodes.reconcile",
+  productTrashRetention: "productTrash.retention",
   anipoRegisterOne: "anipoOrders.registerOne",
   anipoRecipientSyncOne: "anipoRecipients.syncOne",
   edgeCachePurge: "edgeCache.purge",
@@ -79,6 +80,7 @@ export const MAINTENANCE_SCHEDULERS = {
   snappaySweep: "sched:snappay.sweep",
   walletTopupReconcile: "sched:walletTopups.reconcile",
   anipoBarcodeReconcile: "sched:anipoBarcodes.reconcile",
+  productTrashRetention: "sched:productTrash.retention",
 } as const;
 
 export type CommerceMaintenanceJobName =

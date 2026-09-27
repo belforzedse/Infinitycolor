@@ -8,12 +8,17 @@ import { delByPatternStrict } from "../../../utils/responseCache";
 import { triggerFrontendRevalidation } from "../../../utils/revalidate";
 import { getProductAvailabilityJoinContext } from "../../../utils/productAvailability";
 import { scheduleHomeProductsRevalidation } from "../../../utils/homepageRevalidation";
+import {
+  LifecycleTransitionError,
+  resolveRowTransition,
+  type ProductLifecycleCommand,
+} from "./product-lifecycle-rules";
 
 export const PRODUCT_UID = "api::product.product" as const;
 export const BUSINESS_TIMEZONE = "Asia/Tehran";
 
 export type ProductPublicationStatus = "Active" | "InActive" | "Scheduled";
-export type PublicationOrigin = "admin" | "scheduler" | "importer" | "reconciler";
+export type PublicationOrigin = "admin" | "scheduler" | "importer" | "reconciler" | "retention";
 export type PublicationAction = "schedule" | "publish-now" | "cancel" | "retry" | "unpublish";
 export type QueueState = "queued" | "pending-reconciliation" | "not-required";
 
@@ -89,6 +94,7 @@ type ProductRow = {
   publication_effects_completed_revision: number | null;
   publication_effects_last_error: string | null;
   published_at: string | Date | null;
+  purged_at?: string | Date | null;
 };
 
 const productTable = (trx: any) => trx("products");
@@ -118,7 +124,7 @@ function canonicalTimezone(value: unknown): string {
   return timezone;
 }
 
-function isoOrNull(value: unknown): string | null {
+export function isoOrNull(value: unknown): string | null {
   if (!value) return null;
   const parsed = new Date(value as string | Date);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
@@ -141,6 +147,75 @@ function assertPublishable(row: ProductRow): void {
   }
   if (!String(row.slug || "").trim()) {
     throw new PublicationCommandError("PRODUCT_SLUG_REQUIRED", 422);
+  }
+}
+
+/** The namespace the `trg_products_active_slug_guard` trigger locks slugs under. */
+const ACTIVE_SLUG_LOCK_NAMESPACE = 871953;
+
+/**
+ * Only one live (Active, not trashed) product may own a slug. The database
+ * trigger from `2026.08.05T13.00.00.scope-product-slug-uniqueness.js` enforces
+ * that on prod, but it raises a bare 23505, and fresh databases (tests, local)
+ * never get it because that migration runs before the table exists. Check here
+ * first, under the same advisory lock the trigger takes, so every environment
+ * refuses the same way with a code the admin can explain.
+ */
+export async function assertActiveSlugAvailable(
+  trx: any,
+  row: { id: number; slug: string | null },
+): Promise<void> {
+  const slug = String(row.slug || "").trim();
+  if (!slug) return;
+  await trx.raw("SELECT pg_advisory_xact_lock(hashtextextended(?, ?))", [
+    slug,
+    ACTIVE_SLUG_LOCK_NAMESPACE,
+  ]);
+  const holder = await trx("products")
+    .select("id")
+    .where({ slug, status: "Active" })
+    .whereNull("removed_at")
+    .whereNot("id", row.id)
+    .first();
+  if (holder) throw new PublicationCommandError("PRODUCT_SLUG_CONFLICT", 409);
+}
+
+function isActiveSlugViolation(error: unknown): boolean {
+  const candidate = error as { code?: string; message?: string } | null;
+  return (
+    candidate?.code === "23505" &&
+    String(candidate?.message || "").includes("PRODUCT_ACTIVE_SLUG_DUPLICATE")
+  );
+}
+
+/**
+ * Publication commands only move products between draft, scheduled and
+ * published. The shared matrix refuses them for trashed and permanently
+ * deleted products; retry and cancel only ever need that deletion guard, since
+ * their scheduled-state rules stay below.
+ */
+const MATRIX_COMMAND: Partial<Record<PublicationAction, ProductLifecycleCommand>> = {
+  "publish-now": "publish",
+  schedule: "schedule",
+  unpublish: "unpublish",
+  retry: "unpublish",
+  cancel: "unpublish",
+};
+
+function assertPublicationTransition(row: ProductRow, action: PublicationAction): void {
+  const command = MATRIX_COMMAND[action];
+  if (!command) return;
+  try {
+    if (action === "retry" || action === "cancel") {
+      if (row.purged_at || row.removed_at) resolveRowTransition(row, command);
+      return;
+    }
+    resolveRowTransition(row, command);
+  } catch (error) {
+    if (error instanceof LifecycleTransitionError) {
+      throw new PublicationCommandError(error.code, error.status);
+    }
+    throw error;
   }
 }
 
@@ -225,7 +300,7 @@ function resultFromRow(row: ProductRow, changed: boolean, previousScheduleRevisi
   };
 }
 
-async function writePublicationLog(
+export async function writePublicationLog(
   strapi: Strapi,
   result: PublicationResult,
   action: PublicationAction,
@@ -278,7 +353,7 @@ const PUBLICATION_EVENT_KEYS: Record<PublicationAction, string> = {
 
 function publicationOrigin(origin: PublicationOrigin): AuditOrigin {
   if (origin === "admin") return "admin_ui";
-  if (origin === "scheduler") return "scheduled_task";
+  if (origin === "scheduler" || origin === "retention") return "scheduled_task";
   if (origin === "importer") return "import";
   return "maintenance";
 }
@@ -290,10 +365,13 @@ function automaticPublicationActor(origin: PublicationOrigin): AuditPrincipal<Au
   if (origin === "scheduler") {
     return { type: "scheduled_job", id: "product-publication", label: "Product Publication Scheduler" };
   }
+  if (origin === "retention") {
+    return { type: "scheduled_job", id: "product-trash-retention", label: "Product Trash Retention" };
+  }
   return { type: "system", id: "publication-reconciler", label: "Publication Reconciler" };
 }
 
-function publicationParties(context: PublicationCommandContext) {
+export function publicationParties(context: PublicationCommandContext) {
   const ambientActor = resolveCurrentAuditContext()?.actor;
   const human = context.actor?.id
     ? {
@@ -309,7 +387,7 @@ function publicationParties(context: PublicationCommandContext) {
   return { actor, initiator: human || actor, origin: publicationOrigin(context.origin) };
 }
 
-function publicationJobContext(
+export function publicationJobContext(
   context: PublicationCommandContext,
   rootEventId: string,
 ): AuditJobContext {
@@ -465,47 +543,67 @@ export async function executePublicationCommand(
   const auditEventId = randomUUID();
   const durableAuditContext = publicationJobContext(context, auditEventId);
 
-  const result = await strapi.db.transaction(async ({ trx }: any) => {
-    const row = (await productTable(trx).where({ id: productId }).forUpdate().first()) as ProductRow | undefined;
-    if (!row) throw new PublicationCommandError("PRODUCT_NOT_FOUND", 404);
-    assertExternalIdentity(row, command);
+  let result: PublicationResult;
+  try {
+    result = await strapi.db.transaction(async ({ trx }: any) => {
+      const row = (await productTable(trx).where({ id: productId }).forUpdate().first()) as ProductRow | undefined;
+      if (!row) throw new PublicationCommandError("PRODUCT_NOT_FOUND", 404);
+      assertExternalIdentity(row, command);
+      assertPublicationTransition(row, command.action);
 
-    const status = (row.status || "InActive") as ProductPublicationStatus;
-    const previousScheduleRevision = Number(row.scheduled_publish_revision || 0);
-    const publicationRevision = Number(row.publication_revision || 0);
-    let changed = false;
-    let publishedVariationCount = 0;
-    // Publication commands write via raw knex to keep the transaction atomic, so the
-    // product's entityService lifecycle (and its LastEditedByAdminAt seed) never fires.
-    // Stamp it here directly whenever the command was actually issued by an admin, so a
-    // publish/unpublish/schedule click counts as an edit like any other admin action does.
-    const adminEditStamp = context.origin === "admin" ? { last_edited_by_admin_at: now } : {};
+      const status = (row.status || "InActive") as ProductPublicationStatus;
+      const previousScheduleRevision = Number(row.scheduled_publish_revision || 0);
+      const publicationRevision = Number(row.publication_revision || 0);
+      let changed = false;
+      let publishedVariationCount = 0;
+      // Publication commands write via raw knex to keep the transaction atomic, so the
+      // product's entityService lifecycle (and its LastEditedByAdminAt seed) never fires.
+      // Stamp it here directly whenever the command was actually issued by an admin, so a
+      // publish/unpublish/schedule click counts as an edit like any other admin action does.
+      const adminEditStamp = context.origin === "admin" ? { last_edited_by_admin_at: now } : {};
 
-    if (command.action === "schedule") {
-      if (status === "Active") {
-        throw new PublicationCommandError("SCHEDULED_UPDATE_UNSUPPORTED", 409);
-      }
-      assertPublishable(row);
-      await assertRequiredMedia(strapi, productId, command.requireMedia === true);
-      const publishAt = canonicalInstant(command.publishAt, now);
-      const timezone = canonicalTimezone(command.timezone);
-      const sameSchedule =
-        status === "Scheduled" &&
-        isoOrNull(row.scheduled_publish_at) === publishAt &&
-        row.scheduled_publish_timezone === timezone &&
-        row.scheduled_publish_require_media === (command.requireMedia === true) &&
-        !row.scheduled_publish_failure_kind;
-      if (!sameSchedule) {
-        const nextRevision = previousScheduleRevision + 1;
+      if (command.action === "schedule") {
+        if (status === "Active") {
+          throw new PublicationCommandError("SCHEDULED_UPDATE_UNSUPPORTED", 409);
+        }
+        assertPublishable(row);
+        await assertRequiredMedia(strapi, productId, command.requireMedia === true);
+        const publishAt = canonicalInstant(command.publishAt, now);
+        const timezone = canonicalTimezone(command.timezone);
+        const sameSchedule =
+          status === "Scheduled" &&
+          isoOrNull(row.scheduled_publish_at) === publishAt &&
+          row.scheduled_publish_timezone === timezone &&
+          row.scheduled_publish_require_media === (command.requireMedia === true) &&
+          !row.scheduled_publish_failure_kind;
+        if (!sameSchedule) {
+          const nextRevision = previousScheduleRevision + 1;
+          await productTable(trx).where({ id: productId }).update({
+            status: "Scheduled",
+            // Strapi maps `datetime` to PostgreSQL `timestamp without time zone`.
+            // Bind Date objects so node-postgres preserves the absolute instant
+            // across non-UTC process timezones instead of discarding an ISO offset.
+            scheduled_publish_at: new Date(publishAt),
+            scheduled_publish_timezone: timezone,
+            scheduled_publish_revision: nextRevision,
+            scheduled_publish_require_media: command.requireMedia === true,
+            scheduled_publish_last_attempt_at: null,
+            scheduled_publish_last_error: null,
+            scheduled_publish_failure_kind: null,
+            scheduled_publish_attempt_count: 0,
+            scheduled_publish_next_retry_at: null,
+            scheduled_publish_audit_context: durableAuditContext,
+            updated_at: now,
+            ...adminEditStamp,
+          });
+          changed = true;
+        }
+      } else if (command.action === "retry") {
+        if (status !== "Scheduled" || !row.scheduled_publish_at) {
+          throw new PublicationCommandError("PRODUCT_NOT_SCHEDULED", 409);
+        }
         await productTable(trx).where({ id: productId }).update({
-          status: "Scheduled",
-          // Strapi maps `datetime` to PostgreSQL `timestamp without time zone`.
-          // Bind Date objects so node-postgres preserves the absolute instant
-          // across non-UTC process timezones instead of discarding an ISO offset.
-          scheduled_publish_at: new Date(publishAt),
-          scheduled_publish_timezone: timezone,
-          scheduled_publish_revision: nextRevision,
-          scheduled_publish_require_media: command.requireMedia === true,
+          scheduled_publish_revision: previousScheduleRevision + 1,
           scheduled_publish_last_attempt_at: null,
           scheduled_publish_last_error: null,
           scheduled_publish_failure_kind: null,
@@ -516,118 +614,109 @@ export async function executePublicationCommand(
           ...adminEditStamp,
         });
         changed = true;
-      }
-    } else if (command.action === "retry") {
-      if (status !== "Scheduled" || !row.scheduled_publish_at) {
-        throw new PublicationCommandError("PRODUCT_NOT_SCHEDULED", 409);
-      }
-      await productTable(trx).where({ id: productId }).update({
-        scheduled_publish_revision: previousScheduleRevision + 1,
-        scheduled_publish_last_attempt_at: null,
-        scheduled_publish_last_error: null,
-        scheduled_publish_failure_kind: null,
-        scheduled_publish_attempt_count: 0,
-        scheduled_publish_next_retry_at: null,
-        scheduled_publish_audit_context: durableAuditContext,
-        updated_at: now,
-        ...adminEditStamp,
-      });
-      changed = true;
-    } else if (command.action === "cancel") {
-      if (status === "Active") {
-        throw new PublicationCommandError("PRODUCT_NOT_SCHEDULED", 409);
-      }
-      if (status === "Scheduled") {
-        await productTable(trx).where({ id: productId }).update({
-          status: "InActive",
-          scheduled_publish_at: null,
-          scheduled_publish_timezone: null,
-          scheduled_publish_revision: previousScheduleRevision + 1,
-          scheduled_publish_require_media: false,
-          scheduled_publish_last_attempt_at: null,
-          scheduled_publish_last_error: null,
-          scheduled_publish_failure_kind: null,
-          scheduled_publish_attempt_count: 0,
-          scheduled_publish_next_retry_at: null,
-          scheduled_publish_audit_context: null,
-          updated_at: now,
-          ...adminEditStamp,
-        });
-        changed = true;
-      }
-    } else if (command.action === "unpublish") {
-      if (status !== "InActive") {
-        const nextPublicationRevision = status === "Active" ? publicationRevision + 1 : publicationRevision;
-        await productTable(trx).where({ id: productId }).update({
-          status: "InActive",
-          scheduled_publish_at: null,
-          scheduled_publish_timezone: null,
-          scheduled_publish_revision: previousScheduleRevision + (status === "Scheduled" ? 1 : 0),
-          scheduled_publish_require_media: false,
-          scheduled_publish_last_attempt_at: null,
-          scheduled_publish_last_error: null,
-          scheduled_publish_failure_kind: null,
-          scheduled_publish_attempt_count: 0,
-          scheduled_publish_next_retry_at: null,
-          publication_revision: nextPublicationRevision,
-          publication_effects_last_error: null,
-          scheduled_publish_audit_context: null,
-          updated_at: now,
-          ...adminEditStamp,
-        });
-        changed = true;
-      }
-    } else if (command.action === "publish-now") {
-      if (status !== "Active") {
-        assertPublishable(row);
-        await assertRequiredMedia(strapi, productId, command.requireMedia === true);
-        // The importer maps each WooCommerce variation's own status onto
-        // IsPublished, so cascading here would overwrite that mapping.
-        if (context.origin !== "importer") {
-          publishedVariationCount = await publishProductVariations(strapi, trx, productId, now);
+      } else if (command.action === "cancel") {
+        if (status === "Active") {
+          throw new PublicationCommandError("PRODUCT_NOT_SCHEDULED", 409);
         }
-        await productTable(trx).where({ id: productId }).update({
-          status: "Active",
-          scheduled_publish_at: null,
-          scheduled_publish_timezone: null,
-          scheduled_publish_revision: previousScheduleRevision + (status === "Scheduled" ? 1 : 0),
-          scheduled_publish_require_media: false,
-          scheduled_publish_last_attempt_at: now,
-          scheduled_publish_last_error: null,
-          scheduled_publish_failure_kind: null,
-          scheduled_publish_attempt_count: 0,
-          scheduled_publish_next_retry_at: null,
-          publication_revision: publicationRevision + 1,
-          publication_effects_last_error: null,
-          scheduled_publish_audit_context: null,
-          updated_at: now,
-          // First real go-live moment, kept stable across later unpublish/republish cycles;
-          // PLP "newest" falls back to this when LastEditedByAdminAt is unset.
-          published_at: row.published_at ?? now,
-          ...adminEditStamp,
-        });
-        changed = true;
+        if (status === "Scheduled") {
+          await productTable(trx).where({ id: productId }).update({
+            status: "InActive",
+            scheduled_publish_at: null,
+            scheduled_publish_timezone: null,
+            scheduled_publish_revision: previousScheduleRevision + 1,
+            scheduled_publish_require_media: false,
+            scheduled_publish_last_attempt_at: null,
+            scheduled_publish_last_error: null,
+            scheduled_publish_failure_kind: null,
+            scheduled_publish_attempt_count: 0,
+            scheduled_publish_next_retry_at: null,
+            scheduled_publish_audit_context: null,
+            updated_at: now,
+            ...adminEditStamp,
+          });
+          changed = true;
+        }
+      } else if (command.action === "unpublish") {
+        if (status !== "InActive") {
+          const nextPublicationRevision = status === "Active" ? publicationRevision + 1 : publicationRevision;
+          await productTable(trx).where({ id: productId }).update({
+            status: "InActive",
+            scheduled_publish_at: null,
+            scheduled_publish_timezone: null,
+            scheduled_publish_revision: previousScheduleRevision + (status === "Scheduled" ? 1 : 0),
+            scheduled_publish_require_media: false,
+            scheduled_publish_last_attempt_at: null,
+            scheduled_publish_last_error: null,
+            scheduled_publish_failure_kind: null,
+            scheduled_publish_attempt_count: 0,
+            scheduled_publish_next_retry_at: null,
+            publication_revision: nextPublicationRevision,
+            publication_effects_last_error: null,
+            scheduled_publish_audit_context: null,
+            updated_at: now,
+            ...adminEditStamp,
+          });
+          changed = true;
+        }
+      } else if (command.action === "publish-now") {
+        if (status !== "Active") {
+          assertPublishable(row);
+          await assertRequiredMedia(strapi, productId, command.requireMedia === true);
+          await assertActiveSlugAvailable(trx, row);
+          // The importer maps each WooCommerce variation's own status onto
+          // IsPublished, so cascading here would overwrite that mapping.
+          if (context.origin !== "importer") {
+            publishedVariationCount = await publishProductVariations(strapi, trx, productId, now);
+          }
+          await productTable(trx).where({ id: productId }).update({
+            status: "Active",
+            scheduled_publish_at: null,
+            scheduled_publish_timezone: null,
+            scheduled_publish_revision: previousScheduleRevision + (status === "Scheduled" ? 1 : 0),
+            scheduled_publish_require_media: false,
+            scheduled_publish_last_attempt_at: now,
+            scheduled_publish_last_error: null,
+            scheduled_publish_failure_kind: null,
+            scheduled_publish_attempt_count: 0,
+            scheduled_publish_next_retry_at: null,
+            publication_revision: publicationRevision + 1,
+            publication_effects_last_error: null,
+            scheduled_publish_audit_context: null,
+            updated_at: now,
+            // First real go-live moment, kept stable across later unpublish/republish cycles;
+            // PLP "newest" falls back to this when LastEditedByAdminAt is unset.
+            published_at: row.published_at ?? now,
+            ...adminEditStamp,
+          });
+          changed = true;
+        }
+      } else {
+        throw new PublicationCommandError("PUBLICATION_ACTION_INVALID", 400);
       }
-    } else {
-      throw new PublicationCommandError("PUBLICATION_ACTION_INVALID", 400);
-    }
 
-    const updated = (await productTable(trx).where({ id: productId }).first()) as ProductRow;
-    await writePublicationAudit(
-      strapi,
-      row,
-      updated,
-      command.action,
-      context,
-      changed,
-      auditEventId,
-      trx,
-      publishedVariationCount,
-    );
-    const commandResult = resultFromRow(updated, changed, changed ? previousScheduleRevision : undefined);
-    commandResult.publishedVariationCount = publishedVariationCount;
-    return commandResult;
-  });
+      const updated = (await productTable(trx).where({ id: productId }).first()) as ProductRow;
+      await writePublicationAudit(
+        strapi,
+        row,
+        updated,
+        command.action,
+        context,
+        changed,
+        auditEventId,
+        trx,
+        publishedVariationCount,
+      );
+      const commandResult = resultFromRow(updated, changed, changed ? previousScheduleRevision : undefined);
+      commandResult.publishedVariationCount = publishedVariationCount;
+      return commandResult;
+    });
+  } catch (error) {
+    // The prod trigger can still win a race the pre-check lost; same answer.
+    if (isActiveSlugViolation(error)) {
+      throw new PublicationCommandError("PRODUCT_SLUG_CONFLICT", 409);
+    }
+    throw error;
+  }
 
   if (result.publishedVariationCount) {
     scheduleHomeProductsRevalidation("product-publication-cascade", {
@@ -741,8 +830,12 @@ export async function publishScheduledProduct(
     try {
       assertPublishable(row);
       await assertRequiredMedia(strapi, input.productId, row.scheduled_publish_require_media === true);
+      await assertActiveSlugAvailable(trx, row);
     } catch (error) {
-      failureCode = error instanceof PublicationCommandError ? error.code : "PRODUCT_NOT_PUBLISHABLE";
+      // Only a refusal is permanent; a database hiccup while checking must stay
+      // retryable instead of parking the schedule for good.
+      if (!(error instanceof PublicationCommandError)) throw error;
+      failureCode = error.code;
       const attempts = Number(row.scheduled_publish_attempt_count || 0) + 1;
       await productTable(trx).where({ id: input.productId }).update({
         scheduled_publish_last_attempt_at: now,
@@ -822,6 +915,55 @@ export async function publishScheduledProduct(
   return attempt;
 }
 
+/**
+ * rest-cache holds `/products` (card lists) for its own TTL and is only cleared
+ * by entityService lifecycles, which raw-knex publication writes never fire.
+ * In dev the provider is the in-process LRU; a failure here never blocks the
+ * durable effects below.
+ */
+async function clearProductRestCache(strapi: Strapi): Promise<void> {
+  try {
+    const cacheStore = (strapi as any).plugin?.("rest-cache")?.service?.("cacheStore");
+    await cacheStore?.clearByUid?.(PRODUCT_UID, {}, true);
+  } catch (error) {
+    strapi.log.warn("[product-publication] rest-cache clear failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function recordEffectsOutcome(
+  strapi: Strapi,
+  productId: number,
+  revision: number,
+  errorCode: string | null,
+): Promise<void> {
+  const update = errorCode
+    ? { publication_effects_last_error: errorCode }
+    : { publication_effects_completed_revision: revision, publication_effects_last_error: null };
+  await strapi.db.connection("products")
+    .where({ id: productId })
+    .andWhere("publication_revision", revision)
+    .update(update);
+}
+
+async function revalidateProductSlug(slug: string): Promise<void> {
+  const revalidation = await triggerFrontendRevalidation(
+    { type: "product", path: slug },
+    "ProductPublication",
+  );
+  if (revalidation.failed > 0 || revalidation.successful === 0) {
+    throw new Error("STOREFRONT_REVALIDATION_FAILED");
+  }
+}
+
+/**
+ * Cache side effects of a change in public visibility — publish, move to
+ * draft, and a published product moving to Trash (or back through Undo). The
+ * row's `publication_revision` is bumped inside the command's transaction; this
+ * runs after commit and records the revision it completed, so the reconciler in
+ * `jobs/publishScheduledProducts.ts` retries anything that failed here.
+ */
 export async function runPublicationEffects(
   strapi: Strapi,
   productId: number,
@@ -835,28 +977,15 @@ export async function runPublicationEffects(
   }
   try {
     await delByPatternStrict("endpoint-cache:product.");
-    const revalidation = await triggerFrontendRevalidation(
-      { type: "product", path: String(row.slug || "") },
-      "ProductPublication",
-    );
-    if (revalidation.failed > 0 || revalidation.successful === 0) {
-      throw new Error("STOREFRONT_REVALIDATION_FAILED");
-    }
-    await strapi.db.connection("products")
-      .where({ id: productId })
-      .andWhere("publication_revision", revision)
-      .update({
-        publication_effects_completed_revision: revision,
-        publication_effects_last_error: null,
-      });
+    await clearProductRestCache(strapi);
+    await revalidateProductSlug(String(row.slug || ""));
+    await recordEffectsOutcome(strapi, productId, revision, null);
+    scheduleHomeProductsRevalidation("product-publication-effects", { productId, revision });
     strapi.log.info("[product-publication] publication effects completed", { productId, revision });
     return { completed: true, revision };
   } catch (error) {
     const code = error instanceof Error ? error.message.slice(0, 255) : "PUBLICATION_EFFECTS_FAILED";
-    await strapi.db.connection("products")
-      .where({ id: productId })
-      .andWhere("publication_revision", revision)
-      .update({ publication_effects_last_error: code });
+    await recordEffectsOutcome(strapi, productId, revision, code);
     strapi.log.error("[product-publication] publication effects failed", {
       productId,
       revision,
@@ -864,4 +993,69 @@ export async function runPublicationEffects(
     });
     throw error;
   }
+}
+
+const EFFECTS_BATCH_CONCURRENCY = 4;
+
+/**
+ * The same effects for a bulk command: the shared caches are purged once for
+ * the whole batch instead of once per product, and each product's own PDP is
+ * revalidated (a few at a time) so the edge purge still gets every path. Never
+ * throws; failures stay recorded on their rows for the reconciler.
+ */
+export async function runPublicationEffectsBatch(
+  strapi: Strapi,
+  productIds: number[],
+): Promise<{ completed: number[]; failed: number[] }> {
+  const ids = [...new Set(productIds)].filter((id) => Number.isSafeInteger(id) && id > 0);
+  const summary = { completed: [] as number[], failed: [] as number[] };
+  if (ids.length === 0) return summary;
+
+  const rows = (await strapi.db.connection("products")
+    .select(["id", "slug", "publication_revision", "publication_effects_completed_revision"])
+    .whereIn("id", ids)) as Array<Pick<ProductRow, "id" | "slug" | "publication_revision" | "publication_effects_completed_revision">>;
+  const pending = rows.filter(
+    (row) => Number(row.publication_revision || 0) > Number(row.publication_effects_completed_revision || 0),
+  );
+  if (pending.length === 0) return summary;
+
+  try {
+    await delByPatternStrict("endpoint-cache:product.");
+  } catch (error) {
+    const code = error instanceof Error ? error.message.slice(0, 255) : "PUBLICATION_EFFECTS_FAILED";
+    for (const row of pending) {
+      await recordEffectsOutcome(strapi, row.id, Number(row.publication_revision), code);
+      summary.failed.push(row.id);
+    }
+    strapi.log.error("[product-publication] batch effects failed before revalidation", {
+      products: pending.length,
+      errorCode: code,
+    });
+    return summary;
+  }
+  await clearProductRestCache(strapi);
+
+  const queue = [...pending];
+  const worker = async () => {
+    for (let row = queue.shift(); row; row = queue.shift()) {
+      const revision = Number(row.publication_revision);
+      try {
+        await revalidateProductSlug(String(row.slug || ""));
+        await recordEffectsOutcome(strapi, row.id, revision, null);
+        summary.completed.push(row.id);
+      } catch (error) {
+        const code = error instanceof Error ? error.message.slice(0, 255) : "PUBLICATION_EFFECTS_FAILED";
+        await recordEffectsOutcome(strapi, row.id, revision, code).catch(() => undefined);
+        summary.failed.push(row.id);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(EFFECTS_BATCH_CONCURRENCY, pending.length) }, worker));
+
+  scheduleHomeProductsRevalidation("product-publication-batch", { products: pending.length });
+  strapi.log.info("[product-publication] batch publication effects finished", {
+    completed: summary.completed.length,
+    failed: summary.failed.length,
+  });
+  return summary;
 }

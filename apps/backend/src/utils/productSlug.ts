@@ -113,7 +113,9 @@ export async function isProductSlugAvailable(
   excludeId?: number
 ): Promise<boolean> {
   try {
-    const filters: Record<string, unknown> = { Slug: slug };
+    // Trashed products keep their slug (so a restore can't collide), but a
+    // permanently deleted product is a tombstone whose slug is free again.
+    const filters: Record<string, unknown> = { Slug: slug, purgedAt: { $null: true } };
 
     // Exclude current product when updating
     if (excludeId) {
