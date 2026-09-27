@@ -4,11 +4,48 @@
  * null kept showing the previously opened product's image (content-team report,
  * 2026-09-14). The preview is now derived from the atom on every render.
  */
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import { editProductDataAtom } from "@/atoms/super-admin/products";
 import type { EditProductData } from "@/types/super-admin/products";
 import IndexPhotoUploader from "../IndexPhotoUploader";
+import { listMediaLibrary, type MediaLibraryItem } from "@/services/super-admin/files/mediaLibrary";
+
+let mockCapabilities: string[] = [];
+jest.mock("@/hooks/useCan", () => ({
+  useCan: (capability: string) => mockCapabilities.includes(capability),
+}));
+
+jest.mock("@/services/super-admin/files/mediaLibrary", () => ({
+  ...jest.requireActual("@/services/super-admin/files/mediaLibrary"),
+  listMediaLibrary: jest.fn(),
+}));
+
+const mockListMediaLibrary = listMediaLibrary as jest.MockedFunction<typeof listMediaLibrary>;
+
+jest.mock("@/services/super-admin/files/upload", () => ({
+  uploadFile: jest.fn(),
+}));
+// eslint-disable-next-line import/first -- the mock above must be registered first
+import { uploadFile } from "@/services/super-admin/files/upload";
+const mockUploadFile = uploadFile as jest.MockedFunction<typeof uploadFile>;
+
+const libraryItem = (id: number, url: string): MediaLibraryItem => ({
+  id,
+  name: `file-${id}.webp`,
+  alternativeText: null,
+  url,
+  mime: "image/webp",
+  ext: ".webp",
+  width: 800,
+  height: 1000,
+  size: 20,
+  createdAt: "2026-09-20T10:00:00.000Z",
+  formats: null,
+  thumbnailUrl: url,
+  video: null,
+  usage: { productCount: 1, removedProductCount: 0, usedAsCover: false, products: [] },
+});
 
 jest.mock("next/image", () => ({
   __esModule: true,
@@ -126,5 +163,99 @@ describe("IndexPhotoUploader featured image", () => {
 
     fireEvent.click(screen.getByTestId("index-photo-delete"));
     expect(store.get(editProductDataAtom).CoverImage).not.toEqual({ data: null });
+  });
+});
+
+describe("IndexPhotoUploader media library", () => {
+  beforeEach(() => {
+    mockCapabilities = [];
+    mockListMediaLibrary.mockReset();
+  });
+
+  it("offers the library only to roles that manage product media", () => {
+    renderUploader(productWithCover("محصول", "/uploads/first.webp"));
+    expect(screen.queryByTestId("index-photo-library")).not.toBeInTheDocument();
+  });
+
+  it("sets the picked library file as the cover and keeps the rest of the product", async () => {
+    mockCapabilities = ["product.media.manage"];
+    mockListMediaLibrary.mockResolvedValue({
+      data: [libraryItem(202, "/uploads/picked.webp"), libraryItem(101, "/uploads/first.webp")],
+      meta: { pagination: { page: 1, pageSize: 24, pageCount: 1, total: 2 } },
+    });
+    const { store } = renderUploader(productWithCover("محصول اول", "/uploads/first.webp"));
+
+    fireEvent.click(screen.getByTestId("index-photo-library"));
+    await waitFor(() => expect(screen.getAllByTestId("media-library-tile")).toHaveLength(2));
+    expect(mockListMediaLibrary).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, type: "image", usage: "all" }),
+    );
+
+    // The current cover is locked; the other file is selectable.
+    const [picked, current] = screen.getAllByTestId("media-library-tile");
+    expect(current).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(picked);
+    fireEvent.click(screen.getByTestId("media-library-confirm"));
+
+    const saved = store.get(editProductDataAtom);
+    expect(saved.CoverImage?.data?.id).toBe(202);
+    expect(saved.CoverImage?.data?.attributes.url).toBe("/uploads/picked.webp");
+    expect(saved.Title).toBe("محصول اول");
+    expect(screen.getByAltText("Preview")).toHaveAttribute(
+      "src",
+      expect.stringContaining("picked.webp"),
+    );
+    expect(screen.queryByTestId("media-library-confirm")).not.toBeInTheDocument();
+  });
+
+  it("replaces a cover uploaded earlier in the session, whose local preview otherwise wins", async () => {
+    mockCapabilities = ["product.media.manage"];
+    // Resolve after the FileReader, as a real upload does, so the local preview is shown.
+    mockUploadFile.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve([{ id: 303, url: "/uploads/uploaded.webp", mime: "image/webp" } as any]),
+            50,
+          ),
+        ),
+    );
+    mockListMediaLibrary.mockResolvedValue({
+      data: [libraryItem(202, "/uploads/picked.webp")],
+      meta: { pagination: { page: 1, pageSize: 24, pageCount: 1, total: 1 } },
+    });
+    const { container, store } = renderUploader(productWithoutCover("محصول"));
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "local.webp", { type: "image/webp" })] },
+    });
+    await waitFor(() => expect(store.get(editProductDataAtom).CoverImage?.data?.id).toBe(303));
+    await waitFor(() =>
+      expect(screen.getByAltText("Preview").getAttribute("src")).toMatch(/^data:/),
+    );
+
+    fireEvent.click(screen.getByTestId("index-photo-library"));
+    fireEvent.click(await screen.findByTestId("media-library-tile"));
+    fireEvent.click(screen.getByTestId("media-library-confirm"));
+
+    expect(store.get(editProductDataAtom).CoverImage?.data?.id).toBe(202);
+    expect(screen.getByAltText("Preview")).toHaveAttribute(
+      "src",
+      expect.stringContaining("picked.webp"),
+    );
+  });
+
+  it("keeps the library closed while the product is still loading", () => {
+    mockCapabilities = ["product.media.manage"];
+    const store = createStore();
+    store.set(editProductDataAtom, productWithCover("محصول اول", "/uploads/first.webp"));
+    render(
+      <Provider store={store}>
+        <IndexPhotoUploader isEditMode disabled />
+      </Provider>,
+    );
+
+    expect(screen.getByTestId("index-photo-library")).toBeDisabled();
   });
 });

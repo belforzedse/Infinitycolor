@@ -170,6 +170,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::product-stock": { "product-stock": CREATE_UPDATE_ACTIONS },
   },
   "product.media.manage": {
+    // Catalog media picker (POST /admin/media-library/query). The capability policy alone
+    // still 403s at the U&P layer without this grant.
+    "api::admin-media-library": { "admin-media-library": ["query"] },
     "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
   "product.variation.manage": {

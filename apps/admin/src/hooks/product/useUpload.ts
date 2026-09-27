@@ -1,9 +1,9 @@
 import imageCompression from "browser-image-compression";
 import { uploadFile } from "@/services/super-admin/files/upload";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import logger from "@/utils/logger";
 import toast from "react-hot-toast";
-import { atom, useAtom } from "jotai";
+import { atom, useAtom, useAtomValue } from "jotai";
 import {
   editProductDataAtom,
   productDataAtom,
@@ -14,6 +14,11 @@ import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { generateStableId } from "@/utils/stableId";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import {
+  toMediaDataItem,
+  type MediaLibraryItem,
+} from "@/services/super-admin/files/mediaLibrary";
+import {
+  extractMediaId,
   hasTypedMediaMime,
   reorderArrayWithGuards,
   reorderImageMediaPreservingSlots,
@@ -59,6 +64,11 @@ interface UseUploadProps {
 const imagesAtom = atom<FileWithPreview[]>([]);
 const videosAtom = atom<FileWithPreview[]>([]);
 const filesAtom = atom<FileWithPreview[]>([]);
+
+/** Read-only view of the gallery images the uploader is showing (add mode has no other source). */
+export function useGalleryImages(): FileWithPreview[] {
+  return useAtomValue(imagesAtom);
+}
 
 const cleanupObjectURLs = (items: FileWithPreview[]) => {
   items.forEach((item) => {
@@ -480,6 +490,55 @@ export function useUpload({
     }
   };
 
+  const mediaFileIds = useMemo(() => {
+    const media = ((productData as any)?.Media || []) as unknown[];
+    return new Set(
+      media.map(extractMediaId).filter((id): id is number => id !== null),
+    );
+  }, [productData]);
+
+  /**
+   * Append files that are already uploaded (media library) to the gallery. They go to
+   * `Media` in the atom's shape for this mode and to the local image list in the same
+   * order, so add mode's position-based remove/reorder stays aligned; edit mode's
+   * reconcile matches them back by `remoteUrl`.
+   */
+  const addExistingMedia = (picked: MediaLibraryItem[]) => {
+    const seen = new Set(mediaFileIds);
+    const fresh: MediaLibraryItem[] = [];
+    for (const item of picked) {
+      if (!item.mime.startsWith("image/") || seen.has(item.id)) continue;
+      seen.add(item.id);
+      fresh.push(item);
+    }
+    if (fresh.length > 0) {
+      setProductData((prev: any) => ({
+        // TODO: Replace `any` usage with ProductData type
+        ...prev,
+        Media: [
+          ...((prev as any).Media || []),
+          ...fresh.map((item) => (isEditMode ? toMediaDataItem(item) : String(item.id))),
+        ],
+      }));
+      setImages((prevImages) => [
+        ...prevImages,
+        ...fresh.map((item) => {
+          const url = resolveAssetUrl(item.url);
+          return {
+            id: generateStableId("image-library-"),
+            file: new File([], item.name || `image-${item.id}`, { type: item.mime }),
+            preview: url,
+            remoteUrl: url,
+            fileId: item.id,
+            uploadStatus: "uploaded" as const,
+            uploadError: null,
+          };
+        }),
+      ]);
+    }
+    return { added: fresh.length, skipped: picked.length - fresh.length };
+  };
+
   const reorderImages = (oldIndex: number, newIndex: number) => {
     setImages((prevImages) =>
       reorderArrayWithGuards(prevImages, oldIndex, newIndex),
@@ -538,5 +597,7 @@ export function useUpload({
     removeFile,
     retryFile,
     reorderImages,
+    mediaFileIds,
+    addExistingMedia,
   };
 }

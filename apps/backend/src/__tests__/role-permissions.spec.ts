@@ -307,6 +307,11 @@ function createActionTree() {
         "admin-product-list": { query: action() },
       },
     },
+    "api::admin-media-library": {
+      controllers: {
+        "admin-media-library": { query: action() },
+      },
+    },
     "api::product-review": {
       controllers: {
         "product-review": {
@@ -798,6 +803,10 @@ describe("role permission templates", () => {
           "api::admin-product-list.admin-product-list.query",
           "api::product.product.createPreviewDraft",
         ],
+      },
+      {
+        capabilities: ["product.media.manage"],
+        actions: ["api::admin-media-library.admin-media-library.query"],
       },
       {
         capabilities: ["content.categoryEditorial.manage"],

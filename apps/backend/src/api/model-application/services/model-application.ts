@@ -12,6 +12,7 @@ import {
   validateIncomingPhoto,
   type IncomingUploadFile,
   ModelApplicationPhotoError,
+  MODEL_APPLICATION_PHOTO_ALT_TEXTS,
 } from "../lib/photos";
 
 const TABLE = "model_applications";
@@ -415,7 +416,7 @@ async function uploadPhoto(
     data: {
       fileInfo: {
         name: file.originalFilename.slice(0, 120),
-        alternativeText: field === "photoOne" ? "عکس اول درخواست مدل" : "عکس دوم درخواست مدل",
+        alternativeText: MODEL_APPLICATION_PHOTO_ALT_TEXTS[field],
       },
     },
     files: toUploadDescriptor(file),

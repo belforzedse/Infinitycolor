@@ -19,6 +19,10 @@ import {
   ADMIN_PRODUCTS_LIST_ENDPOINT,
   listAdminProducts,
 } from "../product/list";
+import {
+  ADMIN_MEDIA_LIBRARY_ENDPOINT,
+  listMediaLibrary,
+} from "../files/mediaLibrary";
 
 const mockPost = apiClient.post as jest.Mock;
 const mockGet = apiClient.get as jest.Mock;
@@ -176,6 +180,32 @@ describe("bounded admin read services", () => {
         search: "synthetic-product",
       }),
       expect.objectContaining({ retries: 0 }),
+    );
+  });
+
+  it("pages the catalog media library through its own bounded contract", async () => {
+    mockPost.mockResolvedValueOnce({ data: null, meta: undefined });
+    const controller = new AbortController();
+
+    await expect(
+      listMediaLibrary({
+        page: 2,
+        pageSize: 24,
+        type: "image",
+        usage: "unattached",
+        search: "  W00288 ",
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual({
+      data: [],
+      meta: { pagination: { page: 2, pageSize: 24, pageCount: 0, total: 0 } },
+    });
+
+    expect(ADMIN_MEDIA_LIBRARY_ENDPOINT).toBe("/admin/media-library/query");
+    expect(mockPost).toHaveBeenCalledWith(
+      ADMIN_MEDIA_LIBRARY_ENDPOINT,
+      { page: 2, pageSize: 24, type: "image", usage: "unattached", search: "W00288" },
+      expect.objectContaining({ signal: controller.signal, retries: 0 }),
     );
   });
 });

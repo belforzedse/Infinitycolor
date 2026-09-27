@@ -1,9 +1,15 @@
 "use client";
 
-import React from "react";
+import React, { useMemo, useState } from "react";
+import { Images } from "lucide-react";
 import IndexPhotoUploaderImagePreview from "./ImagePreview";
 import IndexPhotoUploaderActionButtons from "./ActionButtons";
 import useIndexImageUpload from "../../../../hooks/useIndexImageUpload";
+import MediaLibraryModal from "@/components/MediaLibrary/MediaLibraryModal";
+import { useCan } from "@/hooks/useCan";
+import { useOwnProductMedia } from "@/hooks/product/useOwnProductMedia";
+
+const COVER_TYPES = ["image", "video"] as const;
 
 interface IndexPhotoUploaderProps {
   onImageUpload?: (file: File) => void;
@@ -29,8 +35,15 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
     uploadStatus,
     uploadError,
     previewMimeType,
+    isUploading,
+    coverId,
+    selectExistingCover,
   } =
     useIndexImageUpload({ onImageUpload, onImageDelete, isEditMode, disabled });
+  const canPickFromLibrary = useCan("product.media.manage");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const ownMedia = useOwnProductMedia({ isEditMode, disabled });
+  const lockedIds = useMemo(() => (coverId ? new Set([coverId]) : undefined), [coverId]);
 
   return (
     <div className="flex flex-col items-center gap-2 rounded-xl bg-white py-5">
@@ -70,11 +83,44 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
         }}
       />
 
+      {canPickFromLibrary ? (
+        <button
+          type="button"
+          data-testid="index-photo-library"
+          disabled={disabled || isUploading}
+          onClick={() => setLibraryOpen(true)}
+          className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-infinity-primary transition-colors hover:border-infinity-primary-lighter hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Images className="h-4 w-4" aria-hidden="true" />
+          انتخاب از کتابخانه
+        </button>
+      ) : null}
+
       <span className="text-xs mt-3 text-neutral-400">
         {disabled
           ? "در حال دریافت اطلاعات محصول…"
-          : "اینجا تصویر یا ویدیوی اصلی محصول را بارگذاری کنید."}
+          : canPickFromLibrary
+            ? "تصویر یا ویدیوی اصلی محصول را بارگذاری یا از کتابخانه انتخاب کنید."
+            : "اینجا تصویر یا ویدیوی اصلی محصول را بارگذاری کنید."}
       </span>
+
+      {canPickFromLibrary ? (
+        <MediaLibraryModal
+          isOpen={libraryOpen}
+          onClose={() => setLibraryOpen(false)}
+          title="انتخاب تصویر شاخص"
+          selection="single"
+          allowedTypes={COVER_TYPES}
+          lockedIds={lockedIds}
+          lockedLabel="کاور فعلی"
+          ownMedia={ownMedia}
+          confirmLabel={() => "تنظیم به‌عنوان تصویر شاخص"}
+          onConfirm={([picked]) => {
+            if (picked) selectExistingCover(picked);
+            setLibraryOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 };
