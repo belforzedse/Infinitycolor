@@ -251,8 +251,12 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   "order.status.update": { "api::order": { order: ["adminTransition"] } },
   "order.notes.update": { "api::order": { order: ["adminUpdateNotes"] } },
   "order.address.update": { "api::order": { order: ["adminUpdateAddress"] } },
-  "order.items.adjust": { "api::order": { order: ["adminAdjustItems"] } },
-  "order.cancel": { "api::order": { order: ["adminCancel"] } },
+  // adminPaymentOperation: the handler limits these to the operation kind the
+  // capability can queue (UPDATE / CANCEL), so the admin can poll its outcome.
+  "order.items.adjust": {
+    "api::order": { order: ["adminAdjustItems", "adminPaymentOperation"] },
+  },
+  "order.cancel": { "api::order": { order: ["adminCancel", "adminPaymentOperation"] } },
   "order.manual.create": {
     "api::order": { order: ["create", "decrementStockManual"] },
     "api::order-item": { "order-item": ["create"] },

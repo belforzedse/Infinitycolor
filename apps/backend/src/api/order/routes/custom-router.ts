@@ -167,7 +167,9 @@ export default {
       handler: "order.adminPaymentOperation",
       config: {
         auth: { scope: [] },
-        policies: capabilityPolicy("order.financial.read"),
+        // Outer gate only: the handler decides which operation types this
+        // operator may read (financial read, or the kind they can queue).
+        policies: capabilityPolicy("order.read"),
       },
     },
     {

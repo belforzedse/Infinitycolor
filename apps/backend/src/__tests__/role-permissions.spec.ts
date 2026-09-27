@@ -885,7 +885,8 @@ describe("role permission templates", () => {
         ],
       },
       {
-        capabilities: ["order.financial.read"],
+        // The handler narrows cancel/adjust holders to the operation kind they queue.
+        capabilities: ["order.financial.read", "order.cancel", "order.items.adjust"],
         actions: ["api::order.order.adminPaymentOperation"],
       },
       {
@@ -1305,7 +1306,9 @@ describe("role permission templates", () => {
     expect(order.create.enabled).toBe(false);
     expect(order.update.enabled).toBe(false);
     expect(order.delete.enabled).toBe(false);
-    expect(order.adminPaymentOperation.enabled).toBe(false);
+    // Enabled so the admin can poll a SnappPay cancel it queued; the handler
+    // limits order.cancel holders to CANCEL operations.
+    expect(order.adminPaymentOperation.enabled).toBe(true);
 
     expect(controller("api::plugin-user", "plugin-user").searchCustomers.enabled).toBe(false);
     expect(controller("api::plugin-user", "plugin-user").createPluginUser.enabled).toBe(false);
@@ -1393,6 +1396,7 @@ describe("role permission templates", () => {
     expect(enabled("api::shipping-city", "shipping-city")).toEqual(["find", "findOne"]);
     expect(enabled("api::order", "order")).toEqual([
       "adminCancel",
+      "adminPaymentOperation",
       "adminTransition",
       "adminUpdateAddress",
       "adminUpdateNotes",
