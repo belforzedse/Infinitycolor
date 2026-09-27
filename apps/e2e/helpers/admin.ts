@@ -186,6 +186,8 @@ export async function cleanupRuntimeProducts(request: APIRequestContext) {
   if (products.ok()) {
     const payload = (await products.json()) as { data?: Array<{ id: number }> };
     for (const product of payload.data ?? []) {
+      // Permanent deletion only works from Trash (and leaves a hidden tombstone).
+      await apiPost(request, "admin", `/products/${product.id}/soft-delete`, {});
       await apiDelete(request, "admin", `/products/${product.id}`);
     }
   }

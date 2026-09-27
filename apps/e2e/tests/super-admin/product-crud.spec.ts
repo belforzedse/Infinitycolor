@@ -83,6 +83,11 @@ test.describe("super-admin product CRUD", () => {
       page.locator('[data-testid="admin-product-row"]:visible').filter({ hasText: updatedTitle }).first(),
     ).toBeVisible({ timeout: 30_000 });
 
+    // Move to Trash lives in the row's actions menu.
+    await page
+      .locator(`[data-testid="admin-product-actions"][data-id="${fixture.productId}"]:visible`)
+      .first()
+      .click();
     await page
       .locator(`[data-testid="admin-product-soft-delete"][data-id="${fixture.productId}"]:visible`)
       .first()
