@@ -46,15 +46,18 @@ test("sanitizes traces nested in a sharded run's blob report", async () => {
   const trace = new JSZip();
   trace.file("trace.trace", `${JSON.stringify({ type: "action", url: "https://staging.test/auth/callback?grant=credential" })}\n`);
   trace.file("trace.network", `${JSON.stringify({ headers: [{ name: "cookie", value: "credential" }] })}\n`);
+  // Like Playwright's own blobs: file entries only, no directory entries.
   const blob = new JSZip();
   blob.file("report.jsonl", `${JSON.stringify({ method: "onEnd", params: { url: "https://staging.test/x?token=credential" } })}\n`);
-  blob.file("resources/0123abcd.zip", await trace.generateAsync({ type: "nodebuffer" }));
+  blob.file("resources/0123abcd.zip", await trace.generateAsync({ type: "nodebuffer" }), { createFolders: false });
   const blobPath = path.join(directory, "report-1.zip");
   await writeFile(blobPath, await blob.generateAsync({ type: "nodebuffer" }));
 
   await sanitizeAdminArtifacts({ roots: [directory], secretValues: ["credential"] });
 
   const sanitizedBlob = await JSZip.loadAsync(await readFile(blobPath));
+  // `merge-reports` writes every entry as a file; a directory entry fails it (EISDIR).
+  assert.deepEqual(Object.keys(sanitizedBlob.files).sort(), ["report.jsonl", "resources/0123abcd.zip"]);
   assert.doesNotMatch(await sanitizedBlob.file("report.jsonl").async("string"), /credential/);
   const inner = await JSZip.loadAsync(await sanitizedBlob.file("resources/0123abcd.zip").async("nodebuffer"));
   assert.equal(inner.file("trace.network"), null);

@@ -76,6 +76,10 @@ function isImage(buffer) {
 }
 
 const DEFLATE = { type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } };
+// JSZip adds a directory entry for every folder in a path by default.
+// Playwright's archives have none, and `merge-reports` writes every entry of a
+// blob as a file, so a `resources/` entry fails the merge with EISDIR.
+const NO_FOLDERS = { createFolders: false };
 
 /**
  * A sanitized copy of a zip, or null when there is nothing to change. Handles
@@ -99,7 +103,7 @@ async function sanitizeArchive(buffer, secretValues) {
         continue;
       }
       const content = await entry.async("string");
-      archive.file(name, sanitizeJsonLines(content, secretValues));
+      archive.file(name, sanitizeJsonLines(content, secretValues), NO_FOLDERS);
     }
     return archive.generateAsync(DEFLATE);
   }
@@ -111,7 +115,7 @@ async function sanitizeArchive(buffer, secretValues) {
     if (name.toLowerCase().endsWith(".zip")) {
       const inner = await sanitizeArchive(await entry.async("nodebuffer"), secretValues);
       if (inner) {
-        archive.file(name, inner);
+        archive.file(name, inner, NO_FOLDERS);
         changed = true;
       }
     } else if (/\.(jsonl|json|md|txt|log)$/i.test(name)) {
@@ -120,7 +124,7 @@ async function sanitizeArchive(buffer, secretValues) {
       const content = await entry.async("string");
       const sanitized = sanitizeText(content, secretValues);
       if (sanitized !== content) {
-        archive.file(name, sanitized);
+        archive.file(name, sanitized, NO_FOLDERS);
         changed = true;
       }
     }

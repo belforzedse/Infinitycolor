@@ -121,9 +121,13 @@ export class FixtureApi {
 // (sandbox.zarinpal.com) is the only provider page a test may open.
 const LIVE_GATEWAY_PATTERN =
   /^https?:\/\/(?:[^/?#]*\.)?(?:payment\.zarinpal\.com|www\.zarinpal\.com|shaparak\.ir|snapppay\.ir|snapppay\.com)(?:[/?#:]|$)/i;
-// Analytics and error reporting from test traffic would pollute staging dashboards.
+// Analytics and error reporting from test traffic would pollute staging
+// dashboards. The eNamad trust seal is blocked too: the CI host cannot connect
+// to trustseal.enamad.ir (TCP to 443 hangs; browsers elsewhere get it in ms),
+// and on a short page (empty cart, checkout) the footer badge is in view on a
+// phone, so WebKit holds the page's load event on it until navigation times out.
 const THIRD_PARTY_PATTERN =
-  /^https?:\/\/[^/?#]*(?:analytics\.alpagency|umami|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)[^/?#]*(?:[/?#]|$)/i;
+  /^https?:\/\/[^/?#]*(?:analytics\.alpagency|umami|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick|trustseal\.enamad)[^/?#]*(?:[/?#]|$)/i;
 
 type TestFixtures = {
   walletToman: number;
