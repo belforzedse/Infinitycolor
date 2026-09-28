@@ -9,11 +9,12 @@ import {
   apiGet,
   apiPost,
   apiPut,
+  authHeaders,
   expectApiForbidden,
   expectApiOk,
 } from "./api";
 import type { E2EAuthRole } from "./auth";
-import { strapiOrigin } from "./env";
+import { strapiApiURL, strapiOrigin } from "./env";
 
 const E2E_SOURCE = "e2e-storefront";
 
@@ -400,11 +401,30 @@ export async function createRuntimeStory(
   request: APIRequestContext,
   role: E2EAuthRole = "seller-2",
 ): Promise<RuntimeStoryFixture> {
-  const title = `${E2E_RUNTIME_PREFIX}Story ${uniqueSuffix()}`;
+  const suffix = uniqueSuffix();
+  const title = `${E2E_RUNTIME_PREFIX}Story ${suffix}`;
+  // Every story item needs its media; upload it as the role, as the admin UI does.
+  const upload = await request.post(`${strapiApiURL().replace(/\/$/, "")}/upload`, {
+    headers: await authHeaders(role),
+    multipart: {
+      files: {
+        name: `${E2E_RUNTIME_PREFIX}story-${suffix}.png`,
+        mimeType: "image/png",
+        buffer: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      },
+    },
+  });
+  await expectApiOk(upload, `upload runtime story media as ${role}`);
+  const mediaId = Number(((await upload.json()) as Array<{ id?: number }>)[0]?.id);
+  expect(mediaId, "uploaded story media id").toBeGreaterThan(0);
   const response = await apiPost(request, role, "/stories", {
     data: {
       Title: title,
       MediaType: "image",
+      Media: mediaId,
       IsActive: false,
       SortOrder: 0,
     },
@@ -425,6 +445,13 @@ export async function cleanupRuntimeStories(request: APIRequestContext) {
   const payload = (await response.json()) as { data?: Array<{ id: number }> };
   for (const item of payload.data ?? []) {
     await apiDelete(request, "admin", `/stories/${item.id}`);
+  }
+  const uploads = await apiGet(request, "admin", "/upload/files", {
+    "filters[name][$startsWith]": `${E2E_RUNTIME_PREFIX}story-`,
+  });
+  const files: unknown = uploads.ok() ? await uploads.json() : [];
+  for (const file of Array.isArray(files) ? (files as Array<{ id: number }>) : []) {
+    await apiDelete(request, "admin", `/upload/files/${file.id}`);
   }
 }
 

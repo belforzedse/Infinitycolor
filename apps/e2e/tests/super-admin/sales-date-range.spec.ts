@@ -4,6 +4,8 @@ import { assertNonProductionTarget } from "../../helpers/admin";
 import { prepareStorefrontPage } from "../../helpers/page";
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+// LEGACY_SALES_DATA_CUTOFF in apps/admin/.../reports/shared/reportDates.ts.
+const LEGACY_SALES_DATA_CUTOFF = "2026-09-14";
 
 function queryDate(url: string, key: "start" | "end"): string | null {
   try {
@@ -130,8 +132,25 @@ test.describe("admin sales date-range filters", () => {
     const seven = await clickPresetAndCaptureOverview(page, "۷ روز گذشته");
     expect(daySpan(seven)).toBe(7);
 
-    const thirty = await clickPresetAndCaptureOverview(page, "۳۰ روز گذشته");
-    expect(daySpan(thirty)).toBe(30);
+    // A period starting before the storefront cutover shows the legacy-site
+    // notice instead of fetching a partial range; its button clamps the start.
+    const thirtyStart = tehranDateOnly(new Date(Date.now() - 30 * 86_400_000));
+    if (thirtyStart < LEGACY_SALES_DATA_CUTOFF) {
+      await page.getByRole("button", { name: "۳۰ روز گذشته" }).click();
+      await expect(
+        page.getByRole("status").filter({ hasText: "سایت قبلی" }),
+      ).toBeVisible();
+      const clampedPending = page.waitForRequest((request) =>
+        isDateOnlyReportRequest(request.url(), "overview"),
+      );
+      await page.getByRole("button", { name: /^نمایش از/ }).click();
+      expect(rangeFromRequest(await clampedPending).start).toBe(
+        LEGACY_SALES_DATA_CUTOFF,
+      );
+    } else {
+      const thirty = await clickPresetAndCaptureOverview(page, "۳۰ روز گذشته");
+      expect(daySpan(thirty)).toBe(30);
+    }
 
     const thisMonth = await clickPresetAndCaptureOverview(page, "این ماه");
     const startJalali = jalaliPartsOfDateOnly(thisMonth.start);

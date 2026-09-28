@@ -90,10 +90,13 @@ test.describe("super-admin order management", () => {
     await filterDialog.getByTestId("advanced-filter-add").click();
     const filterRow = filterDialog.getByTestId("advanced-filter-row");
     await expect(filterRow).toBeVisible({ timeout: 10_000 });
+    // The row's selects portal their option lists to document.body.
+    const openOption = (label: string) =>
+      page.locator("ul button:visible").filter({ hasText: new RegExp(`^${label}$`) });
     await filterRow.locator("button").first().click();
-    await filterRow.locator("ul button").filter({ hasText: "توضیحات" }).click();
+    await openOption("توضیحات").click();
     await filterRow.locator("button").nth(1).click();
-    await filterRow.locator("ul button").filter({ hasText: "شامل" }).click();
+    await openOption("شامل").click();
     await filterRow.getByPlaceholder("مقدار").fill("E2E_DO_NOT_USE");
 
     const filteredRequest = page.waitForRequest((req) => {

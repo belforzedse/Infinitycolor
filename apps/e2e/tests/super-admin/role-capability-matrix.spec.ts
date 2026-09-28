@@ -600,7 +600,11 @@ for (const role of STAFF_ROLES) {
         ).toBeVisible();
       }
       await page.getByRole("button", { name: "باز کردن منوی مدیریت" }).click();
-      await expect(page.getByRole("dialog")).toBeVisible();
+      // The dialog element itself is headlessui's zero-size wrapper (its panel
+      // is position: fixed), so Playwright calls it hidden; check the panel's nav.
+      await expect(
+        page.getByRole("dialog").getByRole("navigation", { name: "منوی مدیریت" }),
+      ).toBeVisible();
       await expect(visibleTopLevelItems(page)).toHaveCount(role.sidebarCount, {
         timeout: 30_000,
       });
