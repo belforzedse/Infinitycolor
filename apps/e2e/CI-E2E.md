@@ -58,29 +58,38 @@ release, `verify:production:health` makes read-only GETs (api with DB/Redis, aut
 The staging config's global setup refuses any origin that is not staging, loopback or explicitly
 allowed, and always refuses production hosts.
 
+## How the jobs reach the fixture API
+
+No secret is involved. Each staging E2E job asks GitLab for an ID token (`id_tokens: E2E_FIXTURES_ID_TOKEN`,
+audience `https://api.staging.infinitycolor.co`), a short-lived RS256 JWT that git.alpagency.net signs and
+that expires with the job (`timeout: 30m`). The staging backend verifies it against
+`https://git.alpagency.net/oauth/discovery/keys` and lets the job in only if `project_path` is
+`bel4/infinity`, `ref_protected` is `"true"`, `environment` is `staging` and `ref` is `dev`
+(`E2E_FIXTURES_OIDC_*` in `deploy/infinity-staging/stack.yml`). Anything else gets the same bare 404 as a
+backend without fixtures.
+
+When the API refuses a job, global setup has already printed the token's claims (never the token) and the
+api logs the failed check: `[e2e-fixture] refused a GitLab ID token: <claim>`.
+
 ## Variables
 
 | Variable | Where | Notes |
 |---|---|---|
-| `E2E_FIXTURES_TOKEN` | GitLab CI/CD variable, environment scope `staging`, protected, masked | same value as in the staging backend env |
 | `E2E_SCHEDULE=staging-nightly` | the dev pipeline schedule | turns on `staging:regression` and `e2e:admin:nightly` |
 | `STAGING_GATE_OVERRIDE` | push option on a main hotfix | the reason is printed by the gate |
 
-Existing staging deploy variables (`DEPLOY_*`, `SSH_KNOWN_HOSTS`) are unchanged. The E2E jobs get the
-staging-scoped token by declaring `environment: { name: staging, action: verify }`.
+Existing staging deploy variables (`DEPLOY_*`, `SSH_KNOWN_HOSTS`) are unchanged. There is no fixture token
+variable in CI.
 
-## One-time setup
+## Setup
 
-1. On alp-services: `sudo bash deploy/infinity-staging/enable-e2e-fixtures.sh`. It adds
-   `E2E_FIXTURES_TOKEN` to `/srv/secrets/infinity-staging/backend.env` and prints it.
-2. Add that value as the GitLab variable above.
-3. Re-run a dev pipeline (Swarm reads the env file when the stack is deployed).
-4. Create the nightly schedule on `dev` with variable `E2E_SCHEDULE=staging-nightly`.
-5. Staging must offer an active Wallet payment gateway (for the wallet purchase) and the ZarinPal sandbox
+1. Create the nightly schedule on `dev` with variable `E2E_SCHEDULE=staging-nightly`.
+2. Staging must offer an active Wallet payment gateway (for the wallet purchase) and the ZarinPal sandbox
    merchant (`ZARINPAL_MERCHANT_ID` all zeros, `ZARINPAL_SANDBOX=true`) for the ZarinPal purchase; the
    `@purchase` tests say which is missing.
-
-Until step 3, `e2e:staging:critical` fails in seconds with a message naming these steps.
+3. Optional, only to run the suite against staging from a laptop: `sudo bash
+   deploy/infinity-staging/enable-e2e-fixtures.sh` on alp-services adds a static `E2E_FIXTURES_TOKEN` to
+   `/srv/secrets/infinity-staging/backend.env` (read at the next staging deploy) and prints it.
 
 ## Reports
 

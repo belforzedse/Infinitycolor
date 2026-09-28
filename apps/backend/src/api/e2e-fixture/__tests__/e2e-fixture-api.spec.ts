@@ -1,3 +1,5 @@
+jest.mock("../../../utils/e2eFixturesIdToken", () => ({ verifyE2EFixturesIdToken: jest.fn() }));
+
 jest.mock("../services/e2e-fixture", () => {
   class E2EFixtureError extends Error {
     constructor(
@@ -21,6 +23,7 @@ import routes from "../routes/e2e-fixture";
 import requireFixtureToken from "../middlewares/require-fixture-token";
 import controller from "../controllers/e2e-fixture";
 import * as service from "../services/e2e-fixture";
+import { verifyE2EFixturesIdToken } from "../../../utils/e2eFixturesIdToken";
 
 const TOKEN = "k".repeat(40);
 const originalEnv = { ...process.env };
@@ -54,11 +57,20 @@ describe("e2e fixture routes", () => {
 });
 
 describe("require-fixture-token", () => {
+  const log = { warn: jest.fn() };
   const run = async (headers: Record<string, string>) => {
     const ctx = ctxWith({ request: { headers, body: {} } });
     const next = jest.fn();
-    await requireFixtureToken()(ctx, next);
+    await requireFixtureToken({}, { strapi: { log } })(ctx, next);
     return { ctx, next };
+  };
+  const useGitLab = () => {
+    Object.assign(process.env, {
+      E2E_FIXTURES_OIDC_ISSUER: "https://git.alpagency.net",
+      E2E_FIXTURES_OIDC_AUDIENCE: "https://api.staging.infinitycolor.co",
+      E2E_FIXTURES_OIDC_PROJECT: "bel4/infinity",
+      E2E_FIXTURES_OIDC_ENVIRONMENT: "staging",
+    });
   };
 
   it("passes a request carrying the configured token", async () => {
@@ -86,6 +98,34 @@ describe("require-fixture-token", () => {
     const { ctx, next } = await run({ "x-e2e-fixtures-token": TOKEN });
     expect(ctx.status).toBe(404);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("passes a GitLab ID token the verifier accepts, with no static token configured", async () => {
+    delete process.env.E2E_FIXTURES_TOKEN;
+    useGitLab();
+    (verifyE2EFixturesIdToken as jest.Mock).mockResolvedValue({ ok: true, job: "8461" });
+    const { next } = await run({ "x-e2e-fixtures-id-token": "jwt" });
+    expect(next).toHaveBeenCalled();
+    expect(verifyE2EFixturesIdToken).toHaveBeenCalledWith("jwt", expect.objectContaining({ project: "bel4/infinity" }));
+  });
+
+  it("answers 404 and logs why for an ID token the verifier refuses", async () => {
+    useGitLab();
+    (verifyE2EFixturesIdToken as jest.Mock).mockResolvedValue({ ok: false, reason: "environment" });
+    const { ctx, next } = await run({ "x-e2e-fixtures-id-token": "jwt" });
+    expect(ctx.status).toBe(404);
+    expect(next).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith("[e2e-fixture] refused a GitLab ID token: environment");
+  });
+
+  it("never checks an ID token where GitLab ID tokens are not configured, or on production", async () => {
+    const { ctx } = await run({ "x-e2e-fixtures-id-token": "jwt" });
+    expect(ctx.status).toBe(404);
+    useGitLab();
+    process.env.FRONTEND_URL = "https://infinitycolor.co";
+    const onProduction = await run({ "x-e2e-fixtures-id-token": "jwt" });
+    expect(onProduction.ctx.status).toBe(404);
+    expect(verifyE2EFixturesIdToken).not.toHaveBeenCalled();
   });
 });
 

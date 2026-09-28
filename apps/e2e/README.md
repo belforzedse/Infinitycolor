@@ -37,10 +37,11 @@ holds released, cart emptied, stock topped up) and cleans it up at the end. Work
 a cart, a wallet or a stock row. Jobs that run at the same time use separate slot ranges (`E2E_SLOT_BASE`).
 
 The API touches only rows it owns (`external_source = "e2e-fixture"`, accounts on `@e2e-fixture.invalid`),
-refuses to adopt any other account, and answers 404 unless the backend has `E2E_FIXTURES_ENABLED=true`
-**and** an `E2E_FIXTURES_TOKEN` of 32+ characters, and its storefront/public URL is not a production
-host. Only staging sets these. Wherever fixtures are enabled, no SMS (customer or staff alert) is ever sent
-about a fixture shopper.
+refuses to adopt any other account, and answers 404 unless the backend has `E2E_FIXTURES_ENABLED=true`, its
+storefront/public URL is not a production host, and the caller proves itself: CI jobs with their GitLab ID
+token (checked against git.alpagency.net's keys, [CI-E2E.md](CI-E2E.md)), a laptop with a static
+`E2E_FIXTURES_TOKEN` of 32+ characters if staging has one. Only staging sets any of this. Wherever
+fixtures are enabled, no SMS (customer or staff alert) is ever sent about a fixture shopper.
 
 ### Payments
 
@@ -53,7 +54,8 @@ about a fixture shopper.
 
 ### Running it
 
-Against staging (needs the staging token; ask for it, never commit it):
+Against staging from a laptop (needs staging's optional static token, see CI-E2E.md "Setup"; ask for it,
+never commit it):
 
 ```bash
 cd apps/e2e

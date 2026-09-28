@@ -7,7 +7,7 @@ import { test as base, expect, type Locator, type Page } from "@playwright/test"
  * Test data comes from the backend's env-gated fixture API
  * (apps/backend/src/api/e2e-fixture): each worker owns a slot, which is one
  * shopper and one product of its own, reset at the start of every test. The
- * fixture token travels through Node's fetch, never through a Playwright
+ * fixture credential travels through Node's fetch, never through a Playwright
  * request context, so it cannot end up in a trace.
  */
 
@@ -44,14 +44,39 @@ export type Shopper = {
 
 export type SlotStock = Record<string, { count: number; reserved: number }>;
 
-const SETUP_HINT =
-  "Set E2E_FIXTURES_TOKEN to the staging backend's token " +
-  "(deploy/infinity-staging/enable-e2e-fixtures.sh; GitLab variable, staging scope).";
+/**
+ * How the suite proves itself to the fixture API: the job's GitLab ID token in
+ * CI (`id_tokens:` in .gitlab/ci/staging-release.yml), or a static token set on
+ * a laptop.
+ */
+export type FixtureCredential = {
+  kind: "GitLab ID token" | "static token";
+  header: "x-e2e-fixtures-id-token" | "x-e2e-fixtures-token";
+  value: string;
+};
+
+export function fixtureCredential(): FixtureCredential | null {
+  const idToken = process.env.E2E_FIXTURES_ID_TOKEN?.trim();
+  if (idToken) return { kind: "GitLab ID token", header: "x-e2e-fixtures-id-token", value: idToken };
+  const token = process.env.E2E_FIXTURES_TOKEN?.trim();
+  if (token) return { kind: "static token", header: "x-e2e-fixtures-token", value: token };
+  return null;
+}
+
+export const FIXTURE_SETUP_HINT =
+  "CI jobs use their GitLab ID token (id_tokens: E2E_FIXTURES_ID_TOKEN); from a laptop, set E2E_FIXTURES_TOKEN " +
+  "to staging's static token (deploy/infinity-staging/enable-e2e-fixtures.sh).";
+
+/** A bare 404 (no E2E_FIXTURE code in the body) is the API refusing the caller. */
+export const fixtureRefusedMessage = (apiUrl: string, status: number) =>
+  `The fixture API at ${apiUrl} refused the request (${status}): fixtures are not enabled there, the static ` +
+  `token is wrong, or the backend refused the ID token (its log says why: "[e2e-fixture] refused a GitLab ID ` +
+  `token: <claim>"). ${FIXTURE_SETUP_HINT}`;
 
 export class FixtureApi {
   constructor(
     private readonly apiUrl: string,
-    private readonly token: string,
+    private readonly credential: FixtureCredential,
   ) {}
 
   private async call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
@@ -60,16 +85,14 @@ export class FixtureApi {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        "x-e2e-fixtures-token": this.token,
+        [this.credential.header]: this.credential.value,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(60_000),
     });
     const text = await response.text();
     if (response.status === 404 && !text.includes("E2E_FIXTURE")) {
-      throw new Error(
-        `The fixture API answered 404 at ${this.apiUrl}: fixtures are not enabled there or the token is wrong. ${SETUP_HINT}`,
-      );
+      throw new Error(fixtureRefusedMessage(this.apiUrl, response.status));
     }
     if (!response.ok) {
       throw new Error(`fixture API ${method} ${path} failed (${response.status}): ${text.slice(0, 500)}`);
@@ -117,9 +140,9 @@ type WorkerFixtures = {
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   fixtureApi: [
     async ({}, use) => {
-      const token = process.env.E2E_FIXTURES_TOKEN?.trim();
-      if (!token) throw new Error(`E2E_FIXTURES_TOKEN is not set. ${SETUP_HINT}`);
-      await use(new FixtureApi(stagingTargets().api, token));
+      const credential = fixtureCredential();
+      if (!credential) throw new Error(`No fixture API credential. ${FIXTURE_SETUP_HINT}`);
+      await use(new FixtureApi(stagingTargets().api, credential));
     },
     { scope: "worker" },
   ],
