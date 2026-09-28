@@ -48,3 +48,31 @@ test("a category listing shows its product without server or script errors", { t
   expect(serverErrors, "first-party requests answered 5xx").toEqual([]);
   expect(pageErrors, "uncaught errors on the page").toEqual([]);
 });
+
+// A card the server rendered must stay the same element through hydration: if
+// React swaps it for a loading placeholder, a shopper's tap in that window hits
+// the placeholder and does nothing (2 of 8 listing cards did, until 09-28).
+test(
+  "the listing keeps the product cards the server rendered, so an early tap is never lost",
+  { tag: "@regression" },
+  async ({ page, shopper }) => {
+    await page.addInitScript(() => {
+      document.addEventListener("DOMContentLoaded", () => {
+        (window as unknown as { __serverCardLinks: Element[] }).__serverCardLinks = [
+          ...document.querySelectorAll('[data-testid="plp-product-results"] [data-testid="product-card-link"]'),
+        ];
+      });
+    });
+    await openFixtureCategory(page, shopper);
+    await expect(productCardLink(page, shopper)).toBeVisible();
+    await expect(page.getByTestId("plp-product-results").locator(".skeleton-shimmer")).toHaveCount(0);
+    await page.waitForLoadState("load");
+
+    const { sent, kept } = await page.evaluate(() => {
+      const links = (window as unknown as { __serverCardLinks?: Element[] }).__serverCardLinks ?? [];
+      return { sent: links.length, kept: links.filter((link) => link.isConnected).length };
+    });
+    expect(sent, "card links in the server HTML").toBeGreaterThan(0);
+    expect(kept, "server-rendered card links React replaced after hydration").toBe(sent);
+  },
+);

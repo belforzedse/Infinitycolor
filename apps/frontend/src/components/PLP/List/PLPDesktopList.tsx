@@ -1,16 +1,16 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
-import type { ProductCardProps } from "@/components/Product/Card";
+// A static import, not next/dynamic: the cards are server-rendered and the
+// adaptive-quality tier changes their props right after hydration. That update
+// reached cards whose lazy chunk had not loaded yet, so React threw their server
+// HTML away and showed the dynamic() skeleton until the chunk arrived; a tap in
+// that window hit the skeleton and did nothing (2 of 8 cards on staging, 09-28).
+import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
 import { StorefrontGrid } from "@/components/storefront/StorefrontGrid";
 import { useAdaptiveQuality } from "@/lib/adaptive-quality";
 import { trackAnalyticsEvent } from "@/lib/analytics";
-
-const ProductCard = dynamic(() => import("@/components/Product/Card"), {
-  loading: () => <div className="skeleton-shimmer h-48 rounded-lg" />,
-});
 
 interface PLPDesktopListProps {
   /** Projected on the server by `PLPPageView`, not per card on render. */
