@@ -81,7 +81,7 @@ test.describe("super-admin order management", () => {
     );
   });
 
-  test("@admin advanced filter applies, persists, and clears on orders", async ({
+  test("@admin advanced filter applies and clears on orders", async ({
     page,
     request,
   }) => {
@@ -134,22 +134,13 @@ test.describe("super-admin order management", () => {
         )
         .first(),
     ).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(/filter=/);
-
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(/filter=/);
+    // The orders page keeps advanced filters in memory, not in the URL (a
+    // stale `?filter=` is stripped by useLegacyFilterQueryCleanup).
     await expect(
       page.getByText("توضیحات: شامل E2E_DO_NOT_USE").filter({ visible: true }),
     ).toBeVisible({
       timeout: 30_000,
     });
-    await expect(
-      page
-        .locator(
-          `[data-testid="admin-order-row"][data-order-id="${order.orderId}"]:visible`,
-        )
-        .first(),
-    ).toBeVisible({ timeout: 30_000 });
 
     await page.getByRole("button", { name: /فیلتر پیشرفته/ }).filter({ visible: true }).click();
     const clearedRequest = page.waitForRequest((req) => {
