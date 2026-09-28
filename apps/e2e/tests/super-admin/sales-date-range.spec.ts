@@ -172,7 +172,10 @@ test.describe("admin sales date-range filters", () => {
     await expect(page.getByRole("textbox", { name: "تاریخ پایان" })).toHaveCount(1);
     await expect(page.getByText("از تاریخ")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "عملکرد محصولات" }).click();
+    await page
+      .getByRole("tablist", { name: "بخش‌های گزارش محصولات" })
+      .getByRole("tab", { name: "عملکرد محصولات" })
+      .click();
     await expect(page.getByPlaceholder("نام محصول یا کد...")).toBeVisible({
       timeout: 30_000,
     });
