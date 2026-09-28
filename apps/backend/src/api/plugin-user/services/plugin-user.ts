@@ -80,6 +80,10 @@ export default {
               IsActive: userData.isActive !== false,
               AccountOrigin: "Native",
               ProfileManagedByCustomer: true,
+              // Staff typed the name in, so the profile is complete; without this
+              // the new user's first sign-in asks them to type it again.
+              ProfileCompletedAt:
+                userInfoData?.FirstName && userInfoData?.LastName ? new Date() : null,
             },
           });
 
