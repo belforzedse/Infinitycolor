@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 import { authStorageStatePath } from "../../helpers/auth";
 import {
   cleanupRuntimeOrders,
@@ -7,6 +7,21 @@ import {
 } from "../../helpers/admin";
 import { apiGet, expectApiOk } from "../../helpers/api";
 import { prepareStorefrontPage } from "../../helpers/page";
+
+type AdvancedFilter = { field?: string; operator?: string; value?: string };
+
+/** The orders page lists through POST /admin/orders-list/query, filters in the JSON body. */
+function ordersQueryFilters(req: Request): AdvancedFilter[] | null {
+  if (req.method() !== "POST" || !req.url().includes("/admin/orders-list/query")) {
+    return null;
+  }
+  try {
+    const body = req.postDataJSON() as { filters?: unknown } | null;
+    return Array.isArray(body?.filters) ? (body.filters as AdvancedFilter[]) : [];
+  } catch {
+    return null;
+  }
+}
 
 test.describe("super-admin order management", () => {
   test.use({ storageState: authStorageStatePath("admin") });
@@ -99,13 +114,16 @@ test.describe("super-admin order management", () => {
     await openOption("شامل").click();
     await filterRow.getByPlaceholder("مقدار").fill("E2E_DO_NOT_USE");
 
-    const filteredRequest = page.waitForRequest((req) => {
-      const url = decodeURIComponent(req.url());
-      return (
-        url.includes("/api/orders") &&
-        url.includes("filters[Description][$containsi]=E2E_DO_NOT_USE")
-      );
-    });
+    const filteredRequest = page.waitForRequest((req) =>
+      Boolean(
+        ordersQueryFilters(req)?.some(
+          (item) =>
+            item.field === "[Description]" &&
+            item.operator === "$containsi" &&
+            item.value === "E2E_DO_NOT_USE",
+        ),
+      ),
+    );
     await page.getByTestId("advanced-filter-apply").click();
     await filteredRequest;
 
@@ -135,10 +153,8 @@ test.describe("super-admin order management", () => {
 
     await page.getByRole("button", { name: /فیلتر پیشرفته/ }).filter({ visible: true }).click();
     const clearedRequest = page.waitForRequest((req) => {
-      const url = decodeURIComponent(req.url());
-      return (
-        url.includes("/api/orders") && !url.includes("filters[Description]")
-      );
+      const filters = ordersQueryFilters(req);
+      return filters !== null && !filters.some((item) => item.field === "[Description]");
     });
     await page.getByRole("button", { name: /پاک کردن فیلترها/ }).filter({ visible: true }).click();
     await clearedRequest;

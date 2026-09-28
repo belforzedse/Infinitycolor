@@ -160,11 +160,13 @@ test.describe("admin sales date-range filters", () => {
     expect(startJalali.month).toBe(todayJalali.month);
     expect(await urlRange(page)).toEqual(thisMonth);
 
-    await page.getByRole("link", { name: "تفکیک فروش" }).click();
+    // The sidebar's open sales menu repeats these links; use the page's sub-nav.
+    const salesNav = page.getByLabel("بخش‌های فروش");
+    await salesNav.getByRole("link", { name: "تفکیک فروش" }).click();
     await expect(page).toHaveURL(/\/sales\/breakdown/, { timeout: 30_000 });
     expect(await urlRange(page)).toEqual(thisMonth);
 
-    await page.getByRole("link", { name: "فروش محصولات" }).click();
+    await salesNav.getByRole("link", { name: "فروش محصولات" }).click();
     await expect(page).toHaveURL(/\/sales\/products/, { timeout: 30_000 });
     await expect(page.getByRole("textbox", { name: "تاریخ شروع" })).toHaveCount(1);
     await expect(page.getByRole("textbox", { name: "تاریخ پایان" })).toHaveCount(1);
@@ -179,7 +181,7 @@ test.describe("admin sales date-range filters", () => {
     const liquidityPending = page.waitForRequest((request) =>
       isDateOnlyReportRequest(request.url(), "liquidity"),
     );
-    await page.getByRole("link", { name: "نقدینگی" }).click();
+    await salesNav.getByRole("link", { name: "نقدینگی" }).click();
     await expect(page).toHaveURL(/\/sales\/liquidity/, { timeout: 30_000 });
     const liquidity = rangeFromRequest(await liquidityPending);
     expect(liquidity).toEqual(thisMonth);
