@@ -326,7 +326,12 @@ function GatewayLiquiditySection({
               />
             </div>
             <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white p-4">
-              <GatewayBreakdownTable rows={rows} totalSales={total} ordersCount={data?.paidOrdersCount ?? 0} />
+              <GatewayBreakdownTable
+                rows={rows}
+                totalSales={total}
+                ordersCount={data?.paidOrdersCount ?? 0}
+                paymentMix={data?.paymentMix}
+              />
             </div>
             {/*
               Both terms come from this one endpoint and the one `paid_orders`

@@ -1,5 +1,6 @@
 import {
   applyAvailabilityAwareOrder,
+  applyProductFilters,
   applyExcludeDiscountFilter,
   buildRatingOrderClause,
   isEnabledCardParam,
@@ -165,5 +166,17 @@ describe("product card query helpers", () => {
     calls.length = 0;
     applyExcludeDiscountFilter(fakeKnex, query, fakeStrapi, true, [5, 9]);
     expect(calls).toEqual(["where", "sub.whereNotExists", "sub.orWhereIn:p.id:5,9"]);
+  });
+
+  it("applies the staff tombstone filter instead of silently dropping it", () => {
+    const knexPath = require.resolve("knex", {
+      paths: [require.resolve("@strapi/database", { paths: [require.resolve("@strapi/strapi")] })],
+    });
+    const offlineKnex = require(knexPath)({ client: "pg" });
+    const query = offlineKnex({ p: "products" }).select("p.id");
+
+    applyProductFilters(offlineKnex, query, fakeStrapi, { $and: [{ purgedAt: { $null: true } }] });
+
+    expect(query.toString()).toContain('"p"."purged_at" is null');
   });
 });

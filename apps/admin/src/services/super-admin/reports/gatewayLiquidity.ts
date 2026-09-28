@@ -3,6 +3,7 @@ import { formatQueryParams } from "@/utils/api";
 import type {
   DataQualityWarning,
   GatewayBreakdownRow,
+  PaymentMix,
 } from "@/services/super-admin/reports/products";
 
 export type ReportClock = "order" | "settlement";
@@ -24,6 +25,8 @@ export type GatewayLiquidityResult = {
   ordersDefinition: PaidOrdersDefinition;
   /** Distinct paid orders; a split payment sits under two rows. */
   paidOrdersCount: number;
+  /** Optional: absent against an API older than the field. */
+  paymentMix?: PaymentMix;
   /**
    * Shipping fees inside the gateway totals, in Toman, over the same paid
    * orders. The gateway rows are cash collected (merchandise + shipping), and

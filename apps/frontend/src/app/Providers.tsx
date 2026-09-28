@@ -11,6 +11,7 @@ import GlobalErrorDisplay from "@/components/ui/GlobalErrorDisplay";
 import ImageEffects from "@/components/ui/ImageEffects";
 import ServiceWorkerRegistration from "@/components/ui/ServiceWorkerRegistration";
 import AuthInitializer from "@/components/ui/AuthInitializer";
+import AppReadyMarker from "@/components/ui/AppReadyMarker";
 import { Suspense } from "react";
 import { useFreshDataOnVisibility } from "@/hooks/useFreshDataOnVisibility";
 import { AnalyticsTracker } from "@/components/Analytics/AnalyticsTracker";
@@ -52,6 +53,8 @@ export default function Providers({ children }: { children: ReactNode }) {
         <PWAInstallPrompt />
         <IssueReportWidget />
         <ModelHiringModal />
+        {/* Last, so its effect runs after the page content has hydrated. */}
+        <AppReadyMarker />
       </SharedElementTransitionProvider>
     </Provider>
   );

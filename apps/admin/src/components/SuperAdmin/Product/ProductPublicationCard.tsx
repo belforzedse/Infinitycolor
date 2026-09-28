@@ -105,7 +105,11 @@ export default function ProductPublicationCard({
           ? "زمان انتشار باید در آینده باشد"
           : code === "PRODUCT_SLUG_REQUIRED"
             ? "قبل از انتشار، نامک محصول را ذخیره کنید"
-            : "عملیات انتشار انجام نشد",
+            : code === "PRODUCT_REMOVED"
+              ? "این محصول در سطل زباله است؛ ابتدا آن را از فهرست محصولات بازیابی کنید"
+              : code === "PRODUCT_SLUG_CONFLICT"
+                ? "نامک این محصول را محصول منتشرشدهٔ دیگری استفاده می‌کند؛ نامک را تغییر دهید"
+                : "عملیات انتشار انجام نشد",
       );
     } finally {
       setSavingAction(null);

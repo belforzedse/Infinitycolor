@@ -3,21 +3,31 @@
  */
 
 import { factories } from '@strapi/strapi';
+import { errors } from '@strapi/utils';
+
+// A discount of 0 means "no discount". Stored as 0 it used to be charged as the
+// price, so it is written as null instead.
+const clearZeroDiscount = (data: any) => {
+  if (data && data.DiscountPrice !== undefined && data.DiscountPrice !== null && Number(data.DiscountPrice) <= 0) {
+    data.DiscountPrice = null;
+  }
+};
 
 export default factories.createCoreService('api::product-variation.product-variation', ({ strapi }) => ({
   /**
    * Custom create method with discount price validation
    */
   async create(params: any) {
+    clearZeroDiscount(params?.data);
     // Validate discount price if provided
     const { DiscountPrice, Price } = params.data;
 
     if (DiscountPrice !== undefined && DiscountPrice !== null && DiscountPrice > 0) {
       if (Price === undefined || Price === null) {
-        throw new Error('قیمت اصلی الزامی است');
+        throw new errors.ValidationError('قیمت اصلی الزامی است');
       }
       if (DiscountPrice >= Price) {
-        throw new Error('قیمت تخفیف باید کمتر از قیمت اصلی باشد');
+        throw new errors.ValidationError('قیمت تخفیف باید کمتر از قیمت اصلی باشد');
       }
     }
 
@@ -28,6 +38,7 @@ export default factories.createCoreService('api::product-variation.product-varia
    * Custom update method with discount price validation
    */
   async update(entityId: any, params: any) {
+    clearZeroDiscount(params?.data);
     const { DiscountPrice, Price } = params.data || {};
 
     // If either price field is being updated, validate the combination
@@ -40,7 +51,7 @@ export default factories.createCoreService('api::product-variation.product-varia
       );
 
       if (!existing) {
-        throw new Error('محصول یافت نشد');
+        throw new errors.NotFoundError('محصول یافت نشد');
       }
 
       // Use updated values or fall back to existing ones
@@ -50,10 +61,10 @@ export default factories.createCoreService('api::product-variation.product-varia
       // Validate if discount price is set and greater than 0
       if (finalDiscountPrice !== null && finalDiscountPrice > 0) {
         if (finalPrice === null || finalPrice === undefined) {
-          throw new Error('قیمت اصلی الزامی است');
+          throw new errors.ValidationError('قیمت اصلی الزامی است');
         }
         if (finalDiscountPrice >= finalPrice) {
-          throw new Error('قیمت تخفیف باید کمتر از قیمت اصلی باشد');
+          throw new errors.ValidationError('قیمت تخفیف باید کمتر از قیمت اصلی باشد');
         }
       }
     }

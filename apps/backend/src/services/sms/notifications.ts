@@ -1,5 +1,6 @@
 import { claimSmsIdempotency, releaseSmsIdempotency, buildSmsIdempotencyKey } from "./idempotency";
 import { sendPatternSms } from "./ippanel";
+import { isE2EFixturePhone } from "../../utils/e2eFixtures";
 import { loadSmsConfig } from "./config";
 import { maskPhone } from "./redaction";
 import type {
@@ -194,6 +195,11 @@ async function sendOrderSms(params: {
   if (!phone) {
     strapi.log?.warn?.("[sms] skipped order notification without phone", { type, orderId });
     return finish({ ok: false, skipped: true, reason: "missing_phone" });
+  }
+
+  // Staging E2E shoppers have synthetic numbers; nothing may text them.
+  if (isE2EFixturePhone(phone)) {
+    return finish({ ok: false, skipped: true, reason: "e2e_fixture" });
   }
 
   const config = loadSmsConfig();

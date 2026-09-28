@@ -31,6 +31,11 @@ interface Props {
    * address the shopper typed was silently discarded at submit.
    */
   hideAddressFields?: boolean;
+  /**
+   * The reserve shipment's recipient. A merged order ships in the same parcel, so
+   * its recipient can't be changed here and is shown instead of the name input.
+   */
+  reserveRecipientName?: string | null;
 }
 
 function ShoppingCartBillInformationForm({
@@ -39,6 +44,7 @@ function ShoppingCartBillInformationForm({
   control,
   setValue,
   hideAddressFields = false,
+  reserveRecipientName,
 }: Props) {
   // Use global addresses atom for real-time updates
   const [addresses, setAddresses] = useAtom(addressesAtom);
@@ -93,11 +99,15 @@ function ShoppingCartBillInformationForm({
     };
   }, [setAddresses, setLoading, setError]);
 
+  const { dirtyFields } = useFormState({ control });
+
   useEffect(() => {
+    // Only a default: the profile loads asynchronously, and someone ordering for
+    // another person may already have typed that person's name and number.
     const applyUserInfo = (user: { FirstName?: string; LastName?: string; Phone?: string }) => {
       const fullName = [user.FirstName || "", user.LastName || ""].join(" ").trim();
-      if (fullName) setValue("fullName", fullName);
-      if (user.Phone) setValue("phoneNumber", user.Phone);
+      if (fullName && !dirtyFields.fullName) setValue("fullName", fullName);
+      if (user.Phone && !dirtyFields.phoneNumber) setValue("phoneNumber", user.Phone);
     };
 
     if (currentUser) {
@@ -123,7 +133,6 @@ function ShoppingCartBillInformationForm({
   // Watch the current address value from the form
   const selectedAddress = useWatch({ control, name: "address" });
   const selectedProvince = useWatch({ control, name: "province" });
-  const { dirtyFields } = useFormState({ control });
 
   // Clear form value if selected address was deleted
   useEffect(() => {
@@ -322,6 +331,10 @@ function ShoppingCartBillInformationForm({
     setValue("postalCode", matched.PostalCode || "");
     setValue("fullAddress", matched.FullAddress || "");
     setValue("addressDescription", matched.Description || "");
+    // The saved address's recipient, unless a name was typed for this order.
+    if (matched.FullName?.trim() && !dirtyFields.fullName) {
+      setValue("fullName", matched.FullName.trim());
+    }
     setValue("saveAddress", false);
     lastHydratedAddressIdRef.current = matched.id;
   }, [addresses, selectedAddress, setValue]);
@@ -329,13 +342,22 @@ function ShoppingCartBillInformationForm({
   return (
     <div className="col-span-1 space-y-3 px-0.5 lg:col-span-2">
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Input
-          {...register("fullName")}
-          name="fullName"
-          placeholder="نام و نام خانوادگی تحویل گیرنده"
-          error={errors.fullName?.message?.toString()}
-          label="نام و نام خانوادگی"
-        />
+        {hideAddressFields ? (
+          <div data-testid="reserve-recipient">
+            <span className="mb-1 block text-sm font-medium text-gray-700">تحویل گیرنده</span>
+            <p className="rounded-lg bg-stone-50 px-3 py-2.5 text-sm text-neutral-800">
+              {reserveRecipientName?.trim() || "همان گیرنده بسته رزروی"}
+            </p>
+          </div>
+        ) : (
+          <Input
+            {...register("fullName")}
+            name="fullName"
+            placeholder="نام و نام خانوادگی تحویل گیرنده"
+            error={errors.fullName?.message?.toString()}
+            label="نام و نام خانوادگی"
+          />
+        )}
 
         <div>
           <div className="flex items-center justify-between mb-1">

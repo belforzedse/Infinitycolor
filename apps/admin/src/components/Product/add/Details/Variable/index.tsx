@@ -159,9 +159,9 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({
 
           // Get variation-specific discount price (priority)
           const basePrice = Number(variation.attributes.Price || 0);
-          let discountPrice: number | undefined = variation.attributes.DiscountPrice
-            ? Number(variation.attributes.DiscountPrice)
-            : undefined;
+          // Prices arrive as strings, and a stored "0" is no discount.
+          const storedDiscount = Number(variation.attributes.DiscountPrice || 0);
+          let discountPrice: number | undefined = storedDiscount > 0 ? storedDiscount : undefined;
 
           // If no variation-specific discount, calculate from general_discounts
           const generalDiscounts = variation.attributes.general_discounts?.data || [];
@@ -181,7 +181,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({
           return {
             id: variation.id,
             sku: variation.attributes.SKU || "",
-            price: variation.attributes.Price || 0,
+            price: basePrice,
             discountPrice,
             stock: variation.attributes.product_stock?.data?.attributes.Count || 0,
             stockId: variation.attributes.product_stock?.data?.id,
@@ -318,13 +318,18 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({
 
     setIsBulkSaving(true);
     const stockIdUpdates: Record<number, number | undefined> = {};
-    let updatedCount = 0;
+    // Per row, which writes actually landed. The screen used to show the new
+    // values on every selected row even when a save had failed.
+    const savedWrites = new Map<number, { variation: boolean; stock: boolean }>();
+    const failedIds: number[] = [];
+    const failureLines: string[] = [];
 
     try {
       for (const variationId of selectedRows) {
         const variation = variables.find((v) => v.id === variationId);
         if (!variation) continue;
 
+        const saved = { variation: false, stock: false };
         try {
           const updatePayload: Record<string, unknown> = {};
           if (priceValue !== undefined) updatePayload.Price = priceValue;
@@ -335,6 +340,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({
             await apiClient.put(`/product-variations/${variationId}`, {
               data: updatePayload,
             });
+            saved.variation = true;
           }
 
           if (stockValue !== undefined) {
@@ -354,42 +360,65 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({
               const stockData = stockResponse.data as { id: number };
               stockIdUpdates[variationId] = stockData.id;
             }
+            saved.stock = true;
           }
-
-          updatedCount++;
-        } catch (error) {
+        } catch (error: any) {
           console.error(`Error updating variation ${variationId}:`, error);
+          failedIds.push(variationId);
+          failureLines.push(
+            `${variation.variable || `#${variationId}`}: ${error?.message || "خطای نامشخص"}`,
+          );
         }
+        savedWrites.set(variationId, saved);
       }
 
-      if (updatedCount > 0) {
-        setVariables((prev) =>
-          prev.map((variation) => {
-            if (!selectedRows.includes(variation.id)) return variation;
+      setVariables((prev) =>
+        prev.map((variation) => {
+          const saved = savedWrites.get(variation.id);
+          if (!saved) return variation;
 
-            return {
-              ...variation,
-              price: priceValue !== undefined ? priceValue : variation.price,
-              discountPrice:
-                discountValue === undefined
-                  ? variation.discountPrice
-                  : discountValue === null
-                    ? undefined
-                    : discountValue,
-              stock: stockValue !== undefined ? stockValue : variation.stock,
-              stockId:
-                stockIdUpdates[variation.id] !== undefined
-                  ? stockIdUpdates[variation.id]
-                  : variation.stockId,
-              isPublished: publishValue !== undefined ? publishValue : variation.isPublished,
-            };
-          }),
-        );
+          return {
+            ...variation,
+            ...(saved.variation
+              ? {
+                  price: priceValue !== undefined ? priceValue : variation.price,
+                  discountPrice:
+                    discountValue === undefined
+                      ? variation.discountPrice
+                      : discountValue === null || discountValue <= 0
+                        ? undefined
+                        : discountValue,
+                  isPublished: publishValue !== undefined ? publishValue : variation.isPublished,
+                }
+              : {}),
+            ...(saved.stock
+              ? {
+                  stock: stockValue !== undefined ? stockValue : variation.stock,
+                  stockId:
+                    stockIdUpdates[variation.id] !== undefined
+                      ? stockIdUpdates[variation.id]
+                      : variation.stockId,
+                }
+              : {}),
+          };
+        }),
+      );
+
+      const updatedCount = savedWrites.size - failedIds.length;
+      if (failedIds.length === 0) {
         toast.success(`تغییرات روی ${updatedCount} تنوع اعمال شد`);
         setSelectedRows([]);
         closeBulkModal();
       } else {
-        toast.error("ویرایش گروهی با خطا مواجه شد");
+        if (updatedCount > 0) {
+          toast.success(`تغییرات روی ${updatedCount} از ${savedWrites.size} تنوع اعمال شد`);
+        }
+        toast.error(`این تنوع‌ها ذخیره نشدند:\n${failureLines.join("\n")}`, {
+          duration: 10000,
+          style: { whiteSpace: "pre-line" },
+        });
+        // Leave just the failed rows selected so a retry is one click.
+        setSelectedRows(failedIds);
       }
     } finally {
       setIsBulkSaving(false);

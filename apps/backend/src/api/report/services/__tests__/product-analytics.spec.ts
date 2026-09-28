@@ -393,12 +393,25 @@ describe("product-analytics pure helpers", () => {
       // Cash is summed per transaction leg, not per order: a split payment
       // (wallet + gateway) must show under both channels.
       expect(sql).toMatch(/SUM\(CASE WHEN ct\.type = 'Return' THEN -ct\.amount ELSE ct\.amount END\)/);
-      expect(sql).toContain("COUNT(DISTINCT po.order_id)");
+      // One row per (order, channel), so a row's count is its distinct orders.
+      expect(sql).toMatch(/order_legs AS \([\s\S]*GROUP BY 1, 2/);
+      expect(sql).toMatch(/legs AS \(\s*SELECT gateway, COUNT\(\*\)::bigint AS orders_count/);
       // Without the settlement_gateway column every leg is the order's gateway.
       expect(sql).toContain("COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown')");
       expect(sql).not.toContain("settlement_gateway");
       // The distinct paid-order count rides along for footers.
       expect(sql).toContain("(SELECT COUNT(*) FROM paid_orders)::bigint AS paid_orders_count");
+    });
+
+    it("gateway query splits paid orders into single- and multi-channel for the footer", () => {
+      const sql = gatewayBreakdownQuery(joins);
+      // A split payment is one order under two channels: it must land in the
+      // mixed bucket once, with its whole settlement, never in single.
+      expect(sql).toContain("(SELECT COUNT(*) FROM order_channels WHERE channels = 1)::bigint AS single_orders_count");
+      expect(sql).toContain("(SELECT COUNT(*) FROM order_channels WHERE channels > 1)::bigint AS mixed_orders_count");
+      expect(sql).toContain(
+        "(SELECT COALESCE(SUM(settled_irr), 0) FROM order_channels WHERE channels > 1)::numeric AS mixed_irr",
+      );
     });
 
     it("gateway query groups by the leg's own channel when the column exists", () => {

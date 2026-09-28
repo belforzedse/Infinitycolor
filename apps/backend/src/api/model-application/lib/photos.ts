@@ -3,6 +3,16 @@ import { open } from "node:fs/promises";
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 export const ALLOWED_PHOTO_MIME = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
 
+/**
+ * Alt texts stamped on applicant photos. The upload runs before the application row
+ * exists and rollback is best effort, so an orphaned photo has no relation that marks
+ * it private; the catalog media library excludes files by these texts instead.
+ */
+export const MODEL_APPLICATION_PHOTO_ALT_TEXTS = {
+  photoOne: "عکس اول درخواست مدل",
+  photoTwo: "عکس دوم درخواست مدل",
+} as const;
+
 export type DetectedImageKind = "jpeg" | "png" | "webp";
 
 export type IncomingUploadFile = {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Strapi } from "@strapi/strapi";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 import {
   computeCouponDiscount,
   findFirstActiveGeneralDiscount,
@@ -61,16 +62,14 @@ export async function createCheckoutQuote(
       const variation = item?.product_variation;
       const variationId = Number(variation?.id);
       const quantity = Number(item?.Count || 0);
-      const unitPrice = Math.round(
-        Number(variation?.DiscountPrice ?? variation?.Price ?? 0),
-      );
+      const unitPrice = Math.round(chargeableVariationPrice(variation));
       if (!Number.isInteger(variationId) || variationId <= 0) {
         throw new Error("INVALID_ITEM: Cart item is missing its variation");
       }
       if (!Number.isInteger(quantity) || quantity <= 0) {
         throw new Error("INVALID_QUANTITY: Cart item quantity is invalid");
       }
-      if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
         throw new Error("INVALID_PRICE: Cart item price is invalid");
       }
       return { variationId, quantity, unitPrice };

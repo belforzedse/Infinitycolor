@@ -21,6 +21,9 @@ jest.mock("../../jobs/publishScheduledProducts", () => ({
   processScheduledProductPublicationJob: jest.fn(),
   runScheduledProductsReconciliation: jest.fn(),
 }));
+jest.mock("../../jobs/purgeExpiredTrashedProducts", () => ({
+  runTrashRetentionSweep: jest.fn(),
+}));
 jest.mock("../../api/payment-gateway/services/snappay-orchestrator", () => ({
   processSnappayOperation: jest.fn(),
   sweepSnappayOperations: jest.fn(),
@@ -205,6 +208,21 @@ describe("queue processors", () => {
     } as any);
 
     expect(mockedRunScheduledProductsReconciliation).toHaveBeenCalledWith(strapi);
+  });
+
+  it("dispatches the product Trash retention sweep", async () => {
+    const strapi = createMockStrapi();
+    const { runTrashRetentionSweep } = jest.requireMock("../../jobs/purgeExpiredTrashedProducts");
+    runTrashRetentionSweep.mockResolvedValue({ status: "disabled" });
+
+    await expect(
+      processMaintenanceJob(strapi, {
+        name: COMMERCE_MAINTENANCE_JOBS.productTrashRetention,
+        data: {},
+      } as any),
+    ).resolves.toEqual({ status: "disabled" });
+
+    expect(runTrashRetentionSweep).toHaveBeenCalledWith(strapi);
   });
 
   it("dispatches Anipo barcode reconciliation jobs", async () => {

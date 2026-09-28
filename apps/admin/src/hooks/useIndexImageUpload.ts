@@ -6,6 +6,11 @@ import toast from "react-hot-toast";
 import { Download } from "@/services/super-admin/files/download";
 import { resolveAssetUrl } from "@/utils/resolveAssetUrl";
 import type { UploadStatus } from "@/components/Product/add/UploadStatusBadge";
+import {
+  isFailedVideo,
+  toMediaDataItem,
+  type MediaLibraryItem,
+} from "@/services/super-admin/files/mediaLibrary";
 
 interface UseIndexImageUploadProps {
   onImageUpload?: (file: File) => void;
@@ -25,6 +30,10 @@ interface UseIndexImageUploadReturn {
   uploadStatus: UploadStatus;
   uploadError: string | null;
   previewMimeType?: string;
+  /** Saved cover file id, or null while the owning product is loading. */
+  coverId: number | null;
+  /** Use a file that is already uploaded (media library) as the cover. */
+  selectExistingCover: (item: MediaLibraryItem) => void;
 }
 
 /** Local stand-in for the picked file, shown only while its upload is pending or failed. */
@@ -58,6 +67,7 @@ const useIndexImageUpload = ({
 
   const imagePreview = pendingPreview?.url ?? savedPreview ?? null;
   const previewMimeType = pendingPreview?.mime ?? coverAttributes?.mime ?? undefined;
+  const coverId = disabled ? null : (productData.CoverImage?.data?.id ?? null);
   const uploadStatus: UploadStatus = isUploading
     ? "uploading"
     : uploadError
@@ -178,6 +188,39 @@ const useIndexImageUpload = ({
     onImageDelete?.();
   };
 
+  const selectExistingCover = (item: MediaLibraryItem) => {
+    if (disabled || isUploading) return;
+    const isVideo = item.mime.startsWith("video/");
+    if (!isVideo && !item.mime.startsWith("image/")) {
+      toast.error("فقط تصویر یا ویدیو را می‌توان به‌عنوان شاخص انتخاب کرد");
+      return;
+    }
+    if (isVideo && isFailedVideo(item)) {
+      toast.error("پردازش این ویدیو ناموفق بوده است");
+      return;
+    }
+    if (item.id === coverId) return;
+
+    // A pending preview from an earlier upload in this session would otherwise keep
+    // winning over the saved cover. The picked file is already on the server, so the
+    // saved URL is safe to show right away.
+    lastFileRef.current = null;
+    setPendingPreview(null);
+    setUploadError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    setProductData((prev: any) => ({
+      ...(prev as any),
+      CoverImage: { data: toMediaDataItem(item) },
+    }));
+    toast.success(
+      isEditMode
+        ? "تصویر شاخص انتخاب شد؛ برای اعمال، محصول را ذخیره کنید"
+        : "تصویر شاخص انتخاب شد",
+    );
+  };
+
   const handlePreviewClick = async () => {
     if (imagePreview) {
       window.open(imagePreview, "_blank", "noopener,noreferrer");
@@ -213,6 +256,8 @@ const useIndexImageUpload = ({
     uploadStatus,
     uploadError,
     previewMimeType,
+    coverId,
+    selectExistingCover,
   };
 };
 

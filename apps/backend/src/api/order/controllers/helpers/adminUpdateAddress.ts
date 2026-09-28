@@ -1,6 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
 import { canonicalIranPhone } from "@repo/auth-core";
-import { normalizeAnipoPostalCode } from "./anipoOrder";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { logAdminOrderAddressUpdate } from "../../../../utils/adminActivity";
@@ -25,6 +24,17 @@ export class OrderAddressValidationError extends Error {
 
 const cleanText = (value: unknown) => String(value ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
 
+// Checkout accepts the all-zero placeholder when the shopper doesn't know the
+// code, so the editor must too -- otherwise a recipient on such an order can
+// never be corrected. Anipo still omits the placeholder when it registers.
+const normalizeEditorPostalCode = (value: unknown) => {
+  const digits = cleanText(value)
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/\D/g, "");
+  return /^\d{10}$/.test(digits) ? digits : undefined;
+};
+
 export function parseOrderAddressInput(value: unknown): AddressInput {
   const input = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
   const allowed = new Set([
@@ -47,7 +57,7 @@ export function parseOrderAddressInput(value: unknown): AddressInput {
   if (fullAddress.length < 5 || fullAddress.length > 1_000) {
     throw new OrderAddressValidationError("fullAddress", "آدرس ارسال باید بین ۵ تا ۱۰۰۰ نویسه باشد");
   }
-  const postalCode = normalizeAnipoPostalCode(input.postalCode);
+  const postalCode = normalizeEditorPostalCode(input.postalCode);
   if (!postalCode) {
     throw new OrderAddressValidationError("postalCode", "کدپستی باید ۱۰ رقم معتبر باشد");
   }
@@ -65,7 +75,7 @@ export function parseOrderAddressInput(value: unknown): AddressInput {
 const comparable = (address: any) => ({
   shippingCityId: Number(address?.shipping_city?.id || 0),
   fullAddress: cleanText(address?.FullAddress),
-  postalCode: normalizeAnipoPostalCode(address?.PostalCode) || "",
+  postalCode: normalizeEditorPostalCode(address?.PostalCode) || "",
   recipientName: cleanText(address?.FullName),
   recipientPhone: canonicalIranPhone(address?.Phone) || "",
 });

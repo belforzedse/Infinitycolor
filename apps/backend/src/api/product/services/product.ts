@@ -17,6 +17,7 @@ import {
   type VariationAvailabilityInput,
 } from "../../../utils/productAvailability";
 import { getAvailableStockCount } from "../../cart/services/lib/stock";
+import { catalogProductFilters, publicProductFilters } from "../../../utils/productVisibility";
 
 const CARD_COLOR_CODE_LIMIT = 8;
 const HOMEPAGE_CARD_LIMIT = 20;
@@ -173,8 +174,7 @@ const uniqueOrderedIds = (groups: Array<number[] | undefined>): number[] => {
  * (`buildProductAvailabilityExistsSql`) instead.
  */
 const baseHomepageProductFilters = () => ({
-  Status: { $eq: "Active" },
-  removedAt: { $null: true },
+  ...publicProductFilters(),
   product_variations: {
     Price: { $gte: 1 },
   },
@@ -780,14 +780,9 @@ export default factories.createCoreService(
             { Description: { $containsi: variant } },
           ]),
         },
-        { removedAt: { $null: true } },
+        // Admins also see drafts and scheduled products; trashed ones never.
+        catalogProductFilters(isAdmin),
       ];
-
-      // Only filter by Active status for non-admin users
-      // Admins can see all products including drafts
-      if (!isAdmin) {
-        filterConditions.push({ Status: "Active" });
-      }
 
       const filters: any = {
         $and: filterConditions,

@@ -1,5 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 import { resolveUserCartId } from "../lib/user-cart-identity";
 
 export type GuestMergeItem = { productVariationId: number; quantity: number };
@@ -57,7 +59,12 @@ export async function mergeGuestCart(
         transacting: trx,
       } as any);
       const product = variation?.product;
-      if (!variation || variation.IsPublished === false || !product || product.removedAt || product.Status !== "Active") {
+      if (
+        !variation ||
+        variation.IsPublished === false ||
+        chargeableVariationPrice(variation) <= 0 ||
+        !isProductPubliclyVisible(product)
+      ) {
         rejected.push({ ...item, reason: "UNAVAILABLE" });
         continue;
       }
@@ -75,7 +82,7 @@ export async function mergeGuestCart(
       }
 
       const resultingQuantity = currentQuantity + appliedQuantity;
-      const unitPrice = Number(variation.DiscountPrice ?? variation.Price ?? 0);
+      const unitPrice = chargeableVariationPrice(variation);
       if (existing) {
         await itemQuery.update({
           where: { id: existing.id },

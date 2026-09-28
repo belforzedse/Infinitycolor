@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
 import { resolveUserCartId } from "./user-cart-identity";
 
 export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
@@ -48,7 +49,7 @@ export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
       }
 
       // Check if product is soft-deleted or inactive
-      const isProductAvailable = !product?.removedAt && product?.Status === "Active";
+      const isProductAvailable = isProductPubliclyVisible(product);
       if (!isProductAvailable) {
         strapi.log.warn(`Filtering out cart item ${item.id}: product is soft-deleted or inactive`, {
           productId: product?.id,

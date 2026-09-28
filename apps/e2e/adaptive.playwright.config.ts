@@ -5,6 +5,8 @@ import { extendWebServers } from "./helpers/web-servers";
 export default defineConfig({
   ...baseConfig,
   testMatch: ["**/adaptive-quality.spec.ts"],
+  // The base config ignores this spec; testMatch alone decides here.
+  testIgnore: [],
   fullyParallel: false,
   outputDir: "test-results/adaptive",
   reporter: [

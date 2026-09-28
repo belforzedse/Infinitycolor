@@ -680,10 +680,23 @@ function gatewayRowsFrom(res: any) {
     totalOrdersCount: Number(r.total_orders_count || 0),
     total: Math.round(PA.irrToToman(Number(r.settled_irr || 0))),
   }));
+  const first = rows[0] || {};
+  // The single-channel amount is the rest of the rows' own (rounded) total, so
+  // single + mixed matches the footer to the Toman.
+  const gatewaysTotal = base.reduce((sum, g) => sum + g.total, 0);
+  const mixedTotal = Math.round(PA.irrToToman(Number(first.mixed_irr || 0)));
   return {
     gateways: PA.withShares(base, "total"),
     dataQualityWarnings: PA.gatewaySettlementWarnings(base),
-    paidOrdersCount: Number(rows[0]?.paid_orders_count || 0),
+    paidOrdersCount: Number(first.paid_orders_count || 0),
+    // Splits paidOrdersCount into orders under one row and orders under
+    // several (a split payment), which is why the row counts sum higher.
+    paymentMix: {
+      singleOrdersCount: Number(first.single_orders_count || 0),
+      singleTotal: gatewaysTotal - mixedTotal,
+      mixedOrdersCount: Number(first.mixed_orders_count || 0),
+      mixedTotal,
+    },
   };
 }
 
@@ -1281,7 +1294,7 @@ const reportController = {
         ]),
         knex.raw(PA.shippingRevenueQuery(joins, ordersDefinition, clock), [start, end]),
       ]);
-      const { gateways, dataQualityWarnings, paidOrdersCount } = gatewayRowsFrom(res);
+      const { gateways, dataQualityWarnings, paidOrdersCount, paymentMix } = gatewayRowsFrom(res);
       // Already Toman on the order row; irrToToman would divide it a second time.
       const shippingRevenue = Number(rowsOf(shippingRes)[0]?.shipping_total || 0);
 
@@ -1292,6 +1305,7 @@ const reportController = {
           clock,
           ordersDefinition,
           paidOrdersCount,
+          paymentMix,
           shippingRevenue,
           rows: gateways.map((g) => ({
             gatewayId: null,
@@ -1801,7 +1815,7 @@ const reportController = {
       ]);
 
       // Cash per gateway (settlement is IRR -> Toman; attach share of total).
-      const { gateways, dataQualityWarnings, paidOrdersCount } = gatewayRowsFrom(gatewayRes);
+      const { gateways, dataQualityWarnings, paidOrdersCount, paymentMix } = gatewayRowsFrom(gatewayRes);
 
       // Shipping revenue by method (shipping_cost already stored in Toman).
       const shippingMethods = rowsOf(shippingRes).map((r: any) => {
@@ -1826,6 +1840,7 @@ const reportController = {
           clock,
           ordersDefinition,
           totals: { gatewaySales, shippingRevenue, ordersCount },
+          paymentMix,
           gateways,
           shippingMethods,
           dataQualityWarnings,

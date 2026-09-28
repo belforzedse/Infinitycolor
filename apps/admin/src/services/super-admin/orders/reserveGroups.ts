@@ -43,6 +43,19 @@ export type AdminReserveGroup = {
   lastActivityAt: string | null;
 };
 
+export type AdminReserveGroupOrder = {
+  id: number;
+  status: string | null;
+  date: string | null;
+  amount: number;
+  contractStatus: string | null;
+  itemCount: number;
+};
+
+export type AdminReserveGroupDetail = AdminReserveGroup & {
+  orders: AdminReserveGroupOrder[];
+};
+
 export type AdminReserveGroupsResponse = {
   data: AdminReserveGroup[];
   meta: {
@@ -89,12 +102,12 @@ export async function listAdminReserveGroups(
 export async function getAdminReserveGroup(
   groupKey: string,
   signal?: AbortSignal,
-): Promise<{ data: (AdminReserveGroup & { orders?: unknown[] }) | null }> {
+): Promise<{ data: AdminReserveGroupDetail | null }> {
   const response = await apiClient.get<{
-    data: (AdminReserveGroup & { orders?: unknown[] }) | null;
+    data: AdminReserveGroupDetail | null;
   }>(`/admin/orders-list/reserve-groups/${encodeURIComponent(groupKey)}`, {
     signal,
     retries: 0,
   });
-  return response as unknown as { data: (AdminReserveGroup & { orders?: unknown[] }) | null };
+  return response as unknown as { data: AdminReserveGroupDetail | null };
 }

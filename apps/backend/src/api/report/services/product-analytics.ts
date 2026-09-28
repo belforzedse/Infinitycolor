@@ -1232,7 +1232,12 @@ export function settlementGatewayExpr(joins: ResolvedJoins): string {
  * is per settlement leg, so a split payment lands under both `Wallet` and its
  * gateway — which is what the cash view must show — and the sum of `orders_count`
  * across rows can exceed the number of paid orders. `paid_orders_count` carries
- * the distinct total for footers.
+ * the distinct total for footers, and the payment-mix columns reconcile the two:
+ * `single_orders_count` paid orders sit under exactly one row,
+ * `mixed_orders_count` sit under two or more (`mixed_irr` is their whole net
+ * settlement, every leg). A paid order with no Success leg — only possible on
+ * the `completed` definition — sits under none, so single + mixed can fall
+ * short of `paid_orders_count` but never exceed it.
  *
  * Rooted in every order in range (FULL OUTER JOIN), deliberately. This
  * previously read `FROM paid_orders po JOIN orders o`, which meant a gateway with
@@ -1251,17 +1256,27 @@ export function gatewayBreakdownQuery(
 ): string {
   return `
     WITH ${paidOrdersCte(joins, definition, clock)},
-    legs AS (
+    order_legs AS (
       SELECT
+        po.order_id,
         ${settlementGatewayExpr(joins)} AS gateway,
-        COUNT(DISTINCT po.order_id)::bigint AS orders_count,
         SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END)::numeric AS settled_irr
       FROM paid_orders po
       JOIN orders o ON o.id = po.order_id
       ${joins.orderToContract}
       ${joins.contractToTx}
       WHERE ct.status = 'Success'
-      GROUP BY 1
+      GROUP BY 1, 2
+    ),
+    legs AS (
+      SELECT gateway, COUNT(*)::bigint AS orders_count, SUM(settled_irr)::numeric AS settled_irr
+      FROM order_legs
+      GROUP BY gateway
+    ),
+    order_channels AS (
+      SELECT order_id, COUNT(*) AS channels, SUM(settled_irr) AS settled_irr
+      FROM order_legs
+      GROUP BY order_id
     ),
     all_orders AS (
       SELECT
@@ -1276,7 +1291,10 @@ export function gatewayBreakdownQuery(
       COALESCE(l.orders_count, 0)::bigint AS orders_count,
       COALESCE(a.total_orders_count, 0)::bigint AS total_orders_count,
       COALESCE(l.settled_irr, 0)::numeric AS settled_irr,
-      (SELECT COUNT(*) FROM paid_orders)::bigint AS paid_orders_count
+      (SELECT COUNT(*) FROM paid_orders)::bigint AS paid_orders_count,
+      (SELECT COUNT(*) FROM order_channels WHERE channels = 1)::bigint AS single_orders_count,
+      (SELECT COUNT(*) FROM order_channels WHERE channels > 1)::bigint AS mixed_orders_count,
+      (SELECT COALESCE(SUM(settled_irr), 0) FROM order_channels WHERE channels > 1)::numeric AS mixed_irr
     FROM legs l
     FULL OUTER JOIN all_orders a ON a.gateway = l.gateway
     ORDER BY settled_irr DESC

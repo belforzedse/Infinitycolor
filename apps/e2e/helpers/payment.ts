@@ -1,5 +1,4 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
-import { E2E_DEFAULT_CUSTOMER_PHONE } from "../fixtures/storefront";
 import { findProductVariationBySku, resetCartToVariation } from "./api";
 import { fillCheckoutWithZarinpal } from "./checkout";
 
@@ -137,13 +136,6 @@ export async function finalizeToZarinpalRedirect(
   };
 }
 
-export async function capturePendingPayment(page: Page) {
-  return page.evaluate(() => ({
-    orderId: localStorage.getItem("pendingOrderId"),
-    refId: localStorage.getItem("pendingRefId"),
-  }));
-}
-
 export async function stubSuccessfulCallback(page: Page, payment: FinalizedZarinpalPayment) {
   const headers = {
     "access-control-allow-origin": "*",
@@ -213,33 +205,4 @@ export async function stubSuccessfulCallback(page: Page, payment: FinalizedZarin
       });
     },
   );
-}
-
-export async function simulateCallbackFailure(page: Page, payment: FinalizedZarinpalPayment) {
-  await page.goto(`/orders/payment-callback?ResNum=${payment.orderId}`, {
-    waitUntil: "domcontentloaded",
-  });
-  await expect(page).toHaveURL(new RegExp(`/payment/result\\?.*orderId=${payment.orderId}`), {
-    timeout: 30_000,
-  });
-  await expect(page.getByTestId("payment-result")).toBeVisible({ timeout: 30_000 });
-}
-
-async function clickGatewayButton(page: Page, name: string | RegExp) {
-  await expect(page).toHaveURL(/zarinpal/i, { timeout: 60_000 });
-  const button = page.getByRole("button", { name }).first();
-  await expect(button).toBeVisible({ timeout: 60_000 });
-  await button.click();
-}
-
-export async function clickPay(page: Page) {
-  await clickGatewayButton(page, /^پرداخت$/);
-}
-
-export async function clickCancel(page: Page) {
-  await clickGatewayButton(page, /^انصراف$/);
-}
-
-export function e2eCustomerMobile() {
-  return E2E_DEFAULT_CUSTOMER_PHONE.replace(/^\+98/, "0");
 }

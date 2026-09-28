@@ -3,6 +3,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { chargeableVariationPrice } from "../../../utils/productAvailability";
 import {
   evaluateShippingMethod,
   validateShippingRulesConfig,
@@ -85,8 +86,8 @@ export default factories.createCoreService("api::shipping.shipping", ({ strapi }
       const count = Number(item?.Count || 0);
       const variation = item?.product_variation;
       const product = variation?.product;
-      const price = Number(variation?.DiscountPrice ?? variation?.Price ?? 0);
-      subtotal += Math.max(0, price) * count;
+      const price = chargeableVariationPrice(variation);
+      subtotal += price * count;
       quantity += count;
       weight += Math.max(0, Number(product?.Weight ?? 100) || 100) * count;
 

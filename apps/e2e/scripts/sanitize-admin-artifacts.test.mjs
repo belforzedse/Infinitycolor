@@ -40,3 +40,23 @@ test("removes auth state, network traces, non-image resources, queries, and cred
   assert.doesNotMatch(trace, /credential|\?token=/);
   assert.match(trace, /REDACTED/);
 });
+
+test("sanitizes traces nested in a sharded run's blob report", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blob-artifacts-"));
+  const trace = new JSZip();
+  trace.file("trace.trace", `${JSON.stringify({ type: "action", url: "https://staging.test/auth/callback?grant=credential" })}\n`);
+  trace.file("trace.network", `${JSON.stringify({ headers: [{ name: "cookie", value: "credential" }] })}\n`);
+  const blob = new JSZip();
+  blob.file("report.jsonl", `${JSON.stringify({ method: "onEnd", params: { url: "https://staging.test/x?token=credential" } })}\n`);
+  blob.file("resources/0123abcd.zip", await trace.generateAsync({ type: "nodebuffer" }));
+  const blobPath = path.join(directory, "report-1.zip");
+  await writeFile(blobPath, await blob.generateAsync({ type: "nodebuffer" }));
+
+  await sanitizeAdminArtifacts({ roots: [directory], secretValues: ["credential"] });
+
+  const sanitizedBlob = await JSZip.loadAsync(await readFile(blobPath));
+  assert.doesNotMatch(await sanitizedBlob.file("report.jsonl").async("string"), /credential/);
+  const inner = await JSZip.loadAsync(await sanitizedBlob.file("resources/0123abcd.zip").async("nodebuffer"));
+  assert.equal(inner.file("trace.network"), null);
+  assert.doesNotMatch(await inner.file("trace.trace").async("string"), /credential|grant=/);
+});

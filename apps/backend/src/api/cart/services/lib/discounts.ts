@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 export const computeCouponDiscount = async (
   strapi: Strapi,
@@ -52,11 +53,7 @@ export const computeCouponDiscount = async (
     for (const item of cartItems) {
       const productId = Number(item?.product_variation?.product?.id);
       if (productIds.has(productId)) {
-        const price = Number(
-          item?.product_variation?.DiscountPrice ??
-            item?.product_variation?.Price ??
-            0
-        );
+        const price = chargeableVariationPrice(item?.product_variation);
         const count = Number(item?.Count || 0);
         eligibleSubtotal += price * count;
       }

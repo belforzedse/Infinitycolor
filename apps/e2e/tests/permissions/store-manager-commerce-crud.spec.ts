@@ -59,7 +59,7 @@ test.describe("Store manager operational commerce CRUD", () => {
     }
   });
 
-  test("@permissions completes variation, promotion, shipping, and category workflows while sensitive APIs stay closed", async ({
+  test("@permissions @api completes variation, promotion, shipping, and category workflows while sensitive APIs stay closed", async ({
     request,
   }) => {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -421,16 +421,14 @@ test.describe("Store manager operational commerce CRUD", () => {
     );
     expect(deletedStock.status()).toBe(404);
 
+    // Trash and restore are lifecycle commands with their own routes; the
+    // generic update refuses the trash columns for every role.
     await expectApiOk(
-      await apiPut(request, "store-manager", `/products/${productId}`, {
-        data: { removedAt: new Date().toISOString() },
-      }),
+      await apiPost(request, "store-manager", `/products/${productId}/soft-delete`, {}),
       "Store manager product soft delete",
     );
     await expectApiOk(
-      await apiPut(request, "store-manager", `/products/${productId}`, {
-        data: { removedAt: null },
-      }),
+      await apiPost(request, "store-manager", `/products/${productId}/restore`, {}),
       "Store manager product restore",
     );
     await expectApiForbidden(

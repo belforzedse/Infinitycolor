@@ -57,6 +57,16 @@ describe("Anipo recipient synchronization", () => {
     expect(update.data).not.toHaveProperty("ShippingBarcode");
   });
 
+  it("syncs a placeholder postal code by omitting it, as barcode registration does", async () => {
+    const placeholder = {
+      ...order,
+      delivery_address: { ...order.delivery_address, PostalCode: "0000000000" },
+    };
+    const { strapi, createOrUpdateOrder } = makeStrapi(placeholder);
+    await expect(processAnipoRecipientSync(strapi, 10, 2)).resolves.toEqual({ status: "synced" });
+    expect(createOrUpdateOrder.mock.calls[0][0].receiver_postal_code).toBeUndefined();
+  });
+
   it("records retryable failure without discarding the local revision", async () => {
     const { strapi, query } = makeStrapi(order, { ok: false, error: "temporary" });
     await expect(processAnipoRecipientSync(strapi, 10, 2)).rejects.toThrow("temporary");

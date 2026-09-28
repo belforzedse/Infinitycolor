@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { publicProductFilters } from "../../../utils/productVisibility";
 
 export type SearchwiseAvailability = "in stock" | "out of stock";
 
@@ -34,8 +35,7 @@ export interface SearchwisePagination {
 }
 
 export const SEARCHWISE_PRODUCT_FILTERS = {
-  Status: { $eq: "Active" },
-  removedAt: { $null: true },
+  ...publicProductFilters(),
   Slug: { $notNull: true },
   product_variations: {
     IsPublished: { $eq: true },

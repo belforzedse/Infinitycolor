@@ -85,17 +85,18 @@ describe("product.findBySlug", () => {
     const ctx: any = { query: { filters: {} }, state: {} };
 
     expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
-    expect(ctx.query.filters.$and).toEqual([{ removedAt: { $null: true } }, { Status: "Active" }]);
+    // The canonical public rule (utils/productVisibility.ts): published and not in Trash.
+    expect(ctx.query.filters.$and).toEqual([{ Status: "Active", removedAt: { $null: true } }]);
   });
 
-  it("lets Store Managers inspect inactive catalog records", () => {
+  it("lets Store Managers inspect inactive and trashed catalog records but never tombstones", () => {
     const ctx: any = {
       query: { filters: {} },
       state: { user: { role: { name: "Store manager" } } },
     };
 
     expect((productController as any).applyPublicProductFilters(ctx)).toBe(false);
-    expect(ctx.query.filters).toEqual({});
+    expect(ctx.query.filters).toEqual({ $and: [{ purgedAt: { $null: true } }] });
   });
 
   it("keeps Editors on the public catalog view", () => {
@@ -107,7 +108,7 @@ describe("product.findBySlug", () => {
     };
 
     expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
-    expect(ctx.query.filters.$and).toEqual([{ removedAt: { $null: true } }, { Status: "Active" }]);
+    expect(ctx.query.filters.$and).toEqual([{ Status: "Active", removedAt: { $null: true } }]);
   });
 
   it("keeps the default by-slug response on the full review populate", async () => {

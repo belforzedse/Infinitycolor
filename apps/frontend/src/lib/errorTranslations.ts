@@ -34,6 +34,20 @@ export const ERROR_MESSAGE_MAP: Record<string, string> = {
   // Authorization errors (unauthorized above in OTP section)
   "forbidden": "شما مجاز به انجام این عمل نیستید.",
 
+  // Product availability. A product can leave the store while it sits in a
+  // cart (moved to draft, scheduled, or to Trash); the cart and checkout
+  // answer with these English messages / codes. They must stay above the
+  // generic "not found" entry, which would otherwise match first.
+  "product_deleted": "این محصول دیگر در فروشگاه موجود نیست. لطفاً آن را از سبد خرید حذف کنید.",
+  "product_inactive": "این محصول در حال حاضر قابل خرید نیست. لطفاً آن را از سبد خرید حذف کنید.",
+  "variation_unpublished": "این مدل از محصول در حال حاضر قابل خرید نیست.",
+  "product is no longer available": "این محصول دیگر در فروشگاه موجود نیست.",
+  "product is currently unavailable": "این محصول در حال حاضر قابل خرید نیست.",
+  "product is not available": "این محصول در حال حاضر قابل خرید نیست.",
+  "product variation is not available": "این مدل از محصول در حال حاضر قابل خرید نیست.",
+  "product variation not found": "این مدل از محصول یافت نشد.",
+  "product not found": "این محصول یافت نشد یا دیگر در فروشگاه موجود نیست.",
+
   // Not found errors
   "not found": "موردی یافت نشد.",
 

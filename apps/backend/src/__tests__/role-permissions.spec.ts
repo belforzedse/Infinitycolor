@@ -94,6 +94,9 @@ function createActionTree() {
           softDelete: action(),
           restore: action(),
           delete: action(),
+          permanentDelete: action(),
+          emptyTrash: action(),
+          bulkLifecycle: action(),
         },
       },
     },
@@ -304,7 +307,12 @@ function createActionTree() {
     },
     "api::admin-product-list": {
       controllers: {
-        "admin-product-list": { query: action() },
+        "admin-product-list": { query: action(), counts: action() },
+      },
+    },
+    "api::admin-media-library": {
+      controllers: {
+        "admin-media-library": { query: action() },
       },
     },
     "api::product-review": {
@@ -761,6 +769,12 @@ describe("role permission templates", () => {
     expect(editor["api::admin-product-list"].controllers["admin-product-list"].query.enabled).toBe(
       false,
     );
+    expect(
+      seller1["api::admin-product-list"].controllers["admin-product-list"].counts.enabled,
+    ).toBe(true);
+    expect(editor["api::admin-product-list"].controllers["admin-product-list"].counts.enabled).toBe(
+      false,
+    );
   });
 
   it("lets Seller 2 read the Anipo review tab and use the existing shipping actions", () => {
@@ -796,8 +810,13 @@ describe("role permission templates", () => {
         capabilities: ["product.read"],
         actions: [
           "api::admin-product-list.admin-product-list.query",
+          "api::admin-product-list.admin-product-list.counts",
           "api::product.product.createPreviewDraft",
         ],
+      },
+      {
+        capabilities: ["product.media.manage"],
+        actions: ["api::admin-media-library.admin-media-library.query"],
       },
       {
         capabilities: ["content.categoryEditorial.manage"],
@@ -829,6 +848,25 @@ describe("role permission templates", () => {
       {
         capabilities: ["product.restore"],
         actions: ["api::product.product.restore"],
+      },
+      {
+        // One bulk route for every lifecycle action; the controller checks the
+        // capability of the action requested.
+        capabilities: [
+          "product.publish",
+          "product.schedule",
+          "product.softDelete",
+          "product.restore",
+          "product.delete",
+        ],
+        actions: ["api::product.product.bulkLifecycle"],
+      },
+      {
+        capabilities: ["product.delete"],
+        actions: [
+          "api::product.product.permanentDelete",
+          "api::product.product.emptyTrash",
+        ],
       },
       {
         capabilities: ["product.homepage.manage"],
@@ -876,7 +914,8 @@ describe("role permission templates", () => {
         ],
       },
       {
-        capabilities: ["order.financial.read"],
+        // The handler narrows cancel/adjust holders to the operation kind they queue.
+        capabilities: ["order.financial.read", "order.cancel", "order.items.adjust"],
         actions: ["api::order.order.adminPaymentOperation"],
       },
       {
@@ -1296,7 +1335,9 @@ describe("role permission templates", () => {
     expect(order.create.enabled).toBe(false);
     expect(order.update.enabled).toBe(false);
     expect(order.delete.enabled).toBe(false);
-    expect(order.adminPaymentOperation.enabled).toBe(false);
+    // Enabled so the admin can poll a SnappPay cancel it queued; the handler
+    // limits order.cancel holders to CANCEL operations.
+    expect(order.adminPaymentOperation.enabled).toBe(true);
 
     expect(controller("api::plugin-user", "plugin-user").searchCustomers.enabled).toBe(false);
     expect(controller("api::plugin-user", "plugin-user").createPluginUser.enabled).toBe(false);
@@ -1342,9 +1383,10 @@ describe("role permission templates", () => {
       enabledActionNames(tree[typeKey].controllers[controllerName]);
 
     // softDelete/restore are the reversible recycle-bin pair, inherited from
-    // Seller 1. Note "delete" is still absent: permanent deletion stays
-    // Superadmin-only.
+    // Seller 1. Note "delete", "permanentDelete" and "emptyTrash" are still
+    // absent: permanent deletion stays Superadmin-only.
     expect(enabled("api::product", "product")).toEqual([
+      "bulkLifecycle",
       "create",
       "createPreviewDraft",
       "find",
@@ -1384,6 +1426,7 @@ describe("role permission templates", () => {
     expect(enabled("api::shipping-city", "shipping-city")).toEqual(["find", "findOne"]);
     expect(enabled("api::order", "order")).toEqual([
       "adminCancel",
+      "adminPaymentOperation",
       "adminTransition",
       "adminUpdateAddress",
       "adminUpdateNotes",

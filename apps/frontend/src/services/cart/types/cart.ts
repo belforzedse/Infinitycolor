@@ -152,6 +152,7 @@ export type FinalizeCartResponse = SharedFinalizeCartResponse;
 /** Delivery address as returned alongside an active reserve group. */
 export interface ReserveDeliveryAddress {
   id?: number;
+  FullName?: string | null;
   FullAddress?: string | null;
   PostalCode?: string | null;
   shipping_city?: {

@@ -93,6 +93,12 @@ describe("parseOrderAddressInput", () => {
     });
   });
 
+  it("accepts the all-zero placeholder checkout allows for an unknown postal code", () => {
+    expect(parseOrderAddressInput({ ...input, postalCode: "۰۰۰۰۰۰۰۰۰۰" }).postalCode).toBe(
+      "0000000000",
+    );
+  });
+
   it.each([
     [{ ...input, postalCode: "123" }, "postalCode"],
     [{ ...input, recipientPhone: "021123" }, "recipientPhone"],

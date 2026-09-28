@@ -12,6 +12,7 @@ import { RedisClient } from "../../index";
 import { getActiveStaffRecipients } from "../../api/order-alert-setting/lib/recipients";
 import { getStaffPatternCode, loadSmsConfig } from "./config";
 import { sendPatternSms } from "./ippanel";
+import { isE2EFixturePhone } from "../../utils/e2eFixtures";
 import { normalizeIranMobile, toEnglishDigits } from "./phone";
 import { maskPhone } from "./redaction";
 import type { SmsPatternParams, SmsSendResult, StrapiSmsLike } from "./types";
@@ -210,6 +211,12 @@ export async function notifyStaffOrderStartedSms(
   if (order.Status !== TARGET_STATUS) {
     // The order moved on (or the settlement rolled back). Nothing to announce.
     return { ok: false, skipped: true, reason: "status_not_started" };
+  }
+
+  // A staging E2E purchase is not an order staff should be paged about.
+  if (isE2EFixturePhone(order?.user?.phone)) {
+    await recordOutcome(strapi, orderId, [], { reason: "e2e_fixture", sent: 0 });
+    return { ok: false, skipped: true, reason: "e2e_fixture" };
   }
 
   const recipients = await getActiveStaffRecipients(strapi);

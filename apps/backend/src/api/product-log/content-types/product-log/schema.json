@@ -32,7 +32,10 @@
         "Reschedule",
         "CancelSchedule",
         "Publish",
-        "Unpublish"
+        "Unpublish",
+        "Trash",
+        "Restore",
+        "PermanentDelete"
       ],
       "required": true
     },
@@ -53,4 +56,3 @@
     }
   }
 }
-

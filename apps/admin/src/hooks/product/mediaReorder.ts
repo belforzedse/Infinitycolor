@@ -47,6 +47,14 @@ export const extractMediaMime = (entry: unknown): string | null => {
   return null;
 };
 
+/** File id of a Media entry in either atom shape: `{ id, attributes }` (edit) or `"12"` (add). */
+export const extractMediaId = (entry: unknown): number | null => {
+  const raw = isRecord(entry) ? entry.id : entry;
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+};
+
 export const isImageMediaEntry = (entry: unknown): boolean =>
   extractMediaMime(entry)?.startsWith("image/") ?? false;
 
