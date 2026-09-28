@@ -414,7 +414,7 @@ function SuperAdminMobileSidebarDrawer({
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
-      <Dialog as="div" className="relative z-[1200]" onClose={onClose}>
+      <Dialog as="div" className="relative z-[1200]" onClose={onClose} aria-label="منوی مدیریت">
         <div dir="ltr">
           <Transition.Child
             as={Fragment}

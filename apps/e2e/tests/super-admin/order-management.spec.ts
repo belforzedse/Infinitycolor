@@ -1,4 +1,4 @@
-import { expect, test, type Request } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import { authStorageStatePath } from "../../helpers/auth";
 import {
   cleanupRuntimeOrders,
@@ -9,6 +9,11 @@ import { apiGet, expectApiOk } from "../../helpers/api";
 import { prepareStorefrontPage } from "../../helpers/page";
 
 type AdvancedFilter = { field?: string; operator?: string; value?: string };
+
+/** An option of an advanced-filter select; the selects portal their lists to document.body. */
+function filterOption(page: Page, label: string) {
+  return page.locator("ul button:visible").filter({ hasText: new RegExp(`^${label}$`) });
+}
 
 /** The orders page lists through POST /admin/orders-list/query, filters in the JSON body. */
 function ordersQueryFilters(req: Request): AdvancedFilter[] | null {
@@ -105,13 +110,10 @@ test.describe("super-admin order management", () => {
     await filterDialog.getByTestId("advanced-filter-add").click();
     const filterRow = filterDialog.getByTestId("advanced-filter-row");
     await expect(filterRow).toBeVisible({ timeout: 10_000 });
-    // The row's selects portal their option lists to document.body.
-    const openOption = (label: string) =>
-      page.locator("ul button:visible").filter({ hasText: new RegExp(`^${label}$`) });
     await filterRow.locator("button").first().click();
-    await openOption("توضیحات").click();
+    await filterOption(page, "توضیحات").click();
     await filterRow.locator("button").nth(1).click();
-    await openOption("شامل").click();
+    await filterOption(page, "شامل").click();
     await filterRow.getByPlaceholder("مقدار").fill("E2E_DO_NOT_USE");
 
     const filteredRequest = page.waitForRequest((req) =>
@@ -152,5 +154,28 @@ test.describe("super-admin order management", () => {
     await expect(
       page.getByText("توضیحات: شامل E2E_DO_NOT_USE").filter({ visible: true }),
     ).toHaveCount(0);
+  });
+
+  // On a phone the filter is a fixed sheet (z-[1200]); the option lists are
+  // portaled to <body>, so they must stack above it. click() waits until the
+  // option itself would receive the tap, so a covered option times out.
+  test("@admin advanced filter options can be picked on a phone", async ({ page }) => {
+    await prepareStorefrontPage(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/orders?pageSize=100", { waitUntil: "domcontentloaded" });
+
+    await page.getByRole("button", { name: /فیلتر پیشرفته/ }).filter({ visible: true }).click();
+    const filterDialog = page.getByRole("dialog", { name: "فیلتر پیشرفته" });
+    await expect(filterDialog).toBeVisible();
+    await filterDialog.getByTestId("advanced-filter-add").click();
+    const filterRow = filterDialog.getByTestId("advanced-filter-row");
+    await expect(filterRow).toBeVisible({ timeout: 10_000 });
+
+    await filterRow.locator("button").first().click();
+    await filterOption(page, "توضیحات").click({ timeout: 10_000 });
+    await expect(filterRow.locator("button").first()).toContainText("توضیحات");
+    await filterRow.locator("button").nth(1).click();
+    await filterOption(page, "شامل").click({ timeout: 10_000 });
+    await expect(filterRow.locator("button").nth(1)).toContainText("شامل");
   });
 });
