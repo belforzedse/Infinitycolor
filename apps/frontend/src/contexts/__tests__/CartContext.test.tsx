@@ -672,6 +672,22 @@ describe("CartProvider analytics outcomes", () => {
     expect(analyticsActions()).not.toContain("remove_from_cart");
   });
 
+  it("says why an add was refused and resyncs the cart", async () => {
+    await renderSignedIn();
+    mockCartService.getUserCart.mockClear();
+    // The shape ApiClient rejects with for ctx.badRequest("Product is currently unavailable").
+    mockCartService.addItemToCart.mockRejectedValueOnce({
+      message: "Product is currently unavailable",
+      status: 400,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+
+    await waitFor(() =>
+      expect(mockNotify.error).toHaveBeenCalledWith("این محصول در حال حاضر قابل خرید نیست."),
+    );
+    expect(mockCartService.getUserCart).toHaveBeenCalled();
+  });
+
   it("records add_to_cart once on success and never on failure", async () => {
     await renderSignedIn();
     fireEvent.click(screen.getByRole("button", { name: "add" }));

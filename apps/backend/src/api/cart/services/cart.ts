@@ -4,7 +4,7 @@
 
 import * as Sentry from "@sentry/node";
 import { factories } from "@strapi/strapi";
-import { getOrCreateUserCart } from "./lib/get-user-cart";
+import { getOrCreateUserCart, type GetUserCartOptions } from "./lib/get-user-cart";
 import { createOrderAndItems } from "./lib/order";
 import { computeCouponDiscount, findFirstActiveGeneralDiscount } from "./lib/discounts";
 import { claimLimitedDiscountUsage } from "./lib/discount-claim";
@@ -57,8 +57,8 @@ import {
 import { isWalletHoldsEnabled } from "../../local-user-wallet/services/wallet-readiness";
 
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
-  async getUserCart(userId: number) {
-    return getOrCreateUserCart(strapi as any, userId);
+  async getUserCart(userId: number, options?: GetUserCartOptions) {
+    return getOrCreateUserCart(strapi as any, userId, options);
   },
 
   async addCartItem(cartId: number, productVariationId: number, count: number = 1) {

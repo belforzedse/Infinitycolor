@@ -19,18 +19,14 @@ test(
     expect((await fixtureApi.setProductPublished(shopper.slot, false)).published).toBe(false);
 
     await page.getByRole("button", { name: "افزودن به سبد خرید" }).click();
-    // Today the add path shows the generic failure toast; the specific
-    // availability message (lib/errorTranslations) is the intended one.
-    await expect(
-      page.getByText(/این محصول در حال حاضر قابل خرید نیست|افزودن کالا به سبد خرید با خطا مواجه شد/).first(),
-    ).toBeVisible();
+    await expect(page.getByText("این محصول در حال حاضر قابل خرید نیست.").first()).toBeVisible();
     const api = await shopperApi(page);
     expect((await api.get("/carts/me")).data?.cart_items ?? []).toEqual([]);
   },
 );
 
 test(
-  "a cart line whose product left the store is no longer offered or payable",
+  "a cart line whose product left the store is removed, and the shopper is told which one",
   { tag: "@regression" },
   async ({ page, shopper, fixtureApi }) => {
     await signIn(page, shopper, "/");
@@ -41,8 +37,9 @@ test(
 
     await gotoStorefront(page, "/cart");
     await expect(cartRows(page)).toHaveCount(0);
-    await gotoStorefront(page, "/checkout");
-    await expect(page.getByText("سبد خرید شما خالی است یا مبلغ نامعتبر است")).toBeVisible();
+    // The stock check removes the line and names it; before 09-28 the line was
+    // hidden from it too, so the cart just emptied without a word.
+    await expect(page.getByTestId("cart-stock-notice").first()).toContainText(shopper.product.title);
     expect((await api.get("/carts/me")).data?.cart_items ?? []).toEqual([]);
   },
 );
