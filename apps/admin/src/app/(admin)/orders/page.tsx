@@ -30,6 +30,7 @@ import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedF
 import type { BulkActionOption } from "@/components/SuperAdmin/Table/bulkActions";
 import { useCan } from "@/hooks/useCan";
 import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
+import { useAdvancedFiltersUrlState } from "@/components/SuperAdmin/Table/advancedFiltersUrlState";
 import ShippingMethodFilters from "./ShippingMethodFilters";
 import { useOrderStatusCounts } from "@/hooks/useOrderStatusCounts";
 import { faNum } from "@/utils/faNum";
@@ -80,9 +81,7 @@ export default function OrdersPage() {
   const canPrintOrders = useCan("order.read");
   const [, setRefresh] = useAtom(refreshTable);
   const [activeTab, setActiveTab] = useState<AdminOrderTab>("all");
-  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
-    [],
-  );
+  const [advancedFilters, setAdvancedFilters] = useAdvancedFiltersUrlState();
   const [shippingMethods, setShippingMethods] = useState<
     AdminShippingMethodOption[]
   >([]);
@@ -151,10 +150,17 @@ export default function OrdersPage() {
     void setPage("1");
   }, 500);
 
-  // Trigger debounced search when searchQuery changes
+  // Trigger debounced search when searchQuery changes. Nothing to do when it
+  // matches the applied search (including on mount): the search resets the
+  // page, and a URL write on mount would undo a reloaded ?page= and can
+  // cancel a <Link> navigation already under way.
   useEffect(() => {
+    if (searchQuery === debouncedSearchQuery) {
+      debouncedSearch.cancel();
+      return;
+    }
     debouncedSearch(searchQuery);
-  }, [searchQuery, debouncedSearch]);
+  }, [searchQuery, debouncedSearchQuery, debouncedSearch]);
 
   // Cancel any pending debounced calls on unmount
   useEffect(() => {
@@ -401,12 +407,10 @@ export default function OrdersPage() {
     [setPage],
   );
 
+  // Writes the filters and page 1 in one URL update.
   const handleFiltersChange = useCallback(
-    (next: AdvancedFilterItem[]) => {
-      setAdvancedFilters(next);
-      void setPage("1");
-    },
-    [setPage],
+    (next: AdvancedFilterItem[]) => setAdvancedFilters(next),
+    [setAdvancedFilters],
   );
 
   return (

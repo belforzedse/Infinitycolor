@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { NuqsTestingAdapter, type UrlUpdateEvent } from "nuqs/adapters/testing";
 
 let mockTableProps: any;
 let mockWrapperProps: any;
@@ -63,14 +64,23 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("jotai", () => ({ useAtom: () => [false, jest.fn()] }));
-jest.mock("nuqs", () => ({ useQueryState: () => ["1", jest.fn()] }));
-jest.mock("use-debounce", () => ({
-  useDebouncedCallback: (callback: (...args: any[]) => void) => {
-    const debounced = (...args: any[]) => callback(...args);
-    debounced.cancel = jest.fn();
-    return debounced;
-  },
-}));
+// Stable across renders like the real hook: a new function each render would
+// re-run the page's search effect, and its setPage, on every render.
+jest.mock("use-debounce", () => {
+  const { useRef } = jest.requireActual("react");
+  return {
+    useDebouncedCallback: (callback: (...args: any[]) => void) => {
+      const debounced = useRef(null);
+      if (!debounced.current) {
+        const fn: any = (...args: any[]) => fn.callback(...args);
+        fn.cancel = jest.fn();
+        debounced.current = fn;
+      }
+      debounced.current.callback = callback;
+      return debounced.current;
+    },
+  };
+});
 
 import OrdersPage from "../page";
 import {
@@ -78,6 +88,14 @@ import {
   listAdminShippingMethods,
 } from "@/services/super-admin/orders/list";
 import { cancelOrder, changeOrderStatus } from "@/services/super-admin/orders/adjustItems";
+
+function renderPage(searchParams = "", onUrlUpdate?: (event: UrlUpdateEvent) => void) {
+  return render(
+    <NuqsTestingAdapter searchParams={searchParams} onUrlUpdate={onUrlUpdate}>
+      <OrdersPage />
+    </NuqsTestingAdapter>,
+  );
+}
 
 describe("orders page bounded data ownership", () => {
   beforeEach(() => {
@@ -113,7 +131,7 @@ describe("orders page bounded data ownership", () => {
   });
 
   it("uses one POST-backed loader with controlled filters", async () => {
-    render(<OrdersPage />);
+    renderPage();
 
     expect(screen.getByTestId("orders-table")).toBeInTheDocument();
     expect(mockTableProps.url).toBeUndefined();
@@ -142,7 +160,7 @@ describe("orders page bounded data ownership", () => {
 
   it("uses the matching single-order permissions for bulk actions", () => {
     mockCapabilities = new Set(["order.read"]);
-    const { unmount } = render(<OrdersPage />);
+    const { unmount } = renderPage();
 
     expect(mockTableProps.enableSelection).toBe(true);
     expect(mockTableProps.bulkOptions.map((option: { id: string }) => option.id)).toEqual([
@@ -151,7 +169,7 @@ describe("orders page bounded data ownership", () => {
 
     unmount();
     mockCapabilities = new Set(["order.read", "order.status.update"]);
-    render(<OrdersPage />);
+    renderPage();
 
     // No `status-Started`: nothing in the backend transition chain leads to
     // Started, so offering it could only ever produce a 409.
@@ -163,7 +181,7 @@ describe("orders page bounded data ownership", () => {
 
     unmount();
     mockCapabilities = new Set(["order.read", "order.status.update", "order.cancel"]);
-    render(<OrdersPage />);
+    renderPage();
 
     expect(mockTableProps.bulkOptions.map((option: { id: string }) => option.id)).toEqual([
       "print",
@@ -174,7 +192,7 @@ describe("orders page bounded data ownership", () => {
   });
 
   it("loads pending-payment orders in their own tab", async () => {
-    render(<OrdersPage />);
+    renderPage();
 
     fireEvent.click(screen.getByRole("button", { name: /در انتظار پرداخت/ }));
     await mockTableProps.dataLoader({
@@ -191,14 +209,14 @@ describe("orders page bounded data ownership", () => {
 
   it("shows Seller 2 the counted Anipo review tab through the existing order list", async () => {
     mockCapabilities = new Set(["order.read", "order.shipping.manage"]);
-    render(<OrdersPage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /نیاز به بررسی آنیپو ۲/ }));
     await mockTableProps.dataLoader({ page: 1, pageSize: 25, filters: [], signal: new AbortController().signal });
     expect(listAdminOrders).toHaveBeenLastCalledWith(expect.objectContaining({ tab: "anipo_attention" }));
   });
 
   it("shows Persian counters for every order tab and keeps active reserves separate", () => {
-    render(<OrdersPage />);
+    renderPage();
 
     expect(screen.getByRole("button", { name: /همه ۱۲/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /در حال انجام ۴/ })).toBeInTheDocument();
@@ -215,7 +233,7 @@ describe("orders page bounded data ownership", () => {
       error: "شمارش سفارش‌ها موقتاً در دسترس نیست.",
     };
 
-    render(<OrdersPage />);
+    renderPage();
 
     expect(screen.getByTestId("orders-table")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -230,7 +248,7 @@ describe("orders page bounded data ownership", () => {
       { code: "tipax", title: "تیپاکس" },
       { code: "pickup", title: "حضوری" },
     ]);
-    render(<OrdersPage />);
+    renderPage();
 
     const post = await screen.findByRole("checkbox", { name: "پست" });
     const tipax = screen.getByRole("checkbox", { name: "تیپاکس" });
@@ -256,7 +274,7 @@ describe("orders page bounded data ownership", () => {
   });
 
   it("narrows the list to reserve orders with the reserve checkbox", async () => {
-    render(<OrdersPage />);
+    renderPage();
 
     const reserveOnly = screen.getByRole("checkbox", {
       name: "نمایش سفارش‌های رزروی",
@@ -302,7 +320,7 @@ describe("orders page bounded data ownership", () => {
   });
 
   it("keeps reserve shipments off the order-status tabs", () => {
-    render(<OrdersPage />);
+    renderPage();
 
     expect(
       screen.queryByRole("button", { name: "سفارش‌های رزروی" }),
@@ -326,7 +344,7 @@ describe("orders page bounded data ownership", () => {
     });
 
     it("skips held orders and applies the change to the rest", async () => {
-      render(<OrdersPage />);
+      renderPage();
 
       await mockTableProps.onBulkAction("status-Shipment", [
         row("1", false),
@@ -346,7 +364,7 @@ describe("orders page bounded data ownership", () => {
     });
 
     it("changes nothing when every selected order is held", async () => {
-      render(<OrdersPage />);
+      renderPage();
 
       await mockTableProps.onBulkAction("status-Shipment", [row("1", true), row("2", true)]);
 
@@ -362,7 +380,7 @@ describe("orders page bounded data ownership", () => {
      * Nothing is sent, and the message names the status that IS reachable.
      */
     it("refuses a transition that skips a step, naming the allowed one", async () => {
-      render(<OrdersPage />);
+      renderPage();
 
       await mockTableProps.onBulkAction("status-Shipment", [
         row("1", false, "Started"),
@@ -376,7 +394,7 @@ describe("orders page bounded data ownership", () => {
     });
 
     it("applies a transition that is the next step in the chain", async () => {
-      render(<OrdersPage />);
+      renderPage();
 
       await mockTableProps.onBulkAction("status-Done", [
         row("1", false, "Started"),
@@ -386,7 +404,7 @@ describe("orders page bounded data ownership", () => {
     });
 
     it("skips held reserve orders when completing would automatically ship them", async () => {
-      render(<OrdersPage />);
+      renderPage();
 
       await mockTableProps.onBulkAction("status-Done", [
         row("1", true, "Started"),
@@ -401,7 +419,7 @@ describe("orders page bounded data ownership", () => {
     it("cancels held reserve orders through the cancel endpoint", async () => {
       mockCapabilities = new Set(["order.read", "order.status.update", "order.cancel"]);
       (cancelOrder as jest.Mock).mockClear().mockResolvedValue({ success: true });
-      render(<OrdersPage />);
+      renderPage();
 
       await mockTableProps.onBulkAction("cancel", [
         row("1", false),
@@ -428,7 +446,7 @@ describe("orders page bounded data ownership", () => {
         .mockReset()
         .mockResolvedValueOnce({ success: true })
         .mockRejectedValueOnce(new Error("failed"));
-      render(<OrdersPage />);
+      renderPage();
 
       await mockTableProps.onBulkAction("cancel", [
         row("1", false),
@@ -440,6 +458,31 @@ describe("orders page bounded data ownership", () => {
         "1 سفارش لغو نشد. دوباره تلاش کنید.",
       );
       expect(mockRefreshOrderCounts).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("advanced filters in the URL", () => {
+    const ownFilter = { field: "[Description]", operator: "$containsi", value: "vip" };
+
+    it("restores the filters a reload or a shared link carries in ?af=", () => {
+      renderPage(new URLSearchParams({ af: JSON.stringify([ownFilter]) }).toString());
+
+      expect(mockWrapperProps.filters).toEqual([ownFilter]);
+      expect(mockTableProps.isFiltered).toBe(true);
+    });
+
+    it("writes a filter change to the URL", async () => {
+      const onUrlUpdate = jest.fn();
+      renderPage("?page=3", onUrlUpdate);
+
+      await act(async () => mockWrapperProps.onFiltersChange([ownFilter]));
+
+      await waitFor(() => {
+        const { searchParams } = onUrlUpdate.mock.calls.at(-1)?.[0] ?? { searchParams: new URLSearchParams() };
+        expect(JSON.parse(decodeURIComponent(searchParams.get("af") ?? "[]"))).toEqual([ownFilter]);
+        expect(searchParams.has("page")).toBe(false);
+      });
+      expect(mockWrapperProps.filters).toEqual([ownFilter]);
     });
   });
 });

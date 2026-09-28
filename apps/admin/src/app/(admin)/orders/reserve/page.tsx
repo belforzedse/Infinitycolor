@@ -7,6 +7,7 @@ import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { SubNav } from "@/components/admin";
 import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedFilters";
+import { useAdvancedFiltersUrlState } from "@/components/SuperAdmin/Table/advancedFiltersUrlState";
 import {
   listAdminReserveGroups,
   type ReserveGroupSort,
@@ -34,7 +35,7 @@ const RESERVE_TABS: { key: ReserveGroupTab; label: string }[] = [
 export default function ReserveGroupsPage() {
   const [activeTab, setActiveTab] = useState<ReserveGroupTab>("active");
   const [sort, setSort] = useState<ReserveGroupSort>("deadline");
-  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>([]);
+  const [advancedFilters, setAdvancedFilters] = useAdvancedFiltersUrlState();
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
@@ -44,9 +45,17 @@ export default function ReserveGroupsPage() {
     void setPage("1");
   }, 500);
 
+  // Trigger debounced search when searchQuery changes. Nothing to do when it
+  // matches the applied search (including on mount): the search resets the
+  // page, and a URL write on mount would undo a reloaded ?page= and can
+  // cancel a <Link> navigation already under way.
   useEffect(() => {
+    if (searchQuery === debouncedSearchQuery) {
+      debouncedSearch.cancel();
+      return;
+    }
     debouncedSearch(searchQuery);
-  }, [searchQuery, debouncedSearch]);
+  }, [searchQuery, debouncedSearchQuery, debouncedSearch]);
 
   useEffect(() => () => debouncedSearch.cancel(), [debouncedSearch]);
 
