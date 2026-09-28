@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { E2E_PRODUCT_SLUG } from "../../fixtures/storefront";
+// The smoke product is seeded with a discount, so Newest must leave it out; the XXXL alias
+// product sells at full price, so Newest must list it.
+import { E2E_PRODUCT_SLUG, E2E_XXXL_PRODUCT_SLUG } from "../../fixtures/storefront";
 import { cacheBustingSearchParam, strapiApiURL } from "../../helpers/env";
 import { prepareStorefrontPage } from "../../helpers/page";
 
@@ -29,8 +31,9 @@ test.describe("Newest listing (/offer?type=newest)", () => {
 
     await expect(page.getByRole("heading", { level: 1, name: "جدیدترین محصولات" })).toBeVisible();
     await expect(page.locator("[data-plp-top]")).toBeVisible();
-    const seeded = page.locator(`${resultCards}[data-product-slug="${E2E_PRODUCT_SLUG}"]`).first();
+    const seeded = page.locator(`${resultCards}[data-product-slug="${E2E_XXXL_PRODUCT_SLUG}"]`).first();
     await expect(seeded).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`${resultCards}[data-product-slug="${E2E_PRODUCT_SLUG}"]`)).toHaveCount(0);
     // Cards still open their own PDP.
     await expect(page.locator(`${resultCards} a[href^="/pdp/"]`).first()).toBeAttached();
 
@@ -53,7 +56,9 @@ test.describe("Newest listing (/offer?type=newest)", () => {
     await expect(page).toHaveURL(/\/offer\?type=newest$/);
   });
 
-  test("@api the card query serves the Newest listing with a count", async ({ request }) => {
+  test("@api the card query serves the Newest listing without discounted products", async ({
+    request,
+  }) => {
     const url = new URL(`${strapiApiURL()}/products`);
     url.searchParams.set("view", "card");
     url.searchParams.set("offer", "newest");
@@ -68,7 +73,8 @@ test.describe("Newest listing (/offer?type=newest)", () => {
     const slugs = (payload?.data ?? []).map(
       (card: { attributes?: { Slug?: string } }) => card.attributes?.Slug,
     );
-    expect(slugs).toContain(E2E_PRODUCT_SLUG);
+    expect(slugs).toContain(E2E_XXXL_PRODUCT_SLUG);
+    expect(slugs).not.toContain(E2E_PRODUCT_SLUG);
     expect(payload?.meta?.pagination?.total).toBeGreaterThanOrEqual(slugs.length);
   });
 });

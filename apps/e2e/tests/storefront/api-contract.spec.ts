@@ -4,6 +4,7 @@ import {
   E2E_PRODUCT_SLUG,
   E2E_PRODUCT_TITLE,
   E2E_UPLOAD_FIXTURE_FILE,
+  E2E_XXXL_PRODUCT_SLUG,
 } from "../../fixtures/storefront";
 import {
   cacheBustingSearchParam,
@@ -91,9 +92,17 @@ test.describe("storefront API contract", () => {
     );
     expect(newestSection).toBeTruthy();
 
-    const cards = (newestSection?.products ?? []) as HomepageProductCard[];
-    expect(cards.length).toBeGreaterThan(0);
+    const newestCards = (newestSection?.products ?? []) as HomepageProductCard[];
+    expect(newestCards.length).toBeGreaterThan(0);
+    // Newest never shows a discount: the discounted smoke product is left out of it and
+    // the full-price alias product is in it.
+    const newestSlugs = newestCards.map((card) => card.attributes?.Slug);
+    expect(newestSlugs).toContain(E2E_XXXL_PRODUCT_SLUG);
+    expect(newestSlugs).not.toContain(E2E_PRODUCT_SLUG);
 
+    const cards = sections.flatMap(
+      (section: { products?: HomepageProductCard[] }) => section.products ?? [],
+    ) as HomepageProductCard[];
     const seededCard = cards.find(
       (card) => card.attributes?.Slug === E2E_PRODUCT_SLUG,
     );

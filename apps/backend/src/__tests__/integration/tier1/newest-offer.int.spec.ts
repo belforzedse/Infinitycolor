@@ -1,7 +1,7 @@
 /**
  * The Newest listing (`/offer?type=newest` and the homepage rail) on real Postgres.
  *
- * The ranking, the Oppsi exclusion and the pagination are one raw SQL statement, so the
+ * The ranking, the discount/Oppsi exclusion and the pagination are one raw SQL statement, so the
  * order is proven against the database rather than against the builder calls: curated
  * picks first in their exact admin order, then in-stock products newest listing first,
  * then out-of-stock ones, with no duplicates, gaps or ties left to chance.
@@ -155,26 +155,30 @@ beforeAll(async () => {
     .connection("products")
     .where({ id: fx.mTrashed.id })
     .update({ removed_at: at(0.5) });
+  // Curated but discounted or Oppsi: Newest shows neither, whoever picked it.
   await product("mOppsi", { title: "مانتو OPPSI curated", createdDaysAgo: 1, discountPrice: 70000 });
+  await product("mDiscounted", { createdDaysAgo: 1, discountPrice: 60000 });
+  await product("mOppsiPlain", { title: "OPPSI curated full price", createdDaysAgo: 1 });
 
   // Automatic bucket.
   await product("a1", { createdDaysAgo: 1 });
   await product("a2", { createdDaysAgo: 2 });
   await product("a3", { createdDaysAgo: 2 }); // identical instant to a2: id breaks the tie
-  await product("a4", { createdDaysAgo: 3, discountPrice: 80000 }); // discounted, not Oppsi: kept
-  await product("a5", { title: "Oppsi without discount", createdDaysAgo: 4 }); // kept
+  await product("a4", { createdDaysAgo: 3, discountPrice: 80000 }); // discounted: excluded
+  await product("a5", { title: "Oppsi without discount", createdDaysAgo: 4 }); // Oppsi: excluded
+  await product("o1", { title: "foo oppsi bar full price", createdDaysAgo: 0.3 }); // Oppsi: excluded
   // Created long ago but first published recently: listed by its go-live moment.
   await product("a6", { createdDaysAgo: 100, publishedDaysAgo: 0.5 });
   await product("a7", { createdDaysAgo: 0.1, inStock: false }); // newest, but out of stock
   await product("a8", { createdDaysAgo: 6, inStock: false });
   // Edited by an admin just now, listed 50 days ago: must not jump the queue.
   await product("a9", { createdDaysAgo: 50, editedDaysAgo: 0 });
-  // Oppsi titles whose "discount" is not one by the storefront rule stay in.
-  await product("k1", { title: "oppsi price-not-lower", createdDaysAgo: 7, discountPrice: 100000 });
-  await product("k2", { title: "OPPSI zero-discount", createdDaysAgo: 8, discountPrice: 0 });
-  await product("k3", { title: "oppsi removed-general", createdDaysAgo: 9, generalDiscount: "removed" });
+  // A "discount" that is not one by the storefront rule does not exclude a product.
+  await product("k1", { title: "price-not-lower", createdDaysAgo: 7, discountPrice: 100000 });
+  await product("k2", { title: "zero-discount", createdDaysAgo: 8, discountPrice: 0 });
+  await product("k3", { title: "removed-general", createdDaysAgo: 9, generalDiscount: "removed" });
 
-  // Discounted Oppsi products, in every casing and position: all excluded.
+  // Discounted products, Oppsi in any casing or not: all excluded.
   await product("x1", { title: "OPPSI upper", createdDaysAgo: 0.3, discountPrice: 90000 });
   await product("x2", { title: "oppsi lower", createdDaysAgo: 0.3, discountPrice: 90000 });
   await product("x3", { title: "Oppsi mixed", createdDaysAgo: 0.3, discountPrice: 90000 });
@@ -192,6 +196,8 @@ beforeAll(async () => {
     2_000_000_000, // never existed
     fx.m3.id,
     fx.mOppsi.id,
+    fx.mDiscounted.id,
+    fx.mOppsiPlain.id,
     fx.m4.id,
     fx.mTrashed.id,
     fx.m5.id,
@@ -202,7 +208,7 @@ beforeAll(async () => {
     ...ids("m1", "m2", "m3", "m4", "m5", "m6"),
     ...ids("a6", "a1"),
     ...[fx.a2.id, fx.a3.id].sort((a, b) => b - a),
-    ...ids("a4", "a5", "k1", "k2", "k3", "a9"),
+    ...ids("k1", "k2", "k3", "a9"),
     ...ids("a7", "a8"),
   ];
 
@@ -263,14 +269,19 @@ describe("Newest listing (real Postgres)", () => {
     expect(new Set(ranked).size).toBe(ranked.length);
   });
 
-  it("excludes discounted Oppsi products, curated or not, and keeps everything else", async () => {
+  it("excludes every discounted and every Oppsi product, curated or not, and keeps the rest", async () => {
     const { ids: ranked } = await newest({ curatedProductIds: manualSetting });
 
-    for (const key of ["x1", "x2", "x3", "x4", "x5", "mOppsi"]) {
+    for (const key of [
+      "x1", "x2", "x3", "x4", "x5", // discounted Oppsi, any casing
+      "a5", "o1", "mOppsiPlain", // Oppsi with no discount entered
+      "a4", "mDiscounted", "mOppsi", // discounted, curated or not
+    ]) {
       expect(ranked).not.toContain(fx[key].id);
     }
-    // Oppsi without a real discount, and a discounted product without Oppsi, stay.
-    for (const key of ["a5", "k1", "k2", "k3", "a4"]) {
+    // A DiscountPrice that isn't below Price, a zero one, or a removed general discount is
+    // not a discount, so these stay.
+    for (const key of ["k1", "k2", "k3"]) {
       expect(ranked).toContain(fx[key].id);
     }
     // Ineligible for every storefront listing, curated or not.
@@ -281,12 +292,12 @@ describe("Newest listing (real Postgres)", () => {
 
   it("pages across the curated/automatic boundary without duplicates or gaps", async () => {
     const pages: number[][] = [];
-    for (let page = 1; page <= 5; page += 1) {
+    for (let page = 1; page <= 4; page += 1) {
       const result = await newest({
         curatedProductIds: manualSetting,
         pagination: { page, pageSize: 4 },
       });
-      expect(result.pagination).toMatchObject({ total: 18, pageCount: 5, pageSize: 4 });
+      expect(result.pagination).toMatchObject({ total: 16, pageCount: 4, pageSize: 4 });
       pages.push(result.ids);
     }
 
@@ -324,7 +335,14 @@ describe("Newest listing (real Postgres)", () => {
     const { ids: ranked } = await newest({ curatedProductIds: manualSetting, sort: ["price:asc"] });
 
     expect(new Set(ranked)).toEqual(new Set(expectedDefault));
-    expect(ranked[0]).toBe(fx.a4.id); // the only discounted card, so the lowest price
+    // Every remaining card sells at full price, so it is the plain PLP price order:
+    // in stock first, equal prices by id ascending.
+    const byId = (keys: string[]) => keys.map((key) => fx[key]).sort((a, b) => a.id - b.id);
+    const kept = Object.keys(fx).filter((key) => expectedDefault.includes(fx[key].id));
+    expect(ranked).toEqual([
+      ...byId(kept.filter((key) => fx[key].inStock)).map((f) => f.id),
+      ...byId(kept.filter((key) => !fx[key].inStock)).map((f) => f.id),
+    ]);
   });
 
   it("serves the full service path in the same order, cards hydrated", async () => {
@@ -336,7 +354,7 @@ describe("Newest listing (real Postgres)", () => {
     });
 
     expect(page2.data.map((card: any) => card.id)).toEqual(ids("m5", "m6", "a6", "a1"));
-    expect(page2.meta.pagination).toMatchObject({ total: 18, pageCount: 5 });
+    expect(page2.meta.pagination).toMatchObject({ total: 16, pageCount: 4 });
   });
 
   it("fills the homepage rail from the same ranking: curated in stock first, then the newest", async () => {

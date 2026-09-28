@@ -118,29 +118,22 @@ describe("applyNewestOfferExclusion", () => {
   });
   const offlineKnex = require(knexPath)({ client: "pg" });
 
-  it("drops a product only when its title has oppsi AND it is discounted", () => {
+  it("leaves out every discounted product and every Oppsi product", () => {
     const query = offlineKnex({ p: "products" }).select("p.id");
     applyNewestOfferExclusion(offlineKnex, query, fakeStrapi);
     const sql = query.toString();
 
-    // One negated conjunction: NOT (oppsi title AND discounted), never NOT oppsi OR NOT discounted.
-    expect(sql).toMatch(
-      /where not \(LOWER\(COALESCE\(p\.title, ''\)\) LIKE '%oppsi%' and exists \(select 1 from "product_variations" as "pv"/,
-    );
-    // The discount test is the storefront's hasDiscount predicate: a real DiscountPrice
-    // below Price, or a live general discount, on a published priced variation.
+    // The storefront's hasDiscount predicate, negated: a real DiscountPrice below Price, or
+    // a live general discount, on a published priced variation.
+    expect(sql).toMatch(/where not exists \(select 1 from "product_variations" as "pv"/);
     expect(sql).toContain('"pv"."is_published" = true');
     expect(sql).toContain(
       "COALESCE(pv.discount_price, 0)::numeric > 0 AND COALESCE(pv.discount_price, 0)::numeric < COALESCE(pv.price, 0)::numeric",
     );
     expect(sql).toContain('"gd"."removed_at" is null');
-    expect(sql.match(/not \(/g)).toHaveLength(1);
-  });
-
-  it("matches the title case-insensitively by lower-casing it against a lower-case term", () => {
-    const query = offlineKnex({ p: "products" }).select("p.id");
-    applyNewestOfferExclusion(offlineKnex, query, fakeStrapi);
-    expect(query.toString()).toContain("LOWER(COALESCE(p.title, '')) LIKE '%oppsi%'");
+    // Oppsi is its own condition, ANDed with the discount one: an Oppsi title is excluded
+    // even when no discount was entered.
+    expect(sql).toMatch(/\) and LOWER\(COALESCE\(p\.title, ''\)\) NOT LIKE '%oppsi%'$/);
   });
 });
 

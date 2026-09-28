@@ -223,7 +223,8 @@ export const isEnabledCardParam = (value: unknown): boolean =>
 /**
  * The storefront "Newest" listing (`/offer?type=newest` and the homepage rail). One
  * dataset and one ranking for both: the manually curated `homeNewestProductIds` in
- * their exact admin order, then every other eligible product by listing date.
+ * their exact admin order, then every other eligible product by listing date. Discounted
+ * and Oppsi products are never part of it.
  */
 export const NEWEST_OFFER = "newest" as const;
 
@@ -237,8 +238,9 @@ export const isNewestOffer = (offer: unknown): boolean => offer === NEWEST_OFFER
 // so the fallback is pinned to UTC instead of the session TimeZone.
 export const NEWEST_LISTED_AT_SQL = "COALESCE(p.published_at, p.created_at AT TIME ZONE 'UTC')";
 
-// Discounted Oppsi items are left out of Newest only; they stay in every other listing.
-const NEWEST_EXCLUDED_DISCOUNTED_TITLE_TERM = "oppsi";
+// Oppsi ("زده‌دار", flawed stock) is clearance by definition, so it stays out of Newest even
+// when nobody has entered a discount price for it yet.
+const NEWEST_EXCLUDED_TITLE_TERM = "oppsi";
 
 // The same eligibility the storefront PLP requests (plp.ts buildPLPProductsQuery), held
 // server-side so the homepage rail and the Newest page cannot drift apart.
@@ -671,16 +673,14 @@ export const applyExcludeDiscountFilter = (
   query.whereNotExists(predicate);
 };
 
-// Newest drops a product only when both hold: "oppsi" in its title (any case) AND it is
-// discounted by the same rule as the `hasDiscount` listing. A plain WHERE, so it applies
-// before pagination and the count, and to curated picks too.
+// Newest shows no discounted product, by the same rule as the `hasDiscount` listing, and no
+// Oppsi product ("oppsi" anywhere in the title, any case) whether or not it carries a
+// discount. Plain WHERE clauses, so they apply before pagination and the count, and to
+// curated picks too.
 export const applyNewestOfferExclusion = (knex: any, query: any, strapi: any) => {
-  const discounted = buildDiscountedVariationExistsPredicate(knex, strapi);
-  query.whereNot(function discountedOppsi(this: any) {
-    this.whereRaw("LOWER(COALESCE(p.title, '')) LIKE ?", [
-      `%${NEWEST_EXCLUDED_DISCOUNTED_TITLE_TERM}%`,
-    ]).whereExists(discounted);
-  });
+  query
+    .whereNotExists(buildDiscountedVariationExistsPredicate(knex, strapi))
+    .whereRaw("LOWER(COALESCE(p.title, '')) NOT LIKE ?", [`%${NEWEST_EXCLUDED_TITLE_TERM}%`]);
 };
 
 const applySearchFilter = (query: any, q: unknown) => {
@@ -814,8 +814,8 @@ export async function findOrderedProductIds(strapi: any, params: OrderedProductI
   const filters = params.filters || {};
   const sortKey = parseQuerySortKey(params.sort);
   const newestOffer = isNewestOffer(params.offer);
-  // Newest has its own discount rule (applyNewestOfferExclusion); the /plp display toggle
-  // behind `excludeDiscount` never applies to it.
+  // Newest always leaves discounted and Oppsi products out (applyNewestOfferExclusion),
+  // curated or not; the /plp display toggle behind `excludeDiscount` never applies to it.
   const excludeDiscount = newestOffer
     ? false
     : await resolveExcludeDiscountFlag(strapi, params.excludeDiscount);
