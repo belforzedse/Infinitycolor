@@ -133,6 +133,8 @@ describe("product revalidation", () => {
     expect(paths).toContain(`/pdp/${ENCODED_SLUG}`);
     // The unencoded path is what silently matched nothing before.
     expect(paths).not.toContain(`/pdp/${PERSIAN_SLUG}`);
+    // Every listing that can show the product goes with it, the Newest page included.
+    expect(paths).toEqual(expect.arrayContaining(["/", "/plp", "/offer"]));
   });
 
   it("no longer invalidates tags that no fetch attaches", async () => {
@@ -179,14 +181,14 @@ describe("type-only payloads (what Strapi actually sends)", () => {
     expect(revalidateTag.mock.calls.map(([t]) => t)).toContain(HOME_PRODUCTS_TAG);
   });
 
-  it("invalidates homepage, blog, PLP and sitemap for site-settings", async () => {
+  it("invalidates homepage, blog, PLP, Newest and sitemap for site-settings", async () => {
     // site-settings covers the curated Newest/Popular/Discount id lists too (see
-    // product.ts's findProductCards), which now drive "/plp" as well as the homepage
-    // rail -- so this blanket sweep has to reach the PLP cache tags or a curation edit
-    // sits stale until the outer "storefrontLive" cache-components window expires.
+    // product.ts's findProductCards), which drive "/plp" and "/offer?type=newest" as well
+    // as the homepage rails -- so this blanket sweep has to reach the PLP cache tags or a
+    // curation edit sits stale until the outer "storefrontLive" cache-components window expires.
     await POST(request({ type: "site-settings" }));
     expect(revalidatePath.mock.calls.map(([p]) => p)).toEqual(
-      expect.arrayContaining(["/", "/blog", "/plp", "/sitemap.xml"]),
+      expect.arrayContaining(["/", "/blog", "/plp", "/offer", "/sitemap.xml"]),
     );
     expect(revalidateTag.mock.calls.map(([t]) => t)).toEqual(
       expect.arrayContaining(["site-settings", PRODUCT_TAG, PRODUCT_COLLECTION_TAG, SITEMAP_TAG]),

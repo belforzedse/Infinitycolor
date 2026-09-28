@@ -4,6 +4,7 @@
  */
 
 import { getFrontendUrls } from "../../../utils/revalidate";
+import { clearAllProductCaches } from "../../../utils/productOriginCache";
 import type { Attribute } from "@strapi/types";
 import { factories } from "@strapi/strapi";
 import { writeAuditEvent } from "../../../audit/writer";
@@ -384,12 +385,14 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       data[field] = value;
     }
     const settingsEntity = await ensureSettingsEntity(strapi);
+    let changed = false;
     const updated = await strapi.db.transaction(async ({ trx }) => {
       const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
         data,
         transacting: trx,
       });
       const changes = settingChanges(settingsEntity, entity, Object.keys(data));
+      changed = changes.length > 0;
       await writeAuditEvent(
         strapi,
         {
@@ -412,6 +415,10 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       );
       return entity;
     });
+    // The rails and the Newest listing read these ids per request, but the product
+    // endpoint caches (homepage-sections, rest-cache card lists) only clear on product
+    // writes, so a reorder would otherwise wait out their TTLs.
+    if (changed) await clearAllProductCaches(strapi, "homepage-products");
     ctx.body = {
       data: {
         id: updated.id,

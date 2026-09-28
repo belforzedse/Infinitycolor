@@ -8,7 +8,7 @@ import fetchWithTimeout from "@/utils/fetchWithTimeout";
 import logger from "@/utils/logger";
 import { getCategoryAndDescendantSlugs } from "@/utils/category-descendants";
 import { getValidatedCategoryCached, type CategoryData } from "@/utils/category-validation";
-import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import { getCategoryPlpHref, getOfferPlpHref, type PLPOffer } from "@/utils/plpRoutes";
 import { getProductCategoriesForRender, type ProductCategorySummary } from "./categories";
 import { formatProductsToCardProps } from "./product";
 import type { ProductSmallCardProps } from "@/components/Product/SmallCard";
@@ -72,6 +72,8 @@ export interface PLPQuery {
   search?: string;
   sort?: string;
   hasDiscount?: boolean;
+  // Set by the route (/offer?type=…), never parsed from the shopper's query here.
+  offer?: PLPOffer;
 }
 
 export interface PLPCategoryContext {
@@ -250,6 +252,13 @@ export function buildPLPProductsQuery(
     queryParams.append("sort[0]", query.sort);
   }
 
+  // An offer listing's dataset, eligibility and default ranking (curated picks included)
+  // are resolved by the backend, so none of the /plp view hints below apply to it.
+  if (query.offer) {
+    queryParams.append("offer", query.offer);
+    return queryParams;
+  }
+
   // True once every ancillary filter is untouched -- no category, search, price,
   // availability, or size/color narrowing. Shared by the excludeDiscount hint below and
   // by the curated-section hint: both only apply to a section's exact unfiltered "View
@@ -272,19 +281,18 @@ export function buildPLPProductsQuery(
     queryParams.append("excludeDiscount", "true");
   }
 
-  // Hint naming which curated storefront section (see site_settings' homeNewestProductIds /
-  // homeFavoriteProductIds / homeDiscountedProductIds) this exact "View all" URL maps to, if
-  // any. Mirrors the three canonical hrefs built in OffersListHomePage/DiscountedShowcase --
-  // the backend independently re-validates the hint against the actual query before honoring
-  // it, so a stale or spoofed value just falls back to the plain algorithmic query.
-  let curatedSection: "newest" | "popular" | "discount" | undefined;
+  // Hint naming which curated storefront section (see site_settings' homeFavoriteProductIds /
+  // homeDiscountedProductIds) this exact "View all" URL maps to, if any. Mirrors the canonical
+  // hrefs built in OffersListHomePage/DiscountedShowcase -- the backend independently
+  // re-validates the hint against the actual query before honoring it, so a stale or spoofed
+  // value just falls back to the plain algorithmic query. Newest is not one of them: its
+  // curated picks lead the /offer?type=newest listing instead.
+  let curatedSection: "popular" | "discount" | undefined;
   if (hasOnlyBaseFilters) {
     if (query.hasDiscount && !query.sort) {
       curatedSection = "discount";
     } else if (!query.hasDiscount && query.sort === "AverageRating:desc") {
       curatedSection = "popular";
-    } else if (!query.hasDiscount && query.sort === "LastEditedByAdminAt:desc") {
-      curatedSection = "newest";
     }
   }
   if (curatedSection) {
@@ -539,7 +547,27 @@ export async function getPLPHeroProducts(categorySlug?: string): Promise<Product
   }
 }
 
+const OFFER_PAGE_COPY: Record<PLPOffer, { title: string; description: string }> = {
+  newest: {
+    title: "جدیدترین محصولات",
+    description: `جدیدترین محصولات ${SITE_NAME}؛ تازه‌ترین مدل‌ها را زودتر از همه ببینید و بخرید.`,
+  },
+};
+
+export function getOfferPageTitle(offer: PLPOffer) {
+  return OFFER_PAGE_COPY[offer].title;
+}
+
 export function buildPLPPageCopy(query: PLPQuery, category?: PLPCategoryContext) {
+  if (query.offer) {
+    const copy = OFFER_PAGE_COPY[query.offer];
+    return {
+      pageName: copy.title,
+      pageDescription: copy.description,
+      url: `${SITE_URL}${getOfferPlpHref(query.offer)}`,
+    };
+  }
+
   const pageName = category
     ? `خرید ${category.title}`
     : query.search
@@ -655,6 +683,25 @@ export function buildPLPMetadata(
     title: baseTitle,
     description: `مشاهده و خرید انواع محصولات با بهترین قیمت در ${SITE_NAME}.`,
     alternates: { canonical: `${SITE_URL}/plp` },
+  };
+}
+
+/** Filters, sort and paging are views of the same listing, so they share one canonical URL. */
+export function buildOfferPLPMetadata(offer: PLPOffer): Metadata {
+  const { title, description } = OFFER_PAGE_COPY[offer];
+  const canonicalUrl = `${SITE_URL}${getOfferPlpHref(offer)}`;
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      url: canonicalUrl,
+    },
+    alternates: {
+      canonical: canonicalUrl,
+    },
   };
 }
 

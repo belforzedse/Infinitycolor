@@ -18,7 +18,7 @@ import {
   pickBatchedHomepageSection,
   type HomepageProductSectionId,
 } from "@/services/product/homepage";
-import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import { getCategoryPlpHref, getOfferPlpHref } from "@/utils/plpRoutes";
 import type {
   HomeGifPromoAssignment,
   SuperAdminSettings,
@@ -229,6 +229,7 @@ async function NewestSection({
                   icon={<NewIcon />}
                   title="جدیدترین ها"
                   products={newProducts}
+                  viewAllHref={getOfferPlpHref("newest")}
                 />
               )}
             </Reveal>
