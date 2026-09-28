@@ -24,6 +24,7 @@ jest.mock("zaman", () => ({
 
 let mockPathname = "/sales";
 let mockStart = "2026-01-01";
+let mockEnd = "2026-12-31";
 let mockAdminRole: string | null = null;
 let mockCapabilities: string[] = [];
 const setRangeMock = jest.fn();
@@ -47,7 +48,7 @@ jest.mock("@/components/SuperAdmin/reports/shared/useReportQueryState", () => {
   return {
     useReportQueryState: () => ({
       start: mockStart,
-      end: "2026-12-31",
+      end: mockEnd,
       setRange: setRangeMock,
     }),
     toDateOnly: dates.toDateOnly,
@@ -62,6 +63,8 @@ import SalesLayout from "../layout";
 import {
   LEGACY_SALES_DATA_CUTOFF,
   LEGACY_SALES_DATA_NOTICE,
+  defaultReportEnd,
+  defaultReportStart,
   thisJalaliMonthRange,
   toDateOnly,
 } from "@/components/SuperAdmin/reports/shared/reportDates";
@@ -71,6 +74,7 @@ describe("Sales workspace layout", () => {
     setRangeMock.mockReset();
     mockPathname = "/sales";
     mockStart = LEGACY_SALES_DATA_CUTOFF;
+    mockEnd = "2026-12-31";
     mockAdminRole = null;
     mockCapabilities = [];
   });
@@ -167,6 +171,38 @@ describe("Sales workspace layout", () => {
         expect(screen.getAllByText("این ماه")).toHaveLength(1);
         unmount();
       }
+    });
+
+    it("carries a chosen period onto the sub-nav links of the pages it scopes", () => {
+      mockAdminRole = "superadmin";
+      mockStart = "2026-09-20";
+      render(<SalesLayout>{null}</SalesLayout>);
+
+      const period = "?start=2026-09-20&end=2026-12-31";
+      expect(screen.getByRole("link", { name: "تفکیک فروش" })).toHaveAttribute(
+        "href",
+        `/sales/breakdown${period}`,
+      );
+      expect(screen.getByRole("link", { name: "نقدینگی" })).toHaveAttribute(
+        "href",
+        `/sales/liquidity${period}`,
+      );
+      // Behavior brings its own range.
+      expect(
+        screen.getByRole("link", { name: "رفتار کاربران" }),
+      ).toHaveAttribute("href", "/sales/traffic");
+    });
+
+    it("leaves the sub-nav links bare for the default period", () => {
+      mockAdminRole = "superadmin";
+      mockStart = defaultReportStart();
+      mockEnd = defaultReportEnd();
+      render(<SalesLayout>{null}</SalesLayout>);
+
+      expect(screen.getByRole("link", { name: "تفکیک فروش" })).toHaveAttribute(
+        "href",
+        "/sales/breakdown",
+      );
     });
 
     it("replaces the report with the legacy-site notice for a start on or before ۲۲ شهریور", () => {

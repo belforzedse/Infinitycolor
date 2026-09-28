@@ -163,6 +163,30 @@ describe("SubNav", () => {
     );
   });
 
+  it("matches a tab whose link carries query state by its path", () => {
+    mockPathname = "/sales/breakdown";
+    render(
+      <SubNav
+        items={[
+          { id: "/sales", label: "نمای کلی", href: "/sales?start=2026-09-20" },
+          {
+            id: "/sales/breakdown",
+            label: "تفکیک فروش",
+            href: "/sales/breakdown?start=2026-09-20",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "تفکیک فروش" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "نمای کلی" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
   it("does not mark a parent route active for a deeper sibling", () => {
     // "/sales" must not light up for "/sales/breakdown" just by prefix.
     mockPathname = "/sales/breakdown";

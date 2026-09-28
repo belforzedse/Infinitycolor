@@ -11,6 +11,10 @@ import {
   LEGACY_SALES_DATA_NOTICE,
   predatesLegacySalesCutoff,
 } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
+import {
+  defaultReportEnd,
+  defaultReportStart,
+} from "@/components/SuperAdmin/reports/shared/reportDates";
 import { getSalesNavForCapabilities } from "@/constants/salesNav";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
@@ -52,6 +56,12 @@ export default function SalesLayout({
   const showDateRange = DATE_SCOPED_ROUTES.includes(
     pathname.replace(/\/$/, ""),
   );
+  // The period lives in the URL, and the sub-nav links are bare paths: carry a
+  // chosen period onto the subpages it scopes, or each one resets to the default.
+  const periodQuery =
+    start === defaultReportStart() && end === defaultReportEnd()
+      ? ""
+      : `?${new URLSearchParams({ start, end })}`;
   // Sales data before the cutoff lives on the previous site. Gating here, where
   // the period is owned, means no subpage fetches a partial pre-cutoff range.
   const showLegacyNotice = showDateRange && predatesLegacySalesCutoff(start);
@@ -65,7 +75,11 @@ export default function SalesLayout({
       </div>
 
       <SubNav
-        items={items.map(({ id, label, href }) => ({ id, label, href }))}
+        items={items.map(({ id, label, href }) => ({
+          id,
+          label,
+          href: DATE_SCOPED_ROUTES.includes(href) ? `${href}${periodQuery}` : href,
+        }))}
         className="mt-3"
         ariaLabel="بخش‌های فروش"
       />
