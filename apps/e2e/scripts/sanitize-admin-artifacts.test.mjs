@@ -63,3 +63,25 @@ test("sanitizes traces nested in a sharded run's blob report", async () => {
   assert.equal(inner.file("trace.network"), null);
   assert.doesNotMatch(await inner.file("trace.trace").async("string"), /credential|grant=/);
 });
+
+test("keeps a blob's report.jsonl valid JSON when a URL sits inside escaped JSON", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blob-escaped-"));
+  // What the ZarinPal journey logs: a response body (JSON) inside a message
+  // (JSON) inside the report event, so the URL is followed by `\\\"`.
+  const body = JSON.stringify({ redirectUrl: "https://sandbox.zarinpal.com/pg/StartPay/S0qp1o?ref=credential" });
+  const event = { method: "onStdOut", params: { text: JSON.stringify({ message: "finalize", body }) } };
+  const blob = new JSZip();
+  blob.file("report.jsonl", `${JSON.stringify(event)}\n${JSON.stringify({ method: "onEnd", params: {} })}\n`);
+  const blobPath = path.join(directory, "report-1.zip");
+  await writeFile(blobPath, await blob.generateAsync({ type: "nodebuffer" }));
+
+  await sanitizeAdminArtifacts({ roots: [directory], secretValues: ["credential"] });
+
+  const lines = (await (await JSZip.loadAsync(await readFile(blobPath))).file("report.jsonl").async("string"))
+    .split("\n")
+    .filter(Boolean);
+  const [first] = lines.map((line) => JSON.parse(line));
+  const inner = JSON.parse(JSON.parse(first.params.text).body);
+  assert.equal(inner.redirectUrl, "https://sandbox.zarinpal.com/pg/StartPay/S0qp1o");
+  assert.doesNotMatch(lines.join("\n"), /credential/);
+});

@@ -17,8 +17,11 @@ function configuredSecrets(environment = process.env) {
     .map(([, value]) => value);
 }
 
+// A URL ends at a backslash too: inside JSON that holds escaped JSON (a
+// logged response body) the next characters are `\\\"`, and URL parsing would
+// turn those backslashes into slashes and break the line.
 function stripUrlQuery(value) {
-  return value.replace(/https?:\/\/[^\s"'<>]+/g, (candidate) => {
+  return value.replace(/https?:\/\/[^\s"'<>\\]+/g, (candidate) => {
     try {
       const url = new URL(candidate);
       url.search = "";
@@ -118,7 +121,16 @@ async function sanitizeArchive(buffer, secretValues) {
         archive.file(name, inner, NO_FOLDERS);
         changed = true;
       }
-    } else if (/\.(jsonl|json|md|txt|log)$/i.test(name)) {
+    } else if (/\.jsonl$/i.test(name)) {
+      // A blob's report.jsonl: scrubbed field by field, so every line stays
+      // valid JSON for `merge-reports`.
+      const content = await entry.async("string");
+      const sanitized = sanitizeJsonLines(content, secretValues);
+      if (sanitized !== content) {
+        archive.file(name, sanitized, NO_FOLDERS);
+        changed = true;
+      }
+    } else if (/\.(json|md|txt|log)$/i.test(name)) {
       // Structure-preserving: only string contents change (queries, bearer
       // tokens, cookie lines, configured secret values).
       const content = await entry.async("string");
