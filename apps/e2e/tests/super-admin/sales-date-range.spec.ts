@@ -132,25 +132,14 @@ test.describe("admin sales date-range filters", () => {
     const seven = await clickPresetAndCaptureOverview(page, "۷ روز گذشته");
     expect(daySpan(seven)).toBe(7);
 
-    // A period starting before the storefront cutover shows the legacy-site
-    // notice instead of fetching a partial range; its button clamps the start.
+    // A preset never reaches back past the storefront cutover: it starts at
+    // the cutoff instead (earlier data lives on the previous site).
+    const thirty = await clickPresetAndCaptureOverview(page, "۳۰ روز گذشته");
     const thirtyStart = tehranDateOnly(new Date(Date.now() - 30 * 86_400_000));
-    if (thirtyStart < LEGACY_SALES_DATA_CUTOFF) {
-      await page.getByRole("button", { name: "۳۰ روز گذشته" }).click();
-      await expect(
-        page.getByRole("status").filter({ hasText: "سایت قبلی" }),
-      ).toBeVisible();
-      const clampedPending = page.waitForRequest((request) =>
-        isDateOnlyReportRequest(request.url(), "overview"),
-      );
-      await page.getByRole("button", { name: /^نمایش از/ }).click();
-      expect(rangeFromRequest(await clampedPending).start).toBe(
-        LEGACY_SALES_DATA_CUTOFF,
-      );
-    } else {
-      const thirty = await clickPresetAndCaptureOverview(page, "۳۰ روز گذشته");
-      expect(daySpan(thirty)).toBe(30);
-    }
+    expect(thirty.start).toBe(
+      thirtyStart < LEGACY_SALES_DATA_CUTOFF ? LEGACY_SALES_DATA_CUTOFF : thirtyStart,
+    );
+    expect(thirty.end).toBe(tehranDateOnly());
 
     const thisMonth = await clickPresetAndCaptureOverview(page, "این ماه");
     const startJalali = jalaliPartsOfDateOnly(thisMonth.start);

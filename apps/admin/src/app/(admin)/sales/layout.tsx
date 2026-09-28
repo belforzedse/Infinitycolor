@@ -2,7 +2,10 @@
 
 import { usePathname } from "next/navigation";
 import { AdminCard, SubNav } from "@/components/admin";
-import ReportDateRangeField from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
+import ReportDateRangeField, {
+  DEFAULT_REPORT_DATE_PRESETS,
+  type DateRangePreset,
+} from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
 import {
   useReportQueryState,
   toDateOnly,
@@ -42,6 +45,24 @@ const DATE_SCOPED_ROUTES = [
   "/sales/products",
   "/sales/liquidity",
 ];
+
+/**
+ * The quick presets never reach back past the storefront cutover: like the
+ * default period, a preset that would start earlier starts at the cutoff, so
+ * «۳۰ روز گذشته» shows the data this site has instead of the legacy notice.
+ * A start date picked by hand before the cutoff still gets the notice.
+ */
+const SALES_DATE_PRESETS: DateRangePreset[] = DEFAULT_REPORT_DATE_PRESETS.map((preset) => ({
+  ...preset,
+  getRange: () => {
+    const range = preset.getRange();
+    const cutoff = parseDateOnly(LEGACY_SALES_DATA_CUTOFF);
+    return range.start < cutoff && range.end >= cutoff ? { ...range, start: cutoff } : range;
+  },
+}));
+
+const CUTOFF_START_NOTE =
+  "گزارش از ۲۳ شهریور شروع می‌شود؛ داده‌های پیش از آن در سایت قبلی است.";
 
 export default function SalesLayout({
   children,
@@ -90,6 +111,7 @@ export default function SalesLayout({
             <ReportDateRangeField
               start={parseDateOnly(start)}
               end={parseDateOnly(end)}
+              presets={SALES_DATE_PRESETS}
               onChange={(range) =>
                 setRange({
                   start: toDateOnly(range.start),
@@ -97,6 +119,9 @@ export default function SalesLayout({
                 })
               }
             />
+            {start === LEGACY_SALES_DATA_CUTOFF && (
+              <p className="mt-3 text-xs text-neutral-500">{CUTOFF_START_NOTE}</p>
+            )}
           </div>
         </AdminCard>
       )}

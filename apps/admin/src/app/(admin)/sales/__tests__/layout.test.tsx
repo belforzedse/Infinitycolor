@@ -173,6 +173,47 @@ describe("Sales workspace layout", () => {
       }
     });
 
+    describe("quick presets at the storefront cutover", () => {
+      beforeEach(() => {
+        jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+        jest.setSystemTime(new Date(2026, 8, 28, 12));
+      });
+      afterEach(() => jest.useRealTimers());
+
+      it("starts a preset that reaches back before the cutoff at the cutoff", () => {
+        mockAdminRole = "superadmin";
+        render(<SalesLayout>{null}</SalesLayout>);
+
+        fireEvent.click(screen.getByText("۳۰ روز گذشته"));
+
+        expect(setRangeMock).toHaveBeenCalledWith({
+          start: LEGACY_SALES_DATA_CUTOFF,
+          end: "2026-09-28",
+        });
+      });
+
+      it("leaves a preset that starts after the cutoff alone", () => {
+        mockAdminRole = "superadmin";
+        render(<SalesLayout>{null}</SalesLayout>);
+
+        fireEvent.click(screen.getByText("۷ روز گذشته"));
+
+        expect(setRangeMock).toHaveBeenCalledWith({ start: "2026-09-21", end: "2026-09-28" });
+      });
+    });
+
+    it("says where the report starts when the period starts at the cutoff", () => {
+      mockAdminRole = "superadmin";
+      mockStart = LEGACY_SALES_DATA_CUTOFF;
+      const { unmount } = render(<SalesLayout>{null}</SalesLayout>);
+      expect(screen.getByText(/گزارش از ۲۳ شهریور شروع می‌شود/)).toBeInTheDocument();
+      unmount();
+
+      mockStart = "2026-10-01";
+      render(<SalesLayout>{null}</SalesLayout>);
+      expect(screen.queryByText(/گزارش از ۲۳ شهریور شروع می‌شود/)).not.toBeInTheDocument();
+    });
+
     it("carries a chosen period onto the sub-nav links of the pages it scopes", () => {
       mockAdminRole = "superadmin";
       mockStart = "2026-09-20";
