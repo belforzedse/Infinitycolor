@@ -6,6 +6,7 @@ import ShoppingCartDesktopTable from "@/components/ShoppingCart/Table/Desktop";
 import ShoppingCartMobileTable from "@/components/ShoppingCart/Table/Mobile";
 import CartSkeleton from "@/components/Skeletons/CartSkeleton";
 import EmptyShoppingCart from "@/components/ShoppingCart/Empty";
+import CartStockNotice from "@/components/ShoppingCart/CartStockNotice";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { ProductCardProps } from "@/components/Product/Card";
@@ -88,12 +89,17 @@ export default function CartPageClient() {
       </PageContainer>
     );
   }
+  // The stock check that runs when the cart loads removes lines whose product
+  // left the store or sold out, and shortens lines that no longer fit. It can
+  // empty the cart outright, so the notice sits above the empty state too, or
+  // the shopper's items vanish without a word.
   if (cartItems.length === 0) {
     return (
       <PageContainer
         variant="wide"
-        className="flex min-h-[60vh] items-center justify-center pb-16 pt-8"
+        className="flex min-h-[60vh] flex-col items-center justify-center gap-6 pb-16 pt-8"
       >
+        <CartStockNotice />
         <EmptyShoppingCart />
       </PageContainer>
     );
@@ -102,6 +108,7 @@ export default function CartPageClient() {
   return (
     <section>
       <PageContainer variant="wide" className="space-y-6 pb-16 pt-8">
+        <CartStockNotice />
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
           <div className="flex-1">
             <div className="flex flex-col gap-6">

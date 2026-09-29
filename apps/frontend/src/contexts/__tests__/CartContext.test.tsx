@@ -704,3 +704,44 @@ describe("CartProvider analytics outcomes", () => {
     expect(mockAnalytics.trackFunnelStep).not.toHaveBeenCalled();
   });
 });
+
+describe("CartProvider login-time stock correction", () => {
+  function NoticeProbe() {
+    const { stockNotice, cartItems, isLoading } = useCart();
+    return (
+      <div>
+        <span data-testid="loading">{String(isLoading)}</span>
+        <span data-testid="count">{cartItems.length}</span>
+        <span data-testid="notice">{stockNotice ? stockNotice.removedNames.join("|") : "none"}</span>
+      </div>
+    );
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue("account-a");
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation(() => jest.fn());
+    mockIsOnline.mockReturnValue(true);
+    localStorage.clear();
+  });
+
+  it("names a line the stock check removed when the cart loads", async () => {
+    mockCartService.checkCartStock.mockResolvedValue({
+      success: true,
+      valid: false,
+      cartIsEmpty: true,
+      itemsRemoved: [{ cartItemId: 7, productVariationId: 9, productTitle: "E2E Fixture Product S17", reason: "inactive" }],
+    });
+    mockCartService.getUserCart.mockResolvedValue({ id: 1, cart_items: [] });
+
+    render(
+      <CartProvider>
+        <NoticeProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
+    await waitFor(() => expect(mockCartService.getUserCart).toHaveBeenCalled());
+    expect(screen.getByTestId("notice")).toHaveTextContent("E2E Fixture Product S17");
+  });
+});

@@ -1,10 +1,18 @@
 import React from "react";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import type { CartStockNoticeState } from "@/utils/cartStock";
 
 type MockCartItem = { id: string; price: number; quantity: number };
-const mockCart: { cartItems: MockCartItem[]; isLoading: boolean } = {
+const mockCart: {
+  cartItems: MockCartItem[];
+  isLoading: boolean;
+  stockNotice: CartStockNoticeState | null;
+  dismissStockNotice: () => void;
+} = {
   cartItems: [],
   isLoading: true,
+  stockNotice: null,
+  dismissStockNotice: jest.fn(),
 };
 const mockTrackAnalyticsEvent = jest.fn();
 
@@ -62,5 +70,34 @@ describe("CartPageClient view_cart", () => {
     mockCart.isLoading = false;
     render(<CartPageClient />);
     expect(mockTrackAnalyticsEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("CartPageClient stock notice", () => {
+  beforeEach(() => {
+    mockCart.isLoading = false;
+    mockCart.stockNotice = null;
+  });
+
+  // The login-time stock check can remove every line; the empty state alone
+  // would make the shopper's items vanish without a word.
+  it("names the removed line above the empty cart", () => {
+    mockCart.cartItems = [];
+    mockCart.stockNotice = { adjustedCartItemIds: [], removedNames: ["E2E Fixture Product S17"] };
+    render(<CartPageClient />);
+    expect(screen.getByTestId("cart-stock-notice")).toHaveTextContent("E2E Fixture Product S17");
+  });
+
+  it("shows above a cart whose lines were shortened", () => {
+    mockCart.cartItems = [{ id: "a", price: 100_000, quantity: 1 }];
+    mockCart.stockNotice = { adjustedCartItemIds: ["a"], removedNames: [] };
+    render(<CartPageClient />);
+    expect(screen.getByTestId("cart-stock-notice")).toBeInTheDocument();
+  });
+
+  it("renders nothing when the stock check changed nothing", () => {
+    mockCart.cartItems = [{ id: "a", price: 100_000, quantity: 1 }];
+    render(<CartPageClient />);
+    expect(screen.queryByTestId("cart-stock-notice")).not.toBeInTheDocument();
   });
 });
