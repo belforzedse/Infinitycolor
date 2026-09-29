@@ -35,13 +35,22 @@ async function checkoutToZarinpal(page: Page, shopper: Shopper) {
   await expect(zarinpal).toHaveAttribute("data-selected", "true");
   await page.getByTestId("checkout-accept-terms").check();
 
-  const finalized = page.waitForResponse(
-    (response) => /\/api\/carts\/finalize(?:\?|$)/.test(response.url()) && response.request().method() === "POST",
-  );
+  // The page leaves for the gateway as soon as finalize answers, and the
+  // browser drops that response's body with the page. So read it on its way
+  // through (route.fetch) and hand the page the same response.
+  const finalized = new Promise<{ status: number; text: string }>((resolve) => {
+    void page.route(/\/api\/carts\/finalize(?:\?|$)/, async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      const response = await route.fetch();
+      const text = await response.text();
+      resolve({ status: response.status(), text });
+      await route.fulfill({ response, body: text });
+    });
+  });
   await page.getByTestId("checkout-submit").click();
-  const response = await finalized;
-  expect(response.ok(), `finalize failed (${response.status()})`).toBe(true);
-  const body = await response.json();
+  const { status, text } = await finalized;
+  expect(status, `finalize failed (${status}): ${text.slice(0, 300)}`).toBeLessThan(300);
+  const body = JSON.parse(text);
   const orderId = Number((body.data ?? body).orderId);
   expect(orderId).toBeGreaterThan(0);
 

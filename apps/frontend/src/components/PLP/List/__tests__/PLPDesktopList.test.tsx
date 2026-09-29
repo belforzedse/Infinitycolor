@@ -3,14 +3,11 @@ import PLPDesktopList from "../PLPDesktopList";
 import type { ProductCardProps } from "@/components/Product/Card";
 import { trackAnalyticsEvent } from "@/lib/analytics";
 
-jest.mock("next/dynamic", () => ({
+jest.mock("@/components/Product/Card", () => ({
   __esModule: true,
-  default: () => {
-    const DynamicProductCard = (props: { id: number; images: string[] }) => (
-      <div data-testid="product-card" data-id={props.id} data-image-count={props.images.length} />
-    );
-    return DynamicProductCard;
-  },
+  default: (props: { id: number; images: string[] }) => (
+    <div data-testid="product-card" data-id={props.id} data-image-count={props.images.length} />
+  ),
 }));
 
 let media = "high";

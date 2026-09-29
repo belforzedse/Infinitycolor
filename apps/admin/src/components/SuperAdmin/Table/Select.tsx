@@ -146,7 +146,9 @@ const SuperAdminTableSelect = ({
           <div
             ref={panelRef}
             style={{ top: position.top, right: position.right }}
-            className="fixed z-50 max-w-[calc(100vw-2rem)] rounded-xl bg-white p-3 shadow-lg"
+            // Above the phone filter sheet (z-[1200]) and modals (z-[1300]) it can
+            // open from: portaled to <body>, it no longer shares their stacking.
+            className="fixed z-[1400] max-w-[calc(100vw-2rem)] rounded-xl bg-white p-3 shadow-lg"
           >
             <ul className="max-h-64 min-w-32 max-w-full space-y-2 overflow-y-auto">
               {filterOptions.map((option) => (

@@ -22,7 +22,8 @@ export function getAdaptiveRouteGroup(
   if (hasSearchQuery && (first === "plp" || first === "categories")) {
     return "search";
   }
-  if (first === "plp" || first === "categories") return "plp";
+  // /offer?type=… is a server-ranked listing on the normal PLP.
+  if (first === "plp" || first === "categories" || first === "offer") return "plp";
   if (first === "search") return "search";
   if (first === "pdp") return "pdp";
   if (first === "cart") return "cart";

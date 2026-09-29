@@ -1,6 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { NuqsTestingAdapter, type UrlUpdateEvent } from "nuqs/adapters/testing";
 
 let mockTableProps: any;
+let mockWrapperProps: any;
 
 jest.mock("@/components/SuperAdmin/Table", () => ({
   SuperAdminTable: (props: any) => {
@@ -10,9 +12,10 @@ jest.mock("@/components/SuperAdmin/Table", () => ({
 }));
 jest.mock("@/components/SuperAdmin/Layout/ContentWrapper", () => ({
   __esModule: true,
-  default: ({ children }: any) => (
-    <div data-testid="content-wrapper">{children}</div>
-  ),
+  default: (props: any) => {
+    mockWrapperProps = props;
+    return <div data-testid="content-wrapper">{props.children}</div>;
+  },
 }));
 jest.mock("../table", () => ({
   columns: [],
@@ -21,25 +24,41 @@ jest.mock("../table", () => ({
 jest.mock("@/services/super-admin/users/list", () => ({
   listAdminUsers: jest.fn(),
 }));
-jest.mock("nuqs", () => ({
-  useQueryState: () => ["1", jest.fn()],
-}));
-jest.mock("use-debounce", () => ({
-  useDebouncedCallback: (callback: (...args: any[]) => void) => {
-    const debounced = (...args: any[]) => callback(...args);
-    debounced.cancel = jest.fn();
-    return debounced;
-  },
-}));
+// Stable across renders like the real hook: a new function each render would
+// re-run the page's search effect, and its setPage, on every render.
+jest.mock("use-debounce", () => {
+  const { useRef } = jest.requireActual("react");
+  return {
+    useDebouncedCallback: (callback: (...args: any[]) => void) => {
+      const debounced = useRef(null);
+      if (!debounced.current) {
+        const fn: any = (...args: any[]) => fn.callback(...args);
+        fn.cancel = jest.fn();
+        debounced.current = fn;
+      }
+      debounced.current.callback = callback;
+      return debounced.current;
+    },
+  };
+});
 
 import UsersPage from "../page";
 import { listAdminUsers } from "@/services/super-admin/users/list";
 
 const mockListAdminUsers = listAdminUsers as jest.Mock;
 
+function renderPage(searchParams = "", onUrlUpdate?: (event: UrlUpdateEvent) => void) {
+  return render(
+    <NuqsTestingAdapter searchParams={searchParams} onUrlUpdate={onUrlUpdate}>
+      <UsersPage />
+    </NuqsTestingAdapter>,
+  );
+}
+
 describe("users page bounded data ownership", () => {
   beforeEach(() => {
     mockTableProps = undefined;
+    mockWrapperProps = undefined;
     mockListAdminUsers.mockReset();
   });
 
@@ -52,7 +71,7 @@ describe("users page bounded data ownership", () => {
       },
     });
 
-    render(<UsersPage />);
+    renderPage();
 
     expect(screen.getByTestId("users-table")).toBeInTheDocument();
     expect(mockTableProps.url).toBeUndefined();
@@ -78,5 +97,17 @@ describe("users page bounded data ownership", () => {
         signal: controller.signal,
       }),
     );
+  });
+
+  it("keeps advanced filters in the URL: restored from ?af=, cleared from it", async () => {
+    const filter = { field: "[phone]", operator: "$containsi", value: "0912" };
+    const onUrlUpdate = jest.fn();
+    renderPage(new URLSearchParams({ af: JSON.stringify([filter]), page: "2" }).toString(), onUrlUpdate);
+    expect(mockWrapperProps.filters).toEqual([filter]);
+
+    await act(async () => mockWrapperProps.onFiltersChange([]));
+
+    await waitFor(() => expect(onUrlUpdate.mock.calls.at(-1)?.[0].queryString).toBe(""));
+    expect(mockWrapperProps.filters).toEqual([]);
   });
 });

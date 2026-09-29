@@ -2,17 +2,21 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { canonicalCustomerPhone } from "./customerPhoneIdentity";
 
 /**
- * Staging E2E fixtures: the switch, the token check and the reserved shopper
- * phone range, shared by the fixture API (api/e2e-fixture) and the SMS senders.
+ * Staging E2E fixtures: the switch, who may call the fixture API, and the
+ * reserved shopper phone range, shared by the fixture API (api/e2e-fixture) and
+ * the SMS senders.
  *
  * The fixture API only exists where an environment opts in with
- * `E2E_FIXTURES_ENABLED=true` (staging's stack.yml) and holds a token of at
- * least 32 characters (staging's host env file). Production sets neither, and a
- * backend whose storefront or public URL is a production origin refuses even if
- * both were set by mistake.
+ * `E2E_FIXTURES_ENABLED=true` (staging's stack.yml) and says how callers prove
+ * who they are: GitLab CI ID tokens (the `E2E_FIXTURES_OIDC_*` settings, how
+ * the staging E2E jobs call it) and/or a static token of at least 32 characters
+ * (`E2E_FIXTURES_TOKEN`, for runs from a laptop). Production sets none of this,
+ * and a backend whose storefront or public URL is a production origin refuses
+ * even if it were set by mistake.
  */
 
 export const E2E_FIXTURES_TOKEN_HEADER = "x-e2e-fixtures-token";
+export const E2E_FIXTURES_ID_TOKEN_HEADER = "x-e2e-fixtures-id-token";
 export const E2E_FIXTURE_SOURCE = "e2e-fixture";
 export const E2E_FIXTURE_MAX_SLOT = 63;
 /** Marks accounts the fixture API created; it never adopts any other account. */
@@ -55,13 +59,56 @@ function pointsAtProduction(env: Env): boolean {
   });
 }
 
-/** The token the API accepts, or null when the API must answer 404. */
-export function e2eFixturesToken(env: Env = process.env): string | null {
-  if (!isE2EFixturesFlagOn(env)) return null;
+/** What a GitLab CI ID token must say to be let in. */
+export interface E2EFixturesOidcConfig {
+  /** The GitLab instance, e.g. https://git.alpagency.net (the token's `iss`). */
+  issuer: string;
+  /** The `aud` the job asked for in its `id_tokens:` block. */
+  audience: string;
+  /** `project_path` claim, e.g. bel4/infinity. */
+  project: string;
+  /** `environment` claim: the job's `environment:` name. */
+  environment: string;
+  /** Allowed `ref` claims; empty allows any protected ref. */
+  refs: string[];
+}
+
+export interface E2EFixturesAccess {
+  staticToken: string | null;
+  oidc: E2EFixturesOidcConfig | null;
+}
+
+function httpsOrigin(value: string | undefined): string | null {
+  if (!value?.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function oidcConfig(env: Env): E2EFixturesOidcConfig | null {
+  const issuer = httpsOrigin(env.E2E_FIXTURES_OIDC_ISSUER);
+  const audience = env.E2E_FIXTURES_OIDC_AUDIENCE?.trim();
+  const project = env.E2E_FIXTURES_OIDC_PROJECT?.trim();
+  const environment = env.E2E_FIXTURES_OIDC_ENVIRONMENT?.trim();
+  if (!issuer || !audience || !project || !environment) return null;
+  const refs = (env.E2E_FIXTURES_OIDC_REFS ?? "")
+    .split(",")
+    .map((ref) => ref.trim())
+    .filter(Boolean);
+  return { issuer, audience, project, environment, refs };
+}
+
+/** How callers may prove themselves, or null when the API must answer 404. */
+export function e2eFixturesAccess(env: Env = process.env): E2EFixturesAccess | null {
+  if (!isE2EFixturesFlagOn(env) || pointsAtProduction(env)) return null;
   const token = env.E2E_FIXTURES_TOKEN?.trim();
-  if (!token || token.length < 32) return null;
-  if (pointsAtProduction(env)) return null;
-  return token;
+  const staticToken = token && token.length >= 32 ? token : null;
+  const oidc = oidcConfig(env);
+  if (!staticToken && !oidc) return null;
+  return { staticToken, oidc };
 }
 
 const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();

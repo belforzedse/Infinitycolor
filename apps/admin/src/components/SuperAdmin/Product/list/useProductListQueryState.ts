@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo } from "react";
 import {
-  createParser,
   parseAsInteger,
   parseAsString,
   parseAsStringLiteral,
@@ -16,23 +15,9 @@ import {
   type AdminProductTypeFilter,
   type AdminProductView,
 } from "@/services/super-admin/product/list";
-import {
-  parseAdvancedFiltersParam,
-  serializeAdvancedFiltersParam,
-  type AdvancedFilterItem,
-} from "@/components/SuperAdmin/Table/advancedFilters";
+import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedFilters";
+import { advancedFiltersParser } from "@/components/SuperAdmin/Table/advancedFiltersUrlState";
 import { DEFAULT_SORT_BY_VIEW, SORTS_BY_VIEW } from "./productLifecycle";
-
-// `filter` is the retired key that useLegacyFilterQueryCleanup strips on sight,
-// so the advanced filters live under their own key.
-const advancedFiltersParser = createParser<AdvancedFilterItem[]>({
-  parse: (value) => {
-    const parsed = parseAdvancedFiltersParam(value);
-    return parsed.length ? parsed : null;
-  },
-  serialize: (value) => serializeAdvancedFiltersParam(value),
-  eq: (a, b) => JSON.stringify(a) === JSON.stringify(b),
-});
 
 const PARSERS = {
   view: parseAsStringLiteral(ADMIN_PRODUCT_VIEWS).withDefault("all"),

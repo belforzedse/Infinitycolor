@@ -1,6 +1,6 @@
 import {
   e2eFixturePhone,
-  e2eFixturesToken,
+  e2eFixturesAccess,
   e2eFixturesTokenMatches,
   isE2EFixturePhone,
   isValidFixtureSlot,
@@ -14,13 +14,39 @@ const STAGING = {
   URL: "https://api.staging.infinitycolor.co",
 };
 
+const OIDC = {
+  E2E_FIXTURES_OIDC_ISSUER: "https://git.alpagency.net",
+  E2E_FIXTURES_OIDC_AUDIENCE: "https://api.staging.infinitycolor.co",
+  E2E_FIXTURES_OIDC_PROJECT: "bel4/infinity",
+  E2E_FIXTURES_OIDC_ENVIRONMENT: "staging",
+};
+
 describe("e2e fixture switch", () => {
-  it("is on only with the flag and a token of at least 32 characters", () => {
-    expect(e2eFixturesToken(STAGING)).toBe(TOKEN);
-    expect(e2eFixturesToken({ ...STAGING, E2E_FIXTURES_ENABLED: undefined })).toBeNull();
-    expect(e2eFixturesToken({ ...STAGING, E2E_FIXTURES_ENABLED: "1" })).toBeNull();
-    expect(e2eFixturesToken({ ...STAGING, E2E_FIXTURES_TOKEN: "short" })).toBeNull();
-    expect(e2eFixturesToken({ ...STAGING, E2E_FIXTURES_TOKEN: undefined })).toBeNull();
+  it("is on only with the flag and a static token of at least 32 characters or GitLab ID tokens", () => {
+    expect(e2eFixturesAccess(STAGING)).toEqual({ staticToken: TOKEN, oidc: null });
+    expect(e2eFixturesAccess({ ...STAGING, E2E_FIXTURES_ENABLED: undefined })).toBeNull();
+    expect(e2eFixturesAccess({ ...STAGING, E2E_FIXTURES_ENABLED: "1" })).toBeNull();
+    expect(e2eFixturesAccess({ ...STAGING, E2E_FIXTURES_TOKEN: "short" })).toBeNull();
+    expect(e2eFixturesAccess({ ...STAGING, E2E_FIXTURES_TOKEN: undefined })).toBeNull();
+  });
+
+  it("reads the GitLab ID token settings, and needs all four", () => {
+    const env = { ...STAGING, E2E_FIXTURES_TOKEN: undefined, ...OIDC };
+    expect(e2eFixturesAccess(env)).toEqual({
+      staticToken: null,
+      oidc: {
+        issuer: "https://git.alpagency.net",
+        audience: "https://api.staging.infinitycolor.co",
+        project: "bel4/infinity",
+        environment: "staging",
+        refs: [],
+      },
+    });
+    expect(e2eFixturesAccess({ ...env, E2E_FIXTURES_OIDC_REFS: " dev, main ," })?.oidc?.refs).toEqual(["dev", "main"]);
+    for (const key of Object.keys(OIDC)) {
+      expect(e2eFixturesAccess({ ...env, [key]: undefined })).toBeNull();
+    }
+    expect(e2eFixturesAccess({ ...env, E2E_FIXTURES_OIDC_ISSUER: "http://git.alpagency.net" })).toBeNull();
   });
 
   it.each([
@@ -29,7 +55,7 @@ describe("e2e fixture switch", () => {
     ["URL", "https://api.infinitycolor.co"],
     ["FRONTEND_URL", "https://infinitygram.co"],
   ])("refuses a backend whose %s is production (%s), even when switched on", (key, value) => {
-    expect(e2eFixturesToken({ ...STAGING, [key]: value })).toBeNull();
+    expect(e2eFixturesAccess({ ...STAGING, ...OIDC, [key]: value })).toBeNull();
   });
 
   it("compares tokens by digest", () => {

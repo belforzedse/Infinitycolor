@@ -2,7 +2,20 @@ import type { Strapi } from "@strapi/strapi";
 import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
 import { resolveUserCartId } from "./user-cart-identity";
 
-export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
+export type GetUserCartOptions = {
+  /**
+   * Keep lines whose product left the store (draft, scheduled, Trash) or whose
+   * variation is unpublished. Only the stock check asks for them: it removes
+   * them and names them to the shopper. Every other reader gets the filtered cart.
+   */
+  includeUnavailable?: boolean;
+};
+
+export const getOrCreateUserCart = async (
+  strapi: Strapi,
+  userId: number,
+  options: GetUserCartOptions = {},
+) => {
   // Resolved by id: a `{ user }` filter is LIMIT 1 with no ORDER BY, and creating
   // through Strapi's oneToOne relation can unlink the cart a concurrent merge filled.
   const cartId = await resolveUserCartId(strapi, userId);
@@ -47,6 +60,8 @@ export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
         strapi.log.warn(`Filtering out invalid cart item ${item.id}: missing product_variation or product`);
         return false;
       }
+
+      if (options.includeUnavailable) return true;
 
       // Check if product is soft-deleted or inactive
       const isProductAvailable = isProductPubliclyVisible(product);

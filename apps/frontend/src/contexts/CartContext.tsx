@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import { CartService } from "@/services";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import notify from "@/utils/notify";
+import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { cartRequestQueue } from "@/utils/requestQueue";
 import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
@@ -660,7 +661,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           notify.error(CART_STOCK_LIMIT_MESSAGE);
         } else {
           hapticError();
-          notify.error("افزودن کالا به سبد خرید با خطا مواجه شد");
+          // The server says why (e.g. the product left the store); errorTranslations
+          // has the Persian for it. Resync, since the page's view of it is stale.
+          await fetchUserCart();
+          notify.error(
+            getUserFacingErrorMessage(error, "افزودن کالا به سبد خرید با خطا مواجه شد"),
+          );
         }
       } finally {
         setIsLoading(false);

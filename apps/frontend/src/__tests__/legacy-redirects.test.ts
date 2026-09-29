@@ -178,6 +178,20 @@ describe("legacy WooCommerce redirects", () => {
     expect(target?.search).toBe("");
   });
 
+  it("redirects the old newest offer listing to the Newest page, keeping its page", () => {
+    const target = legacyTarget("/offer/newest/");
+    expect(target?.pathname).toBe("/offer");
+    expect(target?.search).toBe("?type=newest");
+
+    const paged = legacyTarget("/offer/newest/page/3/");
+    expect(paged?.pathname).toBe("/offer");
+    expect(paged?.searchParams.get("type")).toBe("newest");
+    expect(paged?.searchParams.get("page")).toBe("3");
+
+    // The new page itself is never redirected.
+    expect(legacyTarget("/offer?type=newest")).toBeNull();
+  });
+
   it("redirects Oppsi offer URLs to product search", () => {
     const target = legacyTarget("/offer/oppsi/");
 

@@ -1,5 +1,4 @@
 import { API_BASE_URL } from "@/constants/api";
-import { PRODUCT_BOOST_KEYWORDS } from "@/constants/productKeywords";
 import {
   getFeaturedCategoryProductsByRating,
   getBatchedHomepageSections,
@@ -44,13 +43,22 @@ describe("homepage service", () => {
       expect(promoUrl.searchParams.has("availability")).toBe(false);
 
       expect(`${newUrl.origin}${newUrl.pathname}`).toBe(`${API_BASE_URL}/products`);
-      // Single keyword uses filters[Title][$containsi]; multiple use filters[$or][n][Title][$containsi]
-      const titleFilter =
-        newUrl.searchParams.get("filters[Title][$containsi]") ??
-        newUrl.searchParams.get("filters[$or][0][Title][$containsi]");
-      expect(PRODUCT_BOOST_KEYWORDS).toContain(titleFilter);
-      expect(newUrl.searchParams.get("sort[0]")).toBe("createdAt:desc");
+      // The rail is the start of the Newest listing, ranked server-side.
+      expect(newUrl.searchParams.get("offer")).toBe("newest");
+      expect(newUrl.searchParams.get("availability")).toBe("in-stock");
+      expect(newUrl.searchParams.has("sort[0]")).toBe(false);
       expect(newUrl.searchParams.get("pagination[limit]")).toBe("20");
+    });
+
+    it("leaves curated newest ids to the Newest listing instead of fetching them by id", async () => {
+      await getHomepageSections({ ...defaultSettings(), homeNewestProductIds: [7, 3, 9] });
+
+      const urls = mockFetch.mock.calls.map(([url]) => new URL(url as string));
+      const newest = urls.filter((url) => url.searchParams.get("offer") === "newest");
+      expect(newest).toHaveLength(1);
+      expect(
+        urls.some((url) => Array.from(url.searchParams.keys()).some((key) => key.startsWith("filters[id]"))),
+      ).toBe(false);
     });
 
     it("should return empty sections when both requests fail", async () => {

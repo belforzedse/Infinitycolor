@@ -5,12 +5,15 @@ jest.mock("@/utils/fetchWithTimeout", () => ({
 
 import fetchWithTimeout from "@/utils/fetchWithTimeout";
 import {
+  buildOfferPLPMetadata,
   buildPLPMetadata,
+  buildPLPPageCopy,
   buildPLPProductsQuery,
   getPLPProducts,
   parsePLPQuery,
   type PLPQuery,
 } from "../plp";
+import { getOfferPlpHref, parsePLPOffer } from "@/utils/plpRoutes";
 
 const paramsObject = (params: URLSearchParams) =>
   Array.from(params.entries()).reduce<Record<string, string[]>>((acc, [key, value]) => {
@@ -147,13 +150,6 @@ describe("PLP query helpers", () => {
   });
 
   it("hints the curated section for each canonical View all URL", () => {
-    const newest = buildPLPProductsQuery({
-      page: 1,
-      available: false,
-      sort: "LastEditedByAdminAt:desc",
-    });
-    expect(newest.get("curated")).toBe("newest");
-
     const popular = buildPLPProductsQuery({
       page: 1,
       available: false,
@@ -175,6 +171,49 @@ describe("PLP query helpers", () => {
       hasDiscount: true,
     });
     expect(secondPage.get("curated")).toBe("discount");
+  });
+
+  it("treats /plp's newest sort as a plain sort now that Newest has its own listing", () => {
+    const newest = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+    });
+    expect(newest.has("curated")).toBe(false);
+    expect(newest.has("offer")).toBe(false);
+  });
+
+  it("sends an offer listing to the backend without any /plp view hints", () => {
+    const params = buildPLPProductsQuery({
+      page: 2,
+      available: true,
+      size: ["m"],
+      offer: "newest",
+    });
+
+    expect(params.get("offer")).toBe("newest");
+    expect(params.has("curated")).toBe(false);
+    expect(params.has("excludeDiscount")).toBe(false);
+    // Still the normal card query: same eligibility, paging and filters as any PLP.
+    expect(params.get("view")).toBe("card");
+    expect(params.get("pagination[page]")).toBe("2");
+    expect(params.get("requireCoverImage")).toBe("true");
+    expect(params.get("availability")).toBe("available");
+    expect(Array.from(params.values())).toContain("Active");
+    // No shopper sort means the backend's own Newest ranking.
+    expect(params.has("sort[0]")).toBe(false);
+
+    const sorted = buildPLPProductsQuery({ page: 1, available: false, sort: "price:asc", offer: "newest" });
+    expect(sorted.get("sort[0]")).toBe("price:asc");
+    expect(sorted.get("offer")).toBe("newest");
+  });
+
+  it("only accepts known offer types from the URL", () => {
+    expect(parsePLPOffer("newest")).toBe("newest");
+    expect(parsePLPOffer("oppsi")).toBeUndefined();
+    expect(parsePLPOffer(["newest"])).toBeUndefined();
+    expect(parsePLPOffer(undefined)).toBeUndefined();
+    expect(getOfferPlpHref("newest")).toBe("/offer?type=newest");
   });
 
   it("withholds the curated hint once any filter, category, or other sort applies", () => {
@@ -262,6 +301,18 @@ describe("PLP product failures", () => {
     });
 
     await expect(getPLPProducts(query)).rejects.toMatchObject({ code: "API_ERROR", status: 503 });
+  });
+});
+
+describe("offer PLP metadata", () => {
+  it("canonicalizes every view of the Newest listing to /offer?type=newest", () => {
+    const metadata = buildOfferPLPMetadata("newest");
+    expect(metadata.title).toBe("جدیدترین محصولات");
+    expect(metadata.alternates?.canonical).toMatch(/\/offer\?type=newest$/);
+
+    const copy = buildPLPPageCopy({ page: 3, available: true, offer: "newest" });
+    expect(copy.pageName).toBe("جدیدترین محصولات");
+    expect(copy.url).toMatch(/\/offer\?type=newest$/);
   });
 });
 

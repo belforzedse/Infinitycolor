@@ -64,7 +64,8 @@ export default function SubNav({
   const bestMatchId = items.reduce<{ id: string; length: number } | null>(
     (best, item) => {
       if (!item.href) return best;
-      const target = item.href.replace(/\/$/, "");
+      // A tab's link may carry query state (the sales period); match its path.
+      const target = item.href.split("?")[0].replace(/\/$/, "");
       const matches = current === target || current.startsWith(`${target}/`);
       if (!matches) return best;
       return !best || target.length > best.length

@@ -138,7 +138,9 @@ export const checkCartStockOp = async (
   const namedOutcome = reservationOutcomeOf(holdResolution);
   const reservationOutcome = namedOutcome ?? (hold ? "held" : undefined);
   const resumableCheckout = toResumableCheckout(hold);
-  const cart = await cartService.getUserCart(userId);
+  // Unfiltered: a line whose product left the store is hidden from every other
+  // cart read, so this is the only place it can be removed and named.
+  const cart = await cartService.getUserCart(userId, { includeUnavailable: true });
   if (!cart.cart_items || cart.cart_items.length === 0) {
     return {
       success: true,
