@@ -132,6 +132,10 @@ COPY --link --from=dependencies --chown=1000:1000 /app /app
 COPY --link --from=builder --chown=1000:1000 /runtime /app
 RUN chmod +x /app/docker-entrypoint.sh
 
+# Keep Sentry attribution with this image when another app is released separately.
+ARG RELEASE_SHA=""
+ENV RELEASE_SHA=${RELEASE_SHA}
+
 EXPOSE 1337
 USER root
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

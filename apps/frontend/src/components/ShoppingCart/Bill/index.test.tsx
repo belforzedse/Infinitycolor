@@ -1973,7 +1973,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(captureCheckoutMessage).not.toHaveBeenCalled();
   });
 
-  it("keeps the stored attempt when reservation lookup fails instead of treating stock as gone", async () => {
+  it("keeps the stored attempt and reports an unowned reservation lookup failure", async () => {
     window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
     window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
     await submitCheckoutWithError("RESERVATION_LOOKUP_FAILED");
@@ -1985,6 +1985,23 @@ describe("ShoppingCartBillForm auth gate", () => {
     });
     expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("دوباره تلاش کنید");
     expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+    expect(captureCheckoutMessage).toHaveBeenCalledTimes(1);
+    expect(captureCheckoutMessage).toHaveBeenCalledWith(
+      "checkout.error:RESERVATION_LOOKUP_FAILED",
+      expect.objectContaining({ level: "error" }),
+    );
+  });
+
+  it("keeps the stored attempt without duplicating a backend-owned reservation lookup failure", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("RESERVATION_LOOKUP_FAILED", { telemetryOwner: "backend" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("دوباره تلاش کنید");
+    });
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+    expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
     expect(captureCheckoutMessage).not.toHaveBeenCalled();
   });
 
