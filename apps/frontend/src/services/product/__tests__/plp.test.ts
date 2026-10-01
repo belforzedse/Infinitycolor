@@ -10,6 +10,7 @@ import {
   buildPLPPageCopy,
   buildPLPProductsQuery,
   getPLPProducts,
+  PLPProductsError,
   parsePLPQuery,
   type PLPQuery,
 } from "../plp";
@@ -286,10 +287,83 @@ describe("PLP query helpers", () => {
 describe("PLP product failures", () => {
   const query: PLPQuery = { page: 1, available: false };
 
+  it("preserves a successful empty result and its pagination", async () => {
+    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: jest.fn().mockResolvedValue({ data: [], meta: { pagination: { total: 0, pageCount: 0 } } }),
+    });
+    await expect(getPLPProducts(query)).resolves.toEqual({
+      products: [], pagination: { page: 1, pageSize: 30, pageCount: 0, total: 0 },
+    });
+  });
+
   it("does not represent a network failure as an empty catalog", async () => {
     (fetchWithTimeout as jest.Mock).mockRejectedValueOnce(new Error("offline"));
 
     await expect(getPLPProducts(query)).rejects.toMatchObject({ code: "FETCH_FAILED" });
+  });
+
+  it("retains a redacted connection cause and the failed request stage", async () => {
+    const socketError = Object.assign(new Error("private socket address and token"), {
+      code: "ECONNRESET",
+    });
+    socketError.stack =
+      "Error: private socket address and token\n    at read (node:internal/streams/readable:7:4)";
+    const error = new TypeError("fetch failed: https://user:password@host/products?search=private");
+    error.cause = socketError;
+    (fetchWithTimeout as jest.Mock).mockRejectedValueOnce(error);
+
+    const failure = await getPLPProducts(query).catch((error) => error);
+    expect(failure).toBeInstanceOf(PLPProductsError);
+    expect(failure).toMatchObject({
+      code: "FETCH_FAILED",
+      failureStage: "request",
+      cause: { name: "TypeError", cause: { code: "ECONNRESET" } },
+    });
+    expect(failure.cause.cause.stack).toContain("node:internal/streams/readable:7:4");
+    expect(String(failure.cause)).not.toContain("password");
+    expect(JSON.stringify(failure)).not.toMatch(/private|password|search=|socket address/);
+  });
+
+  it("distinguishes an unreadable response from a failed fetch without losing HTTP status", async () => {
+    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: jest.fn().mockRejectedValue(new SyntaxError("private HTML response")),
+    });
+    const failure = await getPLPProducts(query).catch((error) => error);
+    expect(failure).toMatchObject({
+      code: "FETCH_FAILED",
+      status: 502,
+      failureStage: "response_json",
+      cause: { name: "SyntaxError" },
+    });
+    expect(String(failure.cause)).not.toContain("private HTML response");
+  });
+
+  it("retains AbortError as an actionable request failure", async () => {
+    (fetchWithTimeout as jest.Mock).mockRejectedValueOnce(
+      new DOMException("aborted", "AbortError"),
+    );
+    await expect(getPLPProducts(query)).rejects.toMatchObject({
+      code: "FETCH_FAILED",
+      failureStage: "request",
+      cause: { name: "AbortError" },
+    });
+  });
+
+  it("distinguishes invalid product data from invalid JSON", async () => {
+    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: jest.fn().mockResolvedValue({ data: null }),
+    });
+    await expect(getPLPProducts(query)).rejects.toMatchObject({
+      code: "INVALID_RESPONSE",
+      failureStage: "response_normalization",
+      status: 200,
+    });
   });
 
   it("does not represent a backend rejection as no results", async () => {
@@ -300,7 +374,11 @@ describe("PLP product failures", () => {
       json: jest.fn().mockResolvedValue({ error: { message: "unavailable" } }),
     });
 
-    await expect(getPLPProducts(query)).rejects.toMatchObject({ code: "API_ERROR", status: 503 });
+    await expect(getPLPProducts(query)).rejects.toMatchObject({
+      code: "API_ERROR",
+      status: 503,
+      failureStage: "response_status",
+    });
   });
 });
 

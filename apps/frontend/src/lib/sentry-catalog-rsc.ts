@@ -1,3 +1,5 @@
+import { catalogFailureTags } from "./catalog-error-diagnostics";
+
 type CatalogErrorContext = {
   routePath?: string;
 };
@@ -77,13 +79,17 @@ export function catalogRscFingerprint(
 }
 
 function catalogRscFingerprintFromEvent(event: SentryEventLike): string[] | undefined {
-  const first = event.exception?.values?.[0];
-  const type = first?.type || "";
-  const value = first?.value || "";
-  if (type === "PLPProductsError") {
-    return ["catalog-rsc", "plp", "PLPProductsError"];
+  const values = event.exception?.values || [];
+  if (values.some((value) => value.type === "PLPProductsError")) {
+    const code = event.tags?.catalog_error_code;
+    return ["catalog-rsc", "plp", typeof code === "string" ? code : "PLPProductsError"];
   }
-  if (type === "PdpProductUnavailableError" || value === "PRODUCT_DATA_UNAVAILABLE") {
+  if (
+    values.some(
+      (value) =>
+        value.type === "PdpProductUnavailableError" || value.value === "PRODUCT_DATA_UNAVAILABLE",
+    )
+  ) {
     return ["catalog-rsc", "pdp", "PRODUCT_DATA_UNAVAILABLE"];
   }
   return undefined;
@@ -99,6 +105,7 @@ export function applyCatalogRscSentryScope(
   if (name) scope.setTag("error_name", name);
   const code = catalogErrorCode(error);
   if (code) scope.setTag("catalog_error_code", code);
+  for (const [key, value] of Object.entries(catalogFailureTags(error))) scope.setTag(key, value);
   const routePath = requestRoutePath(errorContext);
   if (routePath) scope.setTag("route_path", routePath);
   const fingerprint = catalogRscFingerprint(error, { routePath });
@@ -122,6 +129,7 @@ export function applyCatalogRscEvent<T extends SentryEventLike>(
   if (typeof digest === "string" && digest) event.tags.next_error_digest = digest;
   if (name && !event.tags.error_name) event.tags.error_name = name;
   if (code && !event.tags.catalog_error_code) event.tags.catalog_error_code = code;
+  Object.assign(event.tags, catalogFailureTags(hint?.originalException));
   if (routePath && !event.tags.route_path) event.tags.route_path = routePath;
   return event;
 }

@@ -112,3 +112,36 @@ it("attaches the same server digest used by client recovery reports", () => {
     "4073695856",
   );
 });
+
+it("retains catalog identity when the SDK places linked causes before the wrapper", () => {
+  const event = applyCatalogRscEvent({
+    exception: {
+      values: [
+        { type: "TypeError", value: "Catalog request failed" },
+        { type: "PLPProductsError", value: "Unable to load products" },
+      ],
+    },
+    tags: { catalog_error_code: "FETCH_FAILED" },
+  });
+  expect(event.fingerprint).toEqual(["catalog-rsc", "plp", "FETCH_FAILED"]);
+});
+
+it("adds safe failure stage and root cause tags to both the scope and the server event", () => {
+  const error = Object.assign(plpFetchError(), {
+    failureStage: "response_json",
+    status: 502,
+    digest: "4073695856",
+    cause: Object.assign(new SyntaxError("redacted"), { code: "ECONNRESET" }),
+  });
+  const scope = { setTag: jest.fn(), setFingerprint: jest.fn() };
+  applyCatalogRscSentryScope(scope, error);
+  expect(scope.setTag).toHaveBeenCalledWith("catalog_failure_stage", "response_json");
+  expect(scope.setTag).toHaveBeenCalledWith("catalog_cause_code", "ECONNRESET");
+  expect(applyCatalogRscEvent({}, { originalException: error }).tags).toMatchObject({
+    next_error_digest: "4073695856",
+    catalog_http_status: "502",
+    catalog_failure_stage: "response_json",
+    catalog_cause_type: "SyntaxError",
+    catalog_cause_code: "ECONNRESET",
+  });
+});
