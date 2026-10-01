@@ -181,7 +181,7 @@ export async function processMaintenanceJob(
       );
     }
     case MEDIA_JOBS.normalizeUploadedFile: {
-      const { fileId, force } = job.data as { fileId: number; force?: boolean };
+      const { fileId, force, webmEnabled, hlsEnabled } = job.data as { fileId: number; force?: boolean; webmEnabled?: boolean; hlsEnabled?: boolean };
       const { loadUploadVideoFile, normalizeUploadFile } = await import(
         "../services/media/normalize-upload-video"
       );
@@ -190,7 +190,7 @@ export async function processMaintenanceJob(
         if (!file) {
           return { fileId, status: "missing" as const, detail: "upload row not found" };
         }
-        return normalizeUploadFile(file, { ...deps, force: force === true });
+        return normalizeUploadFile(file, { ...deps, force: force === true, webmEnabled, hlsEnabled });
       });
     }
     case SNAPPAY_PAYMENT_JOBS.operation: {

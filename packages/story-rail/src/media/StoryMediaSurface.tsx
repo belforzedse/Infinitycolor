@@ -21,7 +21,7 @@ import {
 import { describeMediaUrl, useStoryPlaybackStore, type StoryPlaybackStore } from "./playback-store";
 import { getSafeStoryCtaUrl } from "../story-utils";
 import type { StoryRailOverlay } from "../types";
-import { createVideoEngine, type VideoSource } from "@repo/video-player";
+import { createVideoEngine, chooseEngine, type VideoSource } from "@repo/video-player";
 
 /** Payload we attach to each package story item; the package passes it through untouched. */
 export interface StoryMediaPayload {
@@ -255,12 +255,18 @@ function StoryMedia({
     let disposed = false;
     let retriedMuted = false;
     let failureReported = false;
+    let autoplayReported = false;
     let lastTime = 0;
 
     const held = () => isHeld(stateRef.current.holds);
     const reportOnce = (failure: MediaFailureKind, code: number | null) => {
-      if (failureReported) return;
-      failureReported = true;
+      if (failure === "autoplay-denied") {
+        if (autoplayReported) return;
+        autoplayReported = true;
+      } else {
+        if (failureReported) return;
+        failureReported = true;
+      }
       report(failure, code);
     };
 
@@ -319,6 +325,7 @@ function StoryMedia({
           return;
         }
         if (name === "NotSupportedError") {
+          if (engine.recoverDecodeFailure()) return;
           dispatch({ type: "failed", generation, failure: "decode-unsupported" });
           reportOnce("decode-unsupported", video.error?.code ?? null);
           return;
@@ -620,13 +627,13 @@ function StoryMedia({
         // `src` is declarative so the fetch starts when React creates the element. When the
         // viewer opens, that is during the render React holds back before revealing the lazy
         // viewer (~300 ms before any effect runs). The engine adopts the source rather than
-        // re-attaching it, which is safe because stories are MP4-only and every item gets
+        // re-attaching it, which follows the same capability selection as the engine and every item gets
         // its own keyed element. No opacity trick: the poster is layered above instead,
         // because some engines do not present frames for a fully transparent element, and
         // a presented frame is what the poster waits for.
         <video
           ref={videoRef}
-          src={payload.video?.mp4 ?? payload.src}
+          src={payload.video && chooseEngine(payload.video, { allowHls: false }) === "webm" ? payload.video.webm! : payload.video?.mp4 ?? payload.src}
           className="relative h-full w-full object-contain"
           playsInline
           preload="auto"

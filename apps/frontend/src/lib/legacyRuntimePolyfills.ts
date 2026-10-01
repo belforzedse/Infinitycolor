@@ -15,6 +15,13 @@
 export function getLegacyRuntimePolyfillScript(): string {
   return `(function(){
 try{
+var mql=window.matchMedia&&window.matchMedia("all");
+var mqProto=mql&&Object.getPrototypeOf(mql);
+if(mqProto&&mqProto!==Object.prototype&&typeof mql.addEventListener!=="function"&&typeof mql.addListener==="function"&&typeof mql.removeListener==="function"){
+Object.defineProperty(mqProto,"addEventListener",{configurable:true,writable:true,value:function(type,listener){if(type==="change")this.addListener(listener);}});
+Object.defineProperty(mqProto,"removeEventListener",{configurable:true,writable:true,value:function(type,listener){if(type==="change")this.removeListener(listener);}});}
+}catch(e){}
+try{
 if(typeof Array.prototype.findLast!=="function"){
 Object.defineProperty(Array.prototype,"findLast",{configurable:true,writable:true,value:function(fn,thisArg){
 for(var i=this.length-1;i>=0;i--){if(fn.call(thisArg,this[i],i,this))return this[i];}

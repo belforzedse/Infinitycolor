@@ -1,5 +1,6 @@
 "use client";
 
+import { completeStorefrontRecovery } from "@/lib/storefront-recovery";
 import { useEffect } from "react";
 import { useAtomValue } from "jotai";
 import { userLoadingAtom } from "@/lib/atoms/auth";
@@ -18,6 +19,7 @@ export default function AppReadyMarker() {
   const sessionLoading = useAtomValue(userLoadingAtom);
   useEffect(() => {
     if (sessionLoading) return;
+    completeStorefrontRecovery("root-layout");
     document.documentElement.dataset.appReady = "true";
   }, [sessionLoading]);
   return null;

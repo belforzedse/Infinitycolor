@@ -10,7 +10,21 @@
  * the decision.
  */
 
-export type PlaybackEngine = "hls.js" | "native-hls" | "mp4";
+export type PlaybackEngine = "hls.js" | "native-hls" | "mp4" | "webm";
+
+export function canPlayWebm(video?: HTMLVideoElement | null, hasAudio?: boolean | null): boolean {
+  const element = video ?? (typeof document !== "undefined" ? document.createElement("video") : null);
+  try { return Boolean(element?.canPlayType(`video/webm; codecs="vp9${hasAudio === false ? "" : ", opus"}"`)); }
+  catch { return false; }
+}
+
+function preferredProgressive(source: { webm?: string | null; hasAudio?: boolean | null }, video?: HTMLVideoElement | null): PlaybackEngine {
+  const element = video ?? (typeof document !== "undefined" ? document.createElement("video") : null);
+  try {
+    if (source.webm && element && !element.canPlayType(`video/mp4; codecs="avc1.64001f${source.hasAudio === false ? "" : ", mp4a.40.2"}"`) && canPlayWebm(element, source.hasAudio)) return "webm";
+  } catch { /* Keep the established default when capability checks are unavailable. */ }
+  return "mp4";
+}
 
 const MSE_H264 = 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"';
 
@@ -82,11 +96,11 @@ export function resetHlsCircuit(): void {
 }
 
 export function chooseEngine(
-  source: { hls?: string | null },
+  source: { hls?: string | null; webm?: string | null; hasAudio?: boolean | null },
   { allowHls, video }: { allowHls: boolean; video?: HTMLVideoElement | null },
 ): PlaybackEngine {
-  if (!allowHls || !source.hls || isHlsCircuitOpen()) return "mp4";
+  if (!allowHls || !source.hls || isHlsCircuitOpen()) return preferredProgressive(source, video);
   if (isMseH264Supported()) return "hls.js";
   if (canPlayNativeHls(video)) return "native-hls";
-  return "mp4";
+  return preferredProgressive(source, video);
 }

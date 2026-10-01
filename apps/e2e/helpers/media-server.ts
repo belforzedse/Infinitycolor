@@ -15,6 +15,7 @@ import { extname, join, normalize } from "node:path";
 
 const TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
+  ".webm": "video/webm",
   ".m4s": "video/iso.segment",
   ".m3u8": "application/vnd.apple.mpegurl",
   ".jpg": "image/jpeg",

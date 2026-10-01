@@ -7,7 +7,6 @@ export const EXPECTED_CHECKOUT_SENTRY_CODES = [
   "SNAPPAY_TOKEN_DUPLICATE",
   "ORDER_CANCELLED",
   "RESERVATION_EXPIRED",
-  "RESERVATION_LOOKUP_FAILED",
   "CART_EMPTY",
   "REVERT",
 ] as const;
@@ -24,6 +23,20 @@ export const EXPECTED_CHECKOUT_SENTRY_IGNORE = new RegExp(
 
 export function isExpectedCheckoutSentryCode(code: string | undefined): boolean {
   return Boolean(code && EXPECTED_CHECKOUT_SENTRY_CODE_SET.has(code));
+}
+
+export function checkoutDiagnosticDisposition(
+  code: string,
+  response?: { details?: { reason?: string }; telemetryOwner?: string },
+): "log" | "expected" | "issue" {
+  if (response?.telemetryOwner === "backend") return "log";
+  if (
+    isExpectedCheckoutSentryCode(code) ||
+    code === "STOCK_CHANGED" ||
+    (code === "STOCK_RESERVATION_FAILED" && response?.details?.reason === "insufficient_stock")
+  )
+    return "expected";
+  return "issue";
 }
 
 export function isExpectedCheckoutSentryMessage(message: string | undefined): boolean {

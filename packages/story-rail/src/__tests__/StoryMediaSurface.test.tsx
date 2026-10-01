@@ -22,10 +22,10 @@ function payloadFor(overrides: Partial<StoryMediaPayload> = {}): StoryMediaPaylo
 
 function renderSurface(
   payload: StoryMediaPayload,
-  options: { isActive?: boolean; isPaused?: boolean; itemId?: string } = {},
+  options: { isActive?: boolean; isPaused?: boolean; itemId?: string; reportIssue?: Parameters<typeof createPlaybackStore>[0] } = {},
 ) {
   const next = jest.fn();
-  const store = createPlaybackStore();
+  const store = createPlaybackStore(options.reportIssue);
   const noop = () => undefined;
 
   const view = render(
@@ -370,6 +370,18 @@ describe("StoryMediaSurface — engine behaviour", () => {
 });
 
 describe("StoryMediaSurface — autoplay", () => {
+  it("still reports a final decode failure after an autoplay refusal", async () => {
+    const reportIssue = jest.fn();
+    const { video } = renderSurface(payloadFor(), { reportIssue });
+    const media = controlMedia(video()!);
+    await act(async () => {
+      media.set({ duration: 5, readyState: 4, videoWidth: 720, videoHeight: 1280 }); media.emit("canplay");
+      await media.rejectPlay("NotAllowedError");
+    });
+    await act(async () => { media.fail(3); });
+    expect(reportIssue).toHaveBeenCalledWith(expect.objectContaining({ failure: "decode-unsupported" }));
+    expect(reportIssue.mock.calls.filter(([issue]) => issue.failure === "decode-unsupported")).toHaveLength(1);
+  });
   it("falls back to muted playback when audible autoplay is refused", async () => {
     const { video, store } = renderSurface(payloadFor());
     const element = video()!;

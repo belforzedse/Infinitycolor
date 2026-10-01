@@ -10,9 +10,9 @@ describe("expected checkout Sentry filters", () => {
     expect(isExpectedCheckoutSentryCode("SNAPPAY_MANUAL_REVIEW")).toBe(true);
     expect(isExpectedCheckoutSentryCode("SNAPPAY_RECONCILIATION_PENDING")).toBe(true);
     expect(isExpectedCheckoutSentryCode("RESERVATION_EXPIRED")).toBe(true);
-    expect(isExpectedCheckoutSentryCode("RESERVATION_LOOKUP_FAILED")).toBe(true);
+    expect(isExpectedCheckoutSentryCode("RESERVATION_LOOKUP_FAILED")).toBe(false);
     expect(isExpectedCheckoutSentryMessage("checkout.error:RESERVATION_EXPIRED")).toBe(true);
-    expect(isExpectedCheckoutSentryMessage("checkout.error:RESERVATION_LOOKUP_FAILED")).toBe(true);
+    expect(isExpectedCheckoutSentryMessage("checkout.error:RESERVATION_LOOKUP_FAILED")).toBe(false);
     expect(isExpectedCheckoutSentryMessage("checkout.error:SNAPPAY_MANUAL_REVIEW")).toBe(true);
     expect(EXPECTED_CHECKOUT_SENTRY_IGNORE.test("checkout.error:PAYMENT_IN_PROGRESS")).toBe(true);
     expect(isExpectedCheckoutSentryCode("CART_EMPTY")).toBe(true);

@@ -110,14 +110,14 @@ export async function enqueueVideoProcessingFor(
   fileId: number,
   context: string,
   settings: QueueSettings = getQueueSettings(),
-  { force = false }: { force?: boolean } = {},
+  { force = false, webmEnabled, hlsEnabled }: { force?: boolean; webmEnabled?: boolean; hlsEnabled?: boolean } = {},
 ): Promise<void> {
   const bucket = Math.floor(Date.now() / 60_000);
   const safeContext = context.replace(/[^\w-]/g, "_").slice(0, 60);
   await getMediaQueue(settings).add(
     MEDIA_JOBS.normalizeUploadedFile,
     // `force` (backfill only) reprocesses rows the automatic triggers leave alone.
-    force ? { fileId, force: true } : { fileId },
+    { fileId, ...(force ? { force: true } : {}), ...(webmEnabled === undefined ? {} : { webmEnabled }), ...(hlsEnabled === undefined ? {} : { hlsEnabled }) },
     { jobId: mediaJobId("normalize-uploaded-file", fileId, safeContext, bucket) },
   );
 }

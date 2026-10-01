@@ -27,6 +27,7 @@ export interface PipelineClip {
   id: string;
   /** Paths relative to VIDEO_FIXTURE_DIR. */
   mp4: string;
+  webm: string;
   poster: string;
   hls: string;
 }

@@ -117,3 +117,13 @@ describe("derived paths", () => {
     expect(() => uploadFilePath("/u", "/uploads/../../secret")).toThrow(/unexpected upload url/);
   });
 });
+
+
+it("adds WebM independently without re-encoding MP4/HLS or bumping the pipeline", () => {
+  expect(assessVideoRow(owned(), { hlsEnabled: false, webmEnabled: true })).toEqual({ mp4: false, hls: false, webm: true, reasons: ["no WebM rendition yet"] });
+  const finished = owned(); finished.video!.output!.webm = { url: "/uploads/clip.webm", bytes: 10, profileVersion: 1 };
+  expect(assessVideoRow(finished, { hlsEnabled: false, webmEnabled: true }).webm).toBe(false);
+  const failed = owned({ webmFailure: { stage: "webm", code: "encode_failed", message: "", attempt: 3, at: "", sourceUrl: owned().url } });
+  expect(assessVideoRow(failed, { hlsEnabled: true, webmEnabled: true })).toEqual(expect.objectContaining({ hls: true, webm: false, mp4: false }));
+  expect(assessVideoRow(failed, { hlsEnabled: false, webmEnabled: true, force: true }).webm).toBe(true);
+});

@@ -99,7 +99,7 @@ describe("tagStorefrontSentryEvent", () => {
     expect(tagged).toBe(event);
   });
 
-  it("does not drop Android WebView postMessage or anonymous getParams after tagging", () => {
+  it("drops proven Android WebView postMessage and anonymous getParams after tagging", () => {
     const webview = tagStorefrontSentryEvent({
       message: "Error invoking postMessage: Java object is gone",
       exception: {
@@ -113,7 +113,7 @@ describe("tagStorefrontSentryEvent", () => {
         ],
       },
     });
-    expect(dropNoisyStorefrontSentryEvent(webview)).toBe(webview);
+    expect(dropNoisyStorefrontSentryEvent(webview)).toBeNull();
 
     const evalInject = tagStorefrontSentryEvent({
       exception: {
@@ -127,15 +127,15 @@ describe("tagStorefrontSentryEvent", () => {
         ],
       },
     });
-    expect(dropNoisyStorefrontSentryEvent(evalInject)).toBe(evalInject);
+    expect(dropNoisyStorefrontSentryEvent(evalInject)).toBeNull();
   });
 });
 
 describe("dropNoisyStorefrontSentryEvent", () => {
-  it("drops stackless Replay Hydration Error titles", () => {
+  it("keeps stackless hydration reports without injection evidence", () => {
     const event = { message: "Hydration Error" };
-    expect(isReplayHydrationSentryEvent(event)).toBe(true);
-    expect(dropNoisyStorefrontSentryEvent(event)).toBeNull();
+    expect(isReplayHydrationSentryEvent(event)).toBe(false);
+    expect(dropNoisyStorefrontSentryEvent(event)).toBe(event);
   });
 
   it("keeps React #418 even when the title mentions hydration", () => {
@@ -219,13 +219,56 @@ describe("dropNoisyStorefrontSentryEvent", () => {
     expect(dropNoisyStorefrontSentryEvent({ message: WASM_BINDGEN_ALIASING_MESSAGE })).toBeNull();
   });
 
-  it("drops tagged Flight transport cuts", () => {
+  it("keeps transport candidates without a confirmed recovery", () => {
     for (const message of TRANSIENT_NETWORK_MESSAGES) {
       const tagged = tagStorefrontSentryEvent({ message });
-      expect(dropNoisyStorefrontSentryEvent(tagged)).toBeNull();
+      expect(dropNoisyStorefrontSentryEvent(tagged)).toBe(tagged);
     }
     expect(
-      dropNoisyStorefrontSentryEvent(tagStorefrontSentryEvent({ message: "TypeError: Load failed" })),
-    ).toBeNull();
+      dropNoisyStorefrontSentryEvent(
+        tagStorefrontSentryEvent({ message: "TypeError: Load failed" }),
+      ),
+    ).not.toBeNull();
   });
+});
+
+it("retains mixed native/application stacks and bridge titles with no provenance", () => {
+  const message = "Error invoking postMessage: Java object is gone";
+  const event = {
+    message,
+    exception: {
+      values: [
+        {
+          stacktrace: {
+            frames: [
+              { filename: "app://navigation_performance_logger_android" },
+              { filename: "https://infinitycolor.co/_next/static/chunks/app.js" },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  expect(dropNoisyStorefrontSentryEvent(tagStorefrontSentryEvent(event))).toBe(event);
+  expect(dropNoisyStorefrontSentryEvent(tagStorefrontSentryEvent({ message }))).not.toBeNull();
+  expect(
+    dropNoisyStorefrontSentryEvent(
+      tagStorefrontSentryEvent({
+        message: "unrelated anonymous failure",
+        exception: { values: [{ stacktrace: { frames: [{ filename: "<anonymous>" }] } }] },
+      }),
+    ),
+  ).not.toBeNull();
+});
+it("drops only confirmed recovered transport failures and keeps exhausted ones", () => {
+  const recovered = tagStorefrontSentryEvent({
+    message: "Connection closed.",
+    tags: { recovery_outcome: "recovered" },
+  });
+  expect(dropNoisyStorefrontSentryEvent(recovered)).toBeNull();
+  const exhausted = tagStorefrontSentryEvent({
+    message: "Connection closed.",
+    tags: { recovery_outcome: "exhausted" },
+  });
+  expect(dropNoisyStorefrontSentryEvent(exhausted)).toBe(exhausted);
 });

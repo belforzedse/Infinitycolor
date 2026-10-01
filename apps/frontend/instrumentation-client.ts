@@ -1,3 +1,4 @@
+import { beforeSendDiagnosticLog } from "./src/lib/diagnostic-log";
 import * as Sentry from "@sentry/nextjs";
 
 import type * as SentryReplay from "./src/lib/sentry-replay";
@@ -77,6 +78,8 @@ Sentry.init({
   dsn: sentryDsn,
   enabled: Boolean(sentryDsn),
   environment: deploymentEnvironment,
+  enableLogs: true,
+  beforeSendLog: beforeSendDiagnosticLog,
   tracesSampleRate: 0.1,
   // Replay is added only after the explicit public-route gate passes. This
   // prevents even a short sensitive-route capture during initialization.
@@ -93,12 +96,6 @@ Sentry.init({
     /globalThis\.performance\.getEntriesByType.*visibility-state/,
     // Safari injected-range helper, same anonymous eval pattern, not app code.
     /EmptyRanges/,
-    // Safari aborts in-flight fetches when the shopper leaves the page.
-    /AbortError: The operation was aborted/,
-    /^The operation was aborted\.?$/,
-    // Replay snapshot title, not React #418. beforeSend also requires a
-    // stackless payload so a real hydration mismatch is not muted.
-    /^Hydration Error$/,
     // wasm-bindgen / rrweb host panic; not storefront code.
     /recursive use of an object detected which would lead to unsafe aliasing in rust/,
     // Expected checkout leftovers. Also dropped in beforeSend so a stale

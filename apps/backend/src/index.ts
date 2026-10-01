@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import { beforeSendDiagnosticLog } from "./utils/diagnostic-log";
 import bcrypt from "bcryptjs";
 import { createClient } from "redis";
 import type { Strapi } from "@strapi/strapi";
@@ -7,7 +8,10 @@ import type { Strapi } from "@strapi/strapi";
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV,
+  environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV,
+  release: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA,
+  enableLogs: true,
+  beforeSendLog: beforeSendDiagnosticLog,
 });
 import override from "./api/auth/documentation/1.0.0/overrides/auth.json";
 import localUserOverride from "./api/local-user/documentation/1.0.0/overrides/local-user.json";

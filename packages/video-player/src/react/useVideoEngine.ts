@@ -71,6 +71,7 @@ export function useVideoEngine(
 
   const mp4 = source?.mp4 ?? "";
   const hls = source?.hls ?? "";
+  const webm = source?.webm ?? "";
 
   // ── Engine lifecycle: one engine per (element, source, activation) ──────────────────
   useEffect(() => {
@@ -122,7 +123,7 @@ export function useVideoEngine(
     };
     // `source` is identified by its URLs; a new object with the same URLs is the same video.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.active, mp4, hls, options.allowHls, options.surface, options.preload, attempt, videoRef, requestPlay]);
+  }, [options.active, mp4, hls, webm, options.allowHls, options.surface, options.preload, attempt, videoRef, requestPlay]);
 
   // ── Follow the desired play/mute state ──────────────────────────────────────────────
   // Play is issued once per engine and per paused→playing change, never on every render:

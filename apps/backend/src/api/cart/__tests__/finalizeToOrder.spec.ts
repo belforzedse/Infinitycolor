@@ -2,6 +2,28 @@ import { describe, it, expect, jest } from "@jest/globals";
 import { finalizeToOrderHandler } from "../controllers/handlers/finalizeToOrder";
 import { createCtx, createStrapiMock } from "../../../__tests__/helpers/test-utils";
 
+describe("finalizeToOrder diagnostic response", () => {
+  it.each(["insufficient_stock", "database_failure"])("forwards backend ownership and only a confirmed %s shortage", async (reason) => {
+    const { strapi, registerService, registerQuery } = createStrapiMock();
+    enableSnappayGateway(strapi);
+    registerService("api::cart.cart", { finalizeCartToOrder: jest.fn(async () => ({
+      success: false, message: "Test checkout failure", errorCode: "STOCK_RESERVATION_FAILED",
+      telemetryOwner: "backend", details: { reason, privateDatabaseDetail: "never public" },
+    })) });
+    registerQuery("api::payment-attempt.payment-attempt", { findOne: jest.fn().mockResolvedValue({
+      attemptId: "diagnostic-attempt", quoteHash: "test-quote", Gateway: "snappay", Status: "Redirected", order: { id: 42 },
+    }), update: jest.fn() });
+    const ctx = createCtx({ request: { body: { gateway: "snappay", attemptId: "diagnostic-attempt" } }, state: { user: { id: 1 } } });
+    try { await finalizeToOrderHandler(strapi as any)(ctx); throw new Error("Expected refusal"); }
+    catch (error: any) {
+      expect(error.status).toBe(400);
+      expect(error.payload.data.telemetryOwner).toBe("backend");
+      expect(error.payload.data.details).toEqual(reason === "insufficient_stock" ? { reason } : undefined);
+      expect(JSON.stringify(error.payload)).not.toContain("privateDatabaseDetail");
+    }
+  });
+});
+
 const enableSnappayGateway = (strapi: any) => {
   strapi.entityService.findMany = jest
     .fn()

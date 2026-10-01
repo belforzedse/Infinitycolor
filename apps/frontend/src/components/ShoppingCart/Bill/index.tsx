@@ -19,6 +19,8 @@ import { CheckoutProgress } from "../CheckoutProgress";
 import { orderIdAtom, orderNumberAtom, submitOrderStepAtom } from "@/atoms/Order";
 import { useAtom, useAtomValue } from "jotai";
 import * as Sentry from "@sentry/nextjs";
+import { routeExpectedDiagnostic, logDiagnostic } from "@/lib/diagnostic-log";
+import { checkoutDiagnosticDisposition } from "@/lib/expected-checkout-sentry";
 import { SubmitOrderStep } from "@/types/Order";
 import { currentBrowserFamily } from "@/lib/browser-family";
 import { useRouter } from "next/navigation";
@@ -929,15 +931,22 @@ function ShoppingCartBillForm({}: Props) {
     }
   };
 
-  const trackCheckoutError = (errorCode?: string, category?: CheckoutFailureCategory) => {
+  const trackCheckoutError = (errorCode?: string, category?: CheckoutFailureCategory, response?: { details?: { reason?: string }; telemetryOwner?: string }) => {
     // Umami gets a stable, low-cardinality category; the raw code goes to Sentry
     // so the generic Persian banner can still be traced back to a cause.
     trackCheckoutFailure(category ?? checkoutFailureCategoryForCode(errorCode), gateway);
     // Codeless failures are client-side validation the shopper can fix; they
     // are analytics only, never Sentry noise.
-    if (!errorCode || isExpectedCheckoutSentryCode(errorCode)) {
+    if (!errorCode) return;
+    const attributes = { area: "checkout", stage: "storefront", reasonCode: errorCode, gateway: gateway || "none" };
+    const disposition = checkoutDiagnosticDisposition(errorCode, response);
+    if (disposition === "log") {
+      logDiagnostic("checkout.failure", attributes);
       return;
     }
+    if (disposition === "expected" && routeExpectedDiagnostic("checkout.failure", attributes)) return;
+    // Preserve already-filtered historical business states while Logs rollout is pending.
+    if (isExpectedCheckoutSentryCode(errorCode)) return;
     try {
       Sentry.captureMessage(`checkout.error:${errorCode || "UNSPECIFIED"}`, {
         // Unmapped backend copy is still worth a breadcrumb, but it is not an
@@ -1529,7 +1538,7 @@ function ShoppingCartBillForm({}: Props) {
           if (recoverInFlightPayment(String(errorCode), cartResponse, checkoutAttemptId)) {
             return;
           }
-          trackCheckoutError(String(errorCode));
+          trackCheckoutError(String(errorCode), undefined, { details: errorDetails, telemetryOwner: (cartResponse as any).telemetryOwner });
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
@@ -1601,8 +1610,9 @@ function ShoppingCartBillForm({}: Props) {
             // rendered as the generic banner and told the shopper nothing they
             // could act on.
             case "STOCK_RESERVATION_FAILED":
-              displayError =
-                "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید.";
+              displayError = errorDetails?.reason === "insufficient_stock"
+                ? "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید."
+                : "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید.";
               break;
             case "DISCOUNT_USAGE_EXHAUSTED":
               displayError =
@@ -1741,7 +1751,7 @@ function ShoppingCartBillForm({}: Props) {
           if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId())) {
             return;
           }
-          trackCheckoutError(String(errorCode));
+          trackCheckoutError(String(errorCode), undefined, { details: responseData.details, telemetryOwner: responseData.telemetryOwner });
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
@@ -1815,8 +1825,9 @@ function ShoppingCartBillForm({}: Props) {
                 "محاسبه مبلغ نهایی سفارش ممکن نشد. لطفاً روش ارسال و آدرس را بررسی کرده و دوباره تلاش کنید.";
               break;
             case "STOCK_RESERVATION_FAILED":
-              displayError =
-                "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید.";
+              displayError = responseData.details?.reason === "insufficient_stock"
+                ? "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید."
+                : "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید.";
               break;
             case "DISCOUNT_USAGE_EXHAUSTED":
               displayError =

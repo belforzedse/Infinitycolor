@@ -340,4 +340,64 @@ describeWithFfmpeg("video pipeline (real ffmpeg)", () => {
     expect(row.video?.previous?.url).toBe(`/uploads/${legacyHash}_web.mp4`);
     await expectPlayableRow(114, { width: 720, height: 1280 });
   });
+  it("adds a real VP9/Opus WebM without changing the MP4 row URL", async () => {
+    await processFixture(FIXTURES.h264, 200, { hlsEnabled: false });
+    const original = mockStore.get(200)!;
+    const outcome = await processVideoFile(200, { strapi, uploadsDir: uploads, hlsEnabled: false, webmEnabled: true, threads: 2 });
+    expect(outcome).toEqual(expect.objectContaining({ stages: ["webm"] }));
+    const next = mockStore.get(200)!;
+    expect(next.url).toBe(original.url); expect(next.video?.pipelineVersion).toBe(1);
+    const webm = next.video!.output!.webm!;
+    const probe = await probeVideo(join(uploads, webm.url.split("/").pop()!));
+    expect(probe).toEqual(expect.objectContaining({ videoCodec: "vp9", audioCodec: "opus", pixelFormat: "yuv420p", rotation: 0 }));
+    expect(webm.bytes).toBeGreaterThan(0);
+  });
+  it("keeps MP4 and still publishes HLS when optional WebM encoding fails", async () => {
+    await processFixture(FIXTURES.h264, 201, { hlsEnabled: false });
+    const originalUrl = mockStore.get(201)!.url;
+    const real = mediaProcess.runMediaProcess;
+    const spy = jest.spyOn(mediaProcess, "runMediaProcess").mockImplementation(async (binary, args, options) => {
+      if (args.includes("libvpx-vp9")) throw new mediaProcess.MediaProcessingError("encode_failed", "test WebM encoder failure");
+      return real(binary, args, options);
+    });
+    try { await expect(processVideoFile(201, { strapi, uploadsDir: uploads, hlsEnabled: true, webmEnabled: true })).rejects.toMatchObject({ code: "encode_failed" }); }
+    finally { spy.mockRestore(); }
+    const next = mockStore.get(201)!;
+    expect(next.url).toBe(originalUrl); expect(next.video?.status).toBe("streaming_ready");
+    expect(next.video?.output?.hls).toBeTruthy(); expect(next.video?.failure).toBeNull();
+    expect(next.video?.webmFailure).toEqual(expect.objectContaining({ stage: "webm", attempt: 1 }));
+    const retried = await processVideoFile(201, { strapi, uploadsDir: uploads, hlsEnabled: true, webmEnabled: true });
+    expect(retried).toEqual(expect.objectContaining({ stages: ["webm"] }));
+    expect(mockStore.get(201)!.video?.webmFailure).toBeNull();
+  });
+  it("leaves a working MP4 available when its original is missing for WebM backfill", async () => {
+    await processFixture(FIXTURES.h264, 202, { hlsEnabled: false });
+    const row = mockStore.get(202)!;
+    mockStore.put({ ...row, video: { ...row.video!, source: { ...row.video!.source!, url: "/uploads/missing-original.MOV" } } });
+    await expect(processVideoFile(202, { strapi, uploadsDir: uploads, hlsEnabled: false, webmEnabled: true })).rejects.toMatchObject({ code: "source_missing" });
+    expect(mockStore.get(202)!.url).toBe(row.url);
+    expect(mockStore.get(202)!.video?.status).toBe("playback_ready");
+    expect(mockStore.get(202)!.video?.webmFailure?.code).toBe("source_missing");
+  });
+  it("cannot publish optional WebM after losing its lease", async () => {
+    await processFixture(FIXTURES.h264, 203, { hlsEnabled: false });
+    const originalUrl = mockStore.get(203)!.url;
+    const realWrite = mockStore.writeVideoState;
+    const spy = jest.spyOn(mockStore, "writeVideoState").mockImplementation(async (db, id, owner, patch, update) => {
+      if (patch.output?.webm) {
+        const row = mockStore.get(id)!;
+        mockStore.put({ ...row, video: { ...row.video!, lease: { owner: "new-holder", jobId: "other", until: Date.now() + 60_000 } } });
+      }
+      return realWrite(db, id, owner, patch, update);
+    });
+    try {
+      await expect(processVideoFile(203, { strapi, uploadsDir: uploads, hlsEnabled: false, webmEnabled: true })).rejects.toMatchObject({ code: "terminated" });
+      const row = mockStore.get(203)!;
+      expect(row.url).toBe(originalUrl);
+      expect(row.video?.output?.webm).toBeUndefined();
+      expect(row.video?.lease?.owner).toBe("new-holder");
+      expect(row.video?.webmFailure).toBeFalsy();
+    } finally { spy.mockRestore(); }
+  });
+
 });

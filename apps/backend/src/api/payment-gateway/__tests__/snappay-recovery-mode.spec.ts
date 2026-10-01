@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import {
   __resetRecoveryReadinessForTests,
   configuredRecoveryMode,
@@ -9,7 +10,7 @@ import {
 } from "../services/snappay-recovery-mode";
 import { evaluateReleaseBreakers } from "../services/snappay-recovery-breakers";
 
-jest.mock("@sentry/node", () => ({ captureMessage: jest.fn() }));
+jest.mock("@sentry/node", () => ({ captureMessage: jest.fn(), logger: { info: jest.fn() } }));
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -303,4 +304,21 @@ describe("evaluateReleaseBreakers", () => {
       }),
     ).resolves.toEqual({ open: false });
   });
+});
+
+
+it("keeps shadow breakers fail closed while routing only their report into verified Logs", async () => {
+  const prior = process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS;
+  process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS = "true";
+  try {
+    const params = { path: "not_found" as const, kinds: ["not_found_confirmed" as const], walletAmountIrr: 100, env: {} };
+    const shadow = await evaluateReleaseBreakers(makeStrapi(), { ...params, mode: "shadow" });
+    expect(shadow).toEqual(expect.objectContaining({ open: true, reason: "wallet_value_limits_unset" }));
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    const enforce = await evaluateReleaseBreakers(makeStrapi(), { ...params, mode: "enforce" });
+    expect(enforce).toEqual(shadow);
+    expect(Sentry.captureMessage).toHaveBeenCalledWith("snappay.recovery.breaker_open", expect.objectContaining({ level: "warning" }));
+    jest.mocked(Sentry.captureMessage).mockImplementationOnce(() => { throw new Error("telemetry unavailable"); });
+    await expect(evaluateReleaseBreakers(makeStrapi(), { ...params, mode: "enforce" })).resolves.toEqual(shadow);
+  } finally { process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS = prior; }
 });

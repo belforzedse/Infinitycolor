@@ -416,3 +416,58 @@ describe("cleanup", () => {
     ]);
   });
 });
+
+
+describe("bounded WebM fallback", () => {
+  const source = { ...SOURCE, webm: "https://cdn.test/uploads/clip_v1-01020304.webm", hasAudio: false };
+  it("selects WebM initially only when MP4 capability is absent", () => {
+    const video = document.createElement("video");
+    video.canPlayType = (type) => type.includes("webm") ? "probably" : "";
+    const engine = createVideoEngine(video, source, { surface: "pdp" });
+    engine.load();
+    expect(engine.engine).toBe("webm");
+    expect(video.getAttribute("src")).toBe(source.webm);
+    engine.dispose();
+  });
+  it("tries WebM once after decode failure, preserves controls and position, then reports one exhausted failure", () => {
+    const video = document.createElement("video"); video.canPlayType = () => "probably";
+    const media = controlMedia(video), onFatal = jest.fn();
+    video.muted = true; video.volume = 0.4;
+    const engine = createVideoEngine(video, source, { surface: "story", onFatal });
+    engine.load(); media.set({ currentTime: 2 }); media.fail(3);
+    expect(engine.engine).toBe("webm"); expect(onFatal).not.toHaveBeenCalled();
+    expect(video.muted).toBe(true); expect(video.volume).toBe(0.4);
+    media.emit("loadedmetadata"); expect(video.currentTime).toBe(2);
+    media.fail(4); media.fail(4);
+    expect(onFatal).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === "error" && event.fatal)).toHaveLength(1);
+    engine.dispose(); expect(liveEngineCounts()).toEqual({ engines: 0, hls: 0 });
+  });
+  it("never switches formats for network errors or unsupported WebM", () => {
+    const video = document.createElement("video"); video.canPlayType = () => "probably";
+    const media = controlMedia(video), onFatal = jest.fn();
+    const engine = createVideoEngine(video, source, { surface: "pdp", onFatal });
+    engine.load(); media.fail(2); media.fail(2);
+    expect(engine.engine).toBe("mp4"); expect(onFatal).toHaveBeenCalledTimes(1); engine.dispose();
+    const next = document.createElement("video"); next.canPlayType = (type) => type.includes("webm") ? "" : "probably";
+    const unsupported = createVideoEngine(next, source, { surface: "pdp", onFatal }); unsupported.load();
+    controlMedia(next).fail(3); expect(unsupported.engine).toBe("mp4"); unsupported.dispose();
+  });
+  it("recovers NotSupportedError without escalating before the fallback is tried", async () => {
+    const video = document.createElement("video"); video.canPlayType = () => "probably";
+    const media = controlMedia(video), onFatal = jest.fn();
+    const engine = createVideoEngine(video, source, { surface: "pdp", onFatal }); engine.load();
+    const play = engine.play(); await media.rejectPlay("NotSupportedError"); await play;
+    expect(engine.engine).toBe("webm"); expect(onFatal).not.toHaveBeenCalled(); engine.dispose();
+  });
+  it("reports unsupported WebM even when only the resumed play promise rejects", async () => {
+    const video = document.createElement("video"); video.canPlayType = () => "probably";
+    const media = controlMedia(video), onFatal = jest.fn();
+    const engine = createVideoEngine(video, source, { surface: "pdp", onFatal }); engine.load();
+    const play = engine.play(); await media.resolvePlay(); await play;
+    media.fail(3); media.emit("canplay"); await media.rejectPlay("NotSupportedError");
+    expect(onFatal).toHaveBeenCalledTimes(1);
+    expect(engine.engine).toBe("webm");
+    engine.dispose();
+  });
+});

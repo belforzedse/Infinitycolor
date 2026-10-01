@@ -25,11 +25,20 @@ import {
   gatewayExpectedAmountIrr,
   readPaymentAttemptLegs,
 } from "../../../payment-attempt/services/payment-legs";
+import { routeExpectedDiagnostic } from "../../../../utils/diagnostic-log";
+
 const getFrontendBaseUrl = () =>
   (process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "https://infinitycolor.co").replace(
     /\/$/,
     "",
   );
+
+// Only callback outcomes already identified as customer/card declines belong in
+// Logs. Provider configuration, system, malformed, and unknown statuses stay actionable.
+const MELLAT_EXPECTED_DECLINES = new Set(["11", "12", "13", "14", "15", "16", "17", "18", "19"]);
+const SAMAN_EXPECTED_STATES = new Set(["CANCELEDBYUSER", "FAILED", "SESSIONISNULL"]);
+export const isExpectedProviderCallbackFailure = (gateway: "mellat" | "saman", status: string): boolean =>
+  (gateway === "mellat" ? MELLAT_EXPECTED_DECLINES : SAMAN_EXPECTED_STATES).has(status);
 
 // Shared by every gateway (Saman, Mellat, ZarinPal — SnappPay's own
 // `paymentResultUrl` in snappay-orchestrator.ts targets the same page
@@ -38,9 +47,10 @@ const getFrontendBaseUrl = () =>
 // `resultHint` or any other query param as ground truth, so it's safe for
 // every gateway to redirect through, including ones with weaker callback
 // integrity guarantees than the trusted post-verify state that sets it.
-const buildPaymentResultRedirectUrl = (
+export const buildPaymentResultRedirectUrl = (
   type: "success" | "failure" | "cancelled" | "issue",
   params?: Record<string, string | number | null | undefined>,
+  expectedOutcome = false,
 ) => {
   const url = new URL(`${getFrontendBaseUrl()}/payment/result`);
   url.searchParams.set("resultHint", type);
@@ -50,9 +60,7 @@ const buildPaymentResultRedirectUrl = (
       url.searchParams.set(key, String(value));
     });
   }
-  // Every gateway's failure path funnels through here, so one report at this
-  // chokepoint covers all of them without chasing each branch. `issue` is the
-  // serious one: the money moved but local settlement did not finish.
+  // The redirect is a UI hint, not a severity classification or settlement proof.
   if (type !== "success") {
     const hasOrder = params?.orderId != null && params.orderId !== "";
     const hasTransaction = Boolean(params?.transactionId);
@@ -60,13 +68,18 @@ const buildPaymentResultRedirectUrl = (
     // to an order. Reporting them as payment.result:failure drowns real declines.
     if (hasOrder || hasTransaction) {
       try {
+        const reasonCode = String(params?.code ?? type);
+        const expected = expectedOutcome || type === "cancelled" || reasonCode === "return_without_result";
+        if (expected && routeExpectedDiagnostic(`payment.result:${type}`, {
+          area: "payment", stage: "callback", resultHint: type, reasonCode, hasTransactionId: hasTransaction,
+        })) return url.toString();
         Sentry.captureMessage(`payment.result:${type}`, {
           level: type === "issue" ? "error" : "warning",
           tags: {
             area: "payment",
             stage: "callback",
             resultHint: type,
-            reasonCode: String(params?.code ?? type),
+            reasonCode,
           },
           extra: {
             orderId: params?.orderId ?? null,
@@ -409,6 +422,9 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
               .service("api::payment-gateway.snappay-orchestrator")
               .reconcileOrder(correlatedOrderId, "return_without_result");
           } catch (error: any) {
+            try {
+              Sentry.captureException(error, { tags: { area: "payment", stage: "reconcile_return", reasonCode: "return_reconciliation_failed" } });
+            } catch { /* Telemetry must not interrupt the return. */ }
             strapi.log.error("Failed to reconcile SnappPay return correlated by nonce", {
               orderId: correlatedOrderId,
               error: String(error?.message || error).slice(0, 300),
@@ -1045,7 +1061,7 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
           buildPaymentResultRedirectUrl("failure", {
             orderId,
             error: normalizedState || String(samanStatusInput || "FAILED"),
-          }),
+          }, isExpectedProviderCallbackFailure("saman", normalizedState)),
         );
       }
 
@@ -1308,7 +1324,7 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
           ctx.redirect(
             buildPaymentResultRedirectUrl("failure", {
               error: `Payment failed with code: ${ResCode}`,
-            }),
+            }, isExpectedProviderCallbackFailure("mellat", String(ResCode))),
           );
         }
         return;
@@ -1347,7 +1363,7 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
             buildPaymentResultRedirectUrl("failure", {
               orderId,
               error: `Payment failed with code: ${ResCode}`,
-            }),
+            }, isExpectedProviderCallbackFailure("mellat", String(ResCode))),
           );
         }
         return;
@@ -1412,7 +1428,7 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
           buildPaymentResultRedirectUrl("failure", {
             orderId,
             error: `Payment failed with code: ${ResCode}`,
-          }),
+          }, isExpectedProviderCallbackFailure("mellat", String(ResCode))),
         );
       }
       return;

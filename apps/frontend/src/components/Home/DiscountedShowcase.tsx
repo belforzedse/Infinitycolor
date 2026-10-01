@@ -13,6 +13,7 @@ import {
 } from "@/components/storefront/ProductRailTrack";
 import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
 import { cn } from "@/lib/utils";
+import { listenMediaQuery } from "@/lib/media-query-listener";
 
 type DiscountedShowcaseProps = {
   products: ProductCardProps[];
@@ -50,9 +51,9 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
     };
 
     handleBreakpointChange();
-    mediaQueries.forEach((query) => query.addEventListener("change", handleBreakpointChange));
+    const unsubscribe = mediaQueries.map((query) => listenMediaQuery(query, handleBreakpointChange));
     return () => {
-      mediaQueries.forEach((query) => query.removeEventListener("change", handleBreakpointChange));
+      unsubscribe.forEach((remove) => remove());
     };
   }, [cancelTransition]);
 

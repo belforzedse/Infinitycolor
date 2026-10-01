@@ -1,10 +1,9 @@
 /**
  * Storefront Sentry beforeSend helpers.
  *
- * Host-injected WebView/crawler frames, Replay snapshot hydration titles, and
- * Flight transport cuts are not application defects we can implement away.
- * Tag first so a mistaken drop is still diagnosable in the payload, then drop
- * the fingerprints that drown real issues.
+ * Drop verified host injections and confirmed recoveries. A browser family,
+ * generic transport message or stackless hydration title alone is not proof
+ * that the application worked.
  */
 
 /** Matches StorefrontRecoveryState: RSC/stream cuts that auto-retry there. */
@@ -80,49 +79,50 @@ function isTransientNetworkMessage(message: string): boolean {
   );
 }
 
-function hasUsefulStack(event: SentryEventLike): boolean {
-  const frames = allFrames(event);
-  if (
-    frames.some((frame) => {
-      const name = (frame.filename ?? frame.abs_path ?? "").trim();
-      return name !== "" && name !== "<anonymous>" && !name.endsWith("<anonymous>");
-    })
-  ) {
-    return true;
-  }
-  const contexts =
-    event.contexts && typeof event.contexts === "object"
-      ? (event.contexts as { react?: { componentStack?: unknown } })
-      : undefined;
-  const componentStack = contexts?.react?.componentStack;
-  return typeof componentStack === "string" && componentStack.trim().length > 0;
-}
-
 /**
  * Sentry Replay invents a stackless "Hydration Error" title from snapshot
  * diffs (html attrs, WebView inject). Real React mismatches keep #418 /
  * "Hydration failed" / "Text content does not match" and a component stack.
  */
 export function isReplayHydrationSentryEvent(event: SentryEventLike): boolean {
-  if (hasUsefulStack(event)) return false;
-  const message = eventMessage(event);
-  if (message === "Hydration Error") return true;
-  if (message && /#418|Hydration failed|Text content does not match/i.test(message)) {
+  // A stackless snapshot is insufficient evidence that hydration succeeded.
+  return eventMessage(event) === "Hydration Error" && hasOnlyInjectedFrames(allFrames(event));
+}
+
+function hasOnlyInjectedFrames(frames: SentryFrameLike[]): boolean {
+  if (
+    frames.some((frame) => /\/_next\/|(?:^|\/)app\/|webpack:|(?:^|\/)src\//.test(frameBlob(frame)))
+  )
     return false;
-  }
-  return Boolean(
-    event.fingerprint?.some((part) => String(part).toLowerCase().includes("hydration")),
+  return (
+    frames.length > 0 &&
+    frames.some((frame) =>
+      /navigation_performance_logger_android|app:\/\/|telemetry\.js|addEL_hook/.test(
+        frameBlob(frame),
+      ),
+    ) &&
+    frames.every(
+      (frame) =>
+        isAnonymousOnly([frame]) ||
+        /navigation_performance_logger_android|^app:\/\/|telemetry\.js|addEL_hook/.test(
+          frameBlob(frame),
+        ),
+    )
   );
 }
 
-function isInjectedTagNameRead(event: SentryEventLike, inject: string | undefined): boolean {
-  const message = eventMessage(event);
-  if (!TAG_NAME_NULL.test(message)) return false;
-  if (inject === "crawler-telemetry" || inject === "android-webview" || inject === "eval") {
-    return true;
-  }
+function isProvenInjected(event: SentryEventLike): boolean {
   const frames = allFrames(event);
-  return frames.length === 0 || isAnonymousOnly(frames);
+  const message = eventMessage(event);
+  const nativeSignature =
+    /Java object is gone|Java bridge method invocation error|Java exception was raised during method invocation|Error invoking (?:enableDidUserTypeOnKeyboardLogging|postMessage|enableButtonsClickedMetaDataLogging)|webkit\.messageHandlers/.test(
+      message,
+    );
+  return (
+    (nativeSignature && (hasOnlyInjectedFrames(frames) || isAnonymousOnly(frames))) ||
+    (/getParams is not defined/.test(message) && isAnonymousOnly(frames)) ||
+    (TAG_NAME_NULL.test(message) && (hasOnlyInjectedFrames(frames) || isAnonymousOnly(frames)))
+  );
 }
 
 /**
@@ -173,10 +173,13 @@ export function tagStorefrontSentryEvent<T extends SentryEventLike>(event: T): T
  */
 export function dropNoisyStorefrontSentryEvent<T extends SentryEventLike>(event: T): T | null {
   const message = eventMessage(event);
-  const inject = event.tags?.inject;
   if (isReplayHydrationSentryEvent(event)) return null;
-  if (isInjectedTagNameRead(event, typeof inject === "string" ? inject : undefined)) return null;
+  if (isProvenInjected(event)) return null;
   if (message.includes(WASM_BINDGEN_ALIASING_MESSAGE)) return null;
-  if (event.tags?.transport_cut === "rsc") return null;
+  if (
+    event.tags?.transport_cut === "rsc" &&
+    (event.tags?.recovery_outcome === "recovered" || event.tags?.recovery_outcome === "cancelled")
+  )
+    return null;
   return event;
 }

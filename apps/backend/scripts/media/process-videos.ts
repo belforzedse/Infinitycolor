@@ -29,6 +29,7 @@ import {
   assessVideoRow,
   processVideoFile,
   readHlsEnabled,
+  readWebmEnabled,
   type PipelineOutcome,
 } from "../../src/services/media/video-pipeline";
 
@@ -40,6 +41,7 @@ interface Options {
   probe: boolean;
   force: boolean;
   hls: boolean;
+  webm: boolean;
   fileIds: number[] | null;
   limit: number | null;
 }
@@ -56,6 +58,7 @@ function parseArgs(argv: string[]): Options {
     probe: argv.includes("--probe"),
     force: argv.includes("--force"),
     hls: argv.includes("--hls") ? true : argv.includes("--no-hls") ? false : readHlsEnabled(),
+    webm: argv.includes("--webm") ? true : argv.includes("--no-webm") ? false : readWebmEnabled(),
     fileIds: ids
       ? ids.split(",").map((id) => Number(id.trim())).filter((id) => Number.isInteger(id) && id > 0)
       : null,
@@ -80,6 +83,7 @@ function describeRow(row: FileRow): string {
   const video = row.video;
   const parts = [`file ${row.id}`, row.mime ?? "?", row.url ?? "-", `status=${video?.status ?? "legacy"}`];
   if (video?.failure) parts.push(`failure=${video.failure.stage}/${video.failure.code}`);
+  if (video?.webmFailure) parts.push(`webmFailure=${video.webmFailure.code} attempt=${video.webmFailure.attempt}`);
   if (video?.lease) parts.push(`lease=${video.lease.owner} until ${new Date(video.lease.until).toISOString()}`);
   return parts.join(" ");
 }
@@ -88,6 +92,7 @@ function describeOutcome(outcome: PipelineOutcome): string {
   switch (outcome.status) {
     case "processed":
       return `processed ${outcome.stages.join("+")} → ${outcome.video.output?.mp4.url}` +
+        (outcome.video.output?.webm ? ` + ${outcome.video.output.webm.url}` : "") +
         (outcome.video.output?.hls ? ` + ${outcome.video.output.hls.master}` : "");
     case "would_process": {
       const probe = outcome.probe;
@@ -173,26 +178,26 @@ async function main() {
     for (const id of ids) {
       const row = await readFileRow(db, id);
       if (!row) continue;
-      const needs = assessVideoRow(row, { hlsEnabled: options.hls, force: options.force });
-      if (!needs.mp4 && !needs.hls) {
+      const needs = assessVideoRow(row, { hlsEnabled: options.hls, webmEnabled: options.webm, force: options.force });
+      if (!needs.mp4 && !needs.hls && !needs.webm) {
         if (options.fileIds) log(`${describeRow(row)} → up to date (${needs.reasons.join("; ")})`);
         continue;
       }
       candidates.push(row);
     }
     const scoped = options.apply && options.limit ? candidates.slice(0, options.limit) : candidates;
-    log(`${options.apply ? (options.inline ? "PROCESSING" : "QUEUEING") : "DRY RUN"} — ${scoped.length} of ${candidates.length} candidate(s), HLS ${options.hls ? "on" : "off"}, uploads at ${uploadsDir}`);
+    log(`${options.apply ? (options.inline ? "PROCESSING" : "QUEUEING") : "DRY RUN"} — ${scoped.length} of ${candidates.length} candidate(s), HLS ${options.hls ? "on" : "off"}, WebM ${options.webm ? "on" : "off"}, uploads at ${uploadsDir}`);
 
     const counts: Record<string, number> = {};
     for (const row of scoped) {
       try {
         if (!options.apply) {
           const outcome = options.probe
-            ? await processVideoFile(row.id, { strapi, uploadsDir, dryRun: true, hlsEnabled: options.hls, force: options.force })
+            ? await processVideoFile(row.id, { strapi, uploadsDir, dryRun: true, hlsEnabled: options.hls, webmEnabled: options.webm, force: options.force })
             : ({
                 status: "would_process",
                 fileId: row.id,
-                reasons: assessVideoRow(row, { hlsEnabled: options.hls, force: options.force }).reasons,
+                reasons: assessVideoRow(row, { hlsEnabled: options.hls, webmEnabled: options.webm, force: options.force }).reasons,
               } as PipelineOutcome);
           counts[outcome.status] = (counts[outcome.status] ?? 0) + 1;
           log(`${describeRow(row)} → ${describeOutcome(outcome)}`);
@@ -200,7 +205,7 @@ async function main() {
           const outcome = await processVideoFile(row.id, {
             strapi,
             uploadsDir,
-            hlsEnabled: options.hls,
+            hlsEnabled: options.hls, webmEnabled: options.webm,
             force: options.force,
             jobId: "process-videos-inline",
           });
@@ -209,7 +214,7 @@ async function main() {
         } else {
           const { enqueueVideoProcessingFor } = await import("../../src/queue/media");
           await enqueueVideoProcessingFor(row.id, options.force ? "backfill-force" : "backfill", undefined, {
-            force: options.force,
+            force: options.force, webmEnabled: options.webm, hlsEnabled: options.hls,
           });
           counts.queued = (counts.queued ?? 0) + 1;
           log(`${describeRow(row)} → queued`);

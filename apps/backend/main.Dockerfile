@@ -115,6 +115,8 @@ RUN chmod +x /usr/local/bin/fallback-apk.sh
 # ffmpeg normalizes story video uploads (see src/services/media): the catalogue arrives
 # as HEVC in QuickTime containers, which Chromium parses and then decodes to nothing.
 RUN /usr/local/bin/fallback-apk.sh su-exec vips vips-dev ffmpeg
+RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'libvpx-vp9' \
+    && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'libopus'
 COPY .cursor/docker/fallback-registry.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/fallback-registry.sh
 # Prepare pnpm in the runner layer (builder corepack cache uses --mount=cache and is not COPY-able).

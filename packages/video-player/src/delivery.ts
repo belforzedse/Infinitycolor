@@ -22,6 +22,7 @@ export interface VideoDelivery {
   mp4: string;
   /** HLS master playlist, when the ladder is published. Unresolved path. */
   hls: string | null;
+  webm?: string | null;
   poster: string | null;
   width: number | null;
   height: number | null;
@@ -63,6 +64,7 @@ export function readVideoDelivery(asset: VideoAssetLike | null | undefined): Vid
   return {
     mp4: asset.url,
     hls: owned && isMediaPath(output?.hls?.master) ? output.hls.master : null,
+    webm: owned && output?.webm?.profileVersion === 1 && isMediaPath(output?.webm?.url) ? output.webm.url : null,
     poster,
     width: owned ? positiveNumber(output.width) : positiveNumber(asset.width),
     height: owned ? positiveNumber(output.height) : positiveNumber(asset.height),
@@ -76,6 +78,7 @@ export function readVideoDelivery(asset: VideoAssetLike | null | undefined): Vid
 export interface VideoSource {
   mp4: string;
   hls?: string | null;
+  webm?: string | null;
   poster?: string | null;
   width?: number | null;
   height?: number | null;
@@ -94,6 +97,7 @@ export function resolveVideoSource(
   return {
     mp4,
     hls: delivery.hls ? resolve(delivery.hls) || null : null,
+    webm: delivery.webm ? resolve(delivery.webm) || null : null,
     poster: delivery.poster ? resolve(delivery.poster) || null : null,
     width: delivery.width,
     height: delivery.height,

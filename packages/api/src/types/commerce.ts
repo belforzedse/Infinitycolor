@@ -189,6 +189,10 @@ export interface FinalizeCartResponse {
   attemptId?: string;
   paymentStatus?: PaymentAttemptStatus;
   errorCode?: string;
+  /** Present only for a confirmed concurrent stock shortage. */
+  details?: { reason?: "insufficient_stock" };
+  /** The backend owns the actionable report; the client logs customer impact. */
+  telemetryOwner?: "backend";
   reserveGroupId?: string;
   reserveExpiresAt?: string;
   /** True when this order joined an existing window rather than opening one. */

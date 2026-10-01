@@ -224,7 +224,7 @@ describe("ServiceWorkerRegistration", () => {
     stubHostname("new.infinitycolor.co");
     const unregister = jest.fn().mockResolvedValue(true);
     const register = jest.fn();
-    const getRegistrations = jest.fn().mockResolvedValue([{ unregister }]);
+    const getRegistrations = jest.fn().mockResolvedValue([{ unregister, scope: `https://${serviceWorkerHost.getHostname()}/`, active: { scriptURL: `https://${serviceWorkerHost.getHostname()}/sw.js` } }, { unregister: jest.fn(), scope: `https://${serviceWorkerHost.getHostname()}/other/`, active: { scriptURL: `https://${serviceWorkerHost.getHostname()}/other/worker.js` } }]);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: {
@@ -250,7 +250,7 @@ describe("ServiceWorkerRegistration", () => {
     stubHostname("www.infinitycolor.co");
     const unregister = jest.fn().mockResolvedValue(true);
     const register = jest.fn();
-    const getRegistrations = jest.fn().mockResolvedValue([{ unregister }]);
+    const getRegistrations = jest.fn().mockResolvedValue([{ unregister, scope: `https://${serviceWorkerHost.getHostname()}/`, active: { scriptURL: `https://${serviceWorkerHost.getHostname()}/sw.js` } }, { unregister: jest.fn(), scope: `https://${serviceWorkerHost.getHostname()}/other/`, active: { scriptURL: `https://${serviceWorkerHost.getHostname()}/other/worker.js` } }]);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: {

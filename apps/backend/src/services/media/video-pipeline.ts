@@ -8,6 +8,7 @@ import { FFMPEG, MediaProcessingError, runMediaProcess } from "./media-process";
 import {
   buildHlsArgs,
   buildMp4Args,
+  buildWebmArgs,
   buildPosterArgs,
   hlsSegmentSeconds,
   planEncode,
@@ -76,6 +77,7 @@ export interface PipelineDeps {
   uploadsDir: string;
   dryRun?: boolean;
   hlsEnabled?: boolean;
+  webmEnabled?: boolean;
   threads?: number;
   jobId?: string | null;
   attempt?: number;
@@ -88,16 +90,21 @@ export type PipelineOutcome =
   | { status: "busy"; fileId: number }
   | { status: "up_to_date"; fileId: number; video: VideoMetadata | null; detail?: string }
   | { status: "would_process"; fileId: number; reasons: string[]; probe?: VideoProbe; detail?: string }
-  | { status: "processed"; fileId: number; stages: Array<"mp4" | "hls">; video: VideoMetadata };
+  | { status: "processed"; fileId: number; stages: Array<"mp4" | "hls" | "webm">; video: VideoMetadata };
 
 export interface ProcessingNeeds {
   mp4: boolean;
   hls: boolean;
+  webm: boolean;
   reasons: string[];
 }
 
 export function readHlsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MEDIA_HLS_ENABLED === "true";
+}
+
+export function readWebmEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MEDIA_WEBM_ENABLED === "true";
 }
 
 function readThreads(env: NodeJS.ProcessEnv = process.env): number {
@@ -117,10 +124,10 @@ export function isVideoRow(row: Pick<FileRow, "mime" | "video">): boolean {
 /** What (if anything) a row needs. Pure; drives both the job and the backfill dry run. */
 export function assessVideoRow(
   row: FileRow,
-  { hlsEnabled, force = false }: { hlsEnabled: boolean; force?: boolean },
+  { hlsEnabled, webmEnabled = false, force = false }: { hlsEnabled: boolean; webmEnabled?: boolean; force?: boolean },
 ): ProcessingNeeds {
   const video = row.video;
-  const none = (reason: string): ProcessingNeeds => ({ mp4: false, hls: false, reasons: [reason] });
+  const none = (reason: string): ProcessingNeeds => ({ mp4: false, hls: false, webm: false, reasons: [reason] });
 
   if (!force && video?.status === "rolled_back" && row.url === video.previous?.url) {
     return none("rolled back by an operator");
@@ -140,25 +147,20 @@ export function assessVideoRow(
       : video.output
         ? "row points at a different file than the pipeline output"
         : `status ${video.status}`;
-    return { mp4: true, hls: hlsEnabled, reasons: [reason] };
+    return { mp4: true, hls: hlsEnabled, webm: webmEnabled, reasons: [reason] };
   }
   if ((video?.pipelineVersion ?? 0) < PIPELINE_VERSION) {
     return {
       mp4: true,
       hls: hlsEnabled,
+      webm: webmEnabled,
       reasons: [`pipeline v${video?.pipelineVersion ?? 0} is older than v${PIPELINE_VERSION}`],
     };
   }
-  if (hlsEnabled && !video?.output?.hls) {
-    if (
-      !force &&
-      video?.failure?.stage === "hls" &&
-      PERMANENT_FAILURES.has(video.failure.code)
-    ) {
-      return none(`HLS failed permanently (${video.failure.code})`);
-    }
-    return { mp4: false, hls: true, reasons: ["no HLS rendition yet"] };
-  }
+  const hls = hlsEnabled && !video?.output?.hls && (force || !(video?.failure?.stage === "hls" && PERMANENT_FAILURES.has(video.failure.code)));
+  const webm = webmEnabled && video?.output?.webm?.profileVersion !== 1 && (force || !video?.webmFailure ||
+    video.webmFailure.sourceUrl !== row.url || (!PERMANENT_FAILURES.has(video.webmFailure.code) && video.webmFailure.attempt < 3));
+  if (hls || webm) return { mp4: false, hls, webm, reasons: [...(hls ? ["no HLS rendition yet"] : []), ...(webm ? ["no WebM rendition yet"] : [])] };
   return none("up to date");
 }
 
@@ -261,7 +263,7 @@ function summarizeProbe(probe: VideoProbe): ProbeSummary {
   };
 }
 
-function encodeTimeoutMs(durationMs: number | null, stage: "mp4" | "hls"): number {
+function encodeTimeoutMs(durationMs: number | null, stage: "mp4" | "hls" | "webm"): number {
   const seconds = (durationMs ?? 60_000) / 1000;
   return stage === "mp4"
     ? Math.min(30 * 60_000, 60_000 + seconds * 20_000)
@@ -269,16 +271,17 @@ function encodeTimeoutMs(durationMs: number | null, stage: "mp4" | "hls"): numbe
 }
 
 /** Output sanity: an encode that "succeeded" but is not what the plan asked for is a failure. */
-export function verifyFallbackOutput(output: VideoProbe, plan: EncodePlan, source: VideoProbe): void {
+export function verifyFallbackOutput(output: VideoProbe, plan: EncodePlan, source: VideoProbe, format: "mp4" | "webm" = "mp4"): void {
   const problems: string[] = [];
-  if (output.videoCodec !== "h264") problems.push(`codec ${output.videoCodec}`);
+  if (output.videoCodec !== (format === "webm" ? "vp9" : "h264")) problems.push(`codec ${output.videoCodec}`);
   if (output.pixelFormat !== "yuv420p") problems.push(`pixel format ${output.pixelFormat}`);
   if (output.displayWidth !== plan.fallback.width || output.displayHeight !== plan.fallback.height) {
     problems.push(`size ${output.displayWidth}x${output.displayHeight}`);
   }
   if (output.rotation !== 0) problems.push(`rotation ${output.rotation}`);
-  if (!output.fastStart) problems.push("moov not at front");
+  if (format === "mp4" && !output.fastStart) problems.push("moov not at front");
   if (plan.hasAudio && !output.hasAudio) problems.push("audio missing");
+  if (format === "webm" && plan.hasAudio && output.audioCodec !== "opus") problems.push(`audio codec ${output.audioCodec}`);
   if (problems.length) {
     throw new MediaProcessingError("encode_failed", `output check failed: ${problems.join(", ")}`);
   }
@@ -341,8 +344,9 @@ export async function processVideoFile(fileId: number, deps: PipelineDeps): Prom
   if (!isVideoRow(row)) return { status: "missing", fileId, detail: "not a video upload" };
 
   const hlsEnabled = deps.hlsEnabled ?? readHlsEnabled();
-  const needs = assessVideoRow(row, { hlsEnabled, force: deps.force });
-  if (!needs.mp4 && !needs.hls) {
+  const webmEnabled = deps.webmEnabled ?? readWebmEnabled();
+  const needs = assessVideoRow(row, { hlsEnabled, webmEnabled, force: deps.force });
+  if (!needs.mp4 && !needs.hls && !needs.webm) {
     return { status: "up_to_date", fileId, video: row.video, detail: needs.reasons.join("; ") };
   }
 
@@ -374,8 +378,9 @@ export async function processVideoFile(fileId: number, deps: PipelineDeps): Prom
   const attempt = deps.attempt ?? 1;
   const threads = deps.threads ?? readThreads();
   const workDirs: string[] = [];
-  const stages: Array<"mp4" | "hls"> = [];
-  let stage: VideoFailure["stage"] = "probe";
+  const stages: Array<"mp4" | "hls" | "webm"> = [];
+  let stage: VideoFailure["stage"] = !needs.mp4 && !needs.hls && needs.webm ? "webm" : "probe";
+  let webmError: MediaProcessingError | undefined;
   let current: VideoMetadata | null = row.video;
 
   const write = async (patch: Partial<VideoMetadata>, rowUpdate?: Parameters<typeof writeVideoState>[4]) => {
@@ -387,7 +392,7 @@ export async function processVideoFile(fileId: number, deps: PipelineDeps): Prom
 
   try {
     await removeStaleWorkDirs(deps.uploadsDir, fileId);
-    await write({ schema: 1, status: needs.mp4 ? "probing" : "processing", failure: null });
+    await write({ schema: 1, status: needs.mp4 ? "probing" : "processing", ...(needs.mp4 || needs.hls ? { failure: null } : {}) });
 
     const source = await resolveSource(row, deps.uploadsDir);
     const probeStarted = Date.now();
@@ -470,6 +475,7 @@ export async function processVideoFile(fileId: number, deps: PipelineDeps): Prom
           // operator rollback should restore.
           previous: ownsRow(row) ? (row.video?.previous ?? null) : snapshotRow(row),
           failure: null,
+          webmFailure: null,
           timings,
           warnings,
         },
@@ -487,6 +493,34 @@ export async function processVideoFile(fileId: number, deps: PipelineDeps): Prom
       );
       stages.push("mp4");
       await invalidateVideoReferences(deps.strapi, fileId);
+    }
+
+    if (needs.webm && current?.output) {
+      try {
+        stage = "webm";
+        const token = newAssetToken();
+        const work = processingDir(deps.uploadsDir, fileId, token);
+        workDirs.push(work);
+        await mkdir(work, { recursive: true });
+        const temp = join(work, "fallback.webm");
+        const started = Date.now();
+        await runMediaProcess(FFMPEG, buildWebmArgs(source.path, temp, plan, { threads }), {
+          timeoutMs: encodeTimeoutMs(probe.durationMs, "webm"), lowPriority: true,
+        });
+        verifyFallbackOutput(await probeVideo(temp), plan, probe, "webm");
+        timings.webmMs = Date.now() - started;
+        const name = `${derivedFileNames(derivedBaseName(source.record.hash, fileId), token).hash}.webm`;
+        await rename(temp, join(deps.uploadsDir, name));
+        await write({ output: { ...current.output, webm: { url: `/uploads/${name}`, bytes: (await stat(join(deps.uploadsDir, name))).size, profileVersion: 1 } }, webmFailure: null,
+          status: current.output.hls ? "streaming_ready" : "playback_ready", timings: { ...current.timings, ...timings } });
+        stages.push("webm");
+        await invalidateVideoReferences(deps.strapi, fileId);
+      } catch (error) {
+        if (error instanceof LeaseLostError) throw error;
+        webmError = toMediaError(error);
+        await write({ webmFailure: { stage: "webm", code: webmError.code, message: webmError.message.slice(0, 300),
+          attempt: (row.video?.webmFailure?.attempt ?? 0) + 1, at: new Date().toISOString(), sourceUrl: current?.output?.mp4.url ?? row.url } });
+      }
     }
 
     if (needs.hls && current?.output) {
@@ -536,6 +570,7 @@ export async function processVideoFile(fileId: number, deps: PipelineDeps): Prom
       await invalidateVideoReferences(deps.strapi, fileId);
     }
 
+    if (webmError) { stage = "webm"; throw webmError; }
     logEvent(deps.strapi, "info", {
       event: "video.processed",
       fileId,
@@ -577,9 +612,9 @@ export async function processVideoFile(fileId: number, deps: PipelineDeps): Prom
       };
       // Whatever the row still points at keeps playing: a fresh MP4 from this run, or the
       // previous output when a re-encode failed. Only a row with nothing playable fails.
-      const priorReady = ownsRow(row) ? (row.video?.output?.hls ? "streaming_ready" : "playback_ready") : null;
-      const status = stages.includes("mp4") ? "playback_ready" : (priorReady ?? "failed");
-      await writeVideoState(db, fileId, owner, { status, failure: record, updatedAt: record.at }).catch(
+      const ready = stages.includes("mp4") || ownsRow(row);
+      const status = ready && current?.output ? (current.output.hls ? "streaming_ready" : "playback_ready") : "failed";
+      await writeVideoState(db, fileId, owner, { status, ...(stage === "webm" ? { webmFailure: webmError ? current?.webmFailure : { ...record, attempt: (row.video?.webmFailure?.attempt ?? 0) + 1 } } : { failure: record }), updatedAt: record.at }).catch(
         () => undefined,
       );
       logEvent(deps.strapi, "error", {
@@ -644,4 +679,3 @@ export async function invalidateVideoReferences(strapi: any, fileId: number): Pr
     return { products: 0 };
   }
 }
-

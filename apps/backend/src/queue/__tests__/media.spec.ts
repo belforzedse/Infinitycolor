@@ -82,4 +82,12 @@ describe("media queue job ids", () => {
     expect(first).not.toBe(third);
     expect(mediaJobId("normalize-uploaded-file", 9)).toBe("normalize-uploaded-file-9");
   });
+
+  it("carries scoped WebM backfill overrides without changing automatic upload jobs", async () => {
+    await enqueueVideoProcessingFor(42, "webm-canary", settings, { webmEnabled: true, hlsEnabled: false });
+    await enqueueUploadedFileNormalization(43, settings);
+    expect(added[0].data).toEqual({ fileId: 42, webmEnabled: true, hlsEnabled: false });
+    expect(added[1].data).toEqual({ fileId: 43 });
+    for (const entry of added) expect(() => validateWithBullmq(entry)).not.toThrow();
+  });
 });
