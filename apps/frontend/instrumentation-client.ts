@@ -112,6 +112,15 @@ Sentry.init({
   },
 });
 
+if (process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT === "staging" &&
+    process.env.NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID && typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("sentry_probe") ===
+      process.env.NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID) {
+  void import("./src/lib/sentry-staging-probe")
+    .then(({ runStagingSentryProbe }) => runStagingSentryProbe())
+    .catch(() => undefined);
+}
+
 whenIdle(() => scheduleReplayRoute(typeof window === "undefined" ? "" : window.location.pathname));
 
 try {

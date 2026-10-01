@@ -56,8 +56,8 @@ export function beforeSendDiagnosticLog<
   return { ...log, attributes: diagnosticAttributes(log.attributes) };
 }
 
-/** Returns true only after operations explicitly verified Logs ingestion. */
-export function routeExpectedDiagnostic(
+/** Logging is best effort and never takes ownership of an Issue by itself. */
+export function logDiagnostic(
   event: string,
   attributes: Record<string, unknown> = {},
 ): boolean {
@@ -65,10 +65,18 @@ export function routeExpectedDiagnostic(
     if (typeof Sentry.isEnabled === "function" && !Sentry.isEnabled()) return false;
     if (!EVENTS.has(event) || typeof Sentry.logger?.info !== "function") return false;
     Sentry.logger.info(event, diagnosticAttributes({ ...attributes, diagnostic_event: event }));
-    return process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS === "true";
+    return true;
   } catch {
     return false;
   }
+}
+
+/** Returns true only after operations explicitly verified Logs ingestion. */
+export function routeExpectedDiagnostic(
+  event: string,
+  attributes: Record<string, unknown> = {},
+): boolean {
+  return logDiagnostic(event, attributes) && process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS === "true";
 }
 
 export function reportExpectedDiagnostic(

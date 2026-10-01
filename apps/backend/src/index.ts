@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { beforeSendDiagnosticLog } from "./utils/diagnostic-log";
+import { emitStagingStartupProbe } from "./utils/sentry-staging-probe";
 import bcrypt from "bcryptjs";
 import { createClient } from "redis";
 import type { Strapi } from "@strapi/strapi";
@@ -13,6 +14,7 @@ Sentry.init({
   enableLogs: true,
   beforeSendLog: beforeSendDiagnosticLog,
 });
+emitStagingStartupProbe();
 import override from "./api/auth/documentation/1.0.0/overrides/auth.json";
 import localUserOverride from "./api/local-user/documentation/1.0.0/overrides/local-user.json";
 
