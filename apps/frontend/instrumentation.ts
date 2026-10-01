@@ -19,11 +19,15 @@ export const onRequestError: CaptureRequestError = async (...args) => {
     return;
   }
 
-  const Sentry = await import("@sentry/nextjs");
-  const { applyCatalogRscSentryScope } = await import("./src/lib/sentry-catalog-rsc");
-  const [error, , errorContext] = args;
-  return Sentry.withScope((scope) => {
-    applyCatalogRscSentryScope(scope, error, errorContext);
-    return Sentry.captureRequestError(...args);
-  });
+  try {
+    const Sentry = await import("@sentry/nextjs");
+    const { applyCatalogRscSentryScope } = await import("./src/lib/sentry-catalog-rsc");
+    const [error, , errorContext] = args;
+    return await Sentry.withScope((scope) => {
+      applyCatalogRscSentryScope(scope, error, errorContext);
+      return Sentry.captureRequestError(...args);
+    });
+  } catch {
+    // Reporting failure must never replace the server render's original error.
+  }
 };

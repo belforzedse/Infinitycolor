@@ -17,6 +17,7 @@ import type { CategoryEditorialContent } from "./categoryEditorial";
 import { expandSizeKeysToTitles } from "@/utils/plpSizeFilter";
 import { expandColorKeysToTitles, type CatalogColor } from "@/utils/plpColorFilter";
 import { getProductVariationColors, getProductVariationSizes } from "./variationAttributes";
+import { redactCatalogCause, type CatalogFailureStage } from "@/lib/catalog-error-diagnostics";
 
 export interface PLPProduct {
   id: number;
@@ -90,13 +91,24 @@ export interface PLPProductsResult {
 }
 
 export class PLPProductsError extends Error {
+  public readonly failureStage?: CatalogFailureStage;
+
   constructor(
     message: string,
     public readonly code: "FETCH_FAILED" | "API_ERROR" | "INVALID_RESPONSE",
     public readonly status?: number,
+    diagnostics?: { stage: CatalogFailureStage; cause?: unknown },
   ) {
-    super(message);
+    super(
+      message,
+      diagnostics?.cause === undefined
+        ? undefined
+        : {
+            cause: redactCatalogCause(diagnostics.cause, diagnostics.stage),
+          },
+    );
     this.name = "PLPProductsError";
+    this.failureStage = diagnostics?.stage;
   }
 }
 
@@ -447,21 +459,26 @@ export async function getPLPProducts(
   const queryParams = buildPLPProductsQuery(query, categorySlugs, pageSize, catalogs);
 
   const url = `${baseUrl}?${queryParams.toString()}`;
-  let response: Response;
+  let response: Response | undefined;
   let data: { data?: unknown[]; meta?: { pagination?: { total?: number; pageCount?: number } } };
+  let failureStage: CatalogFailureStage = "request";
 
   try {
     response = await fetchWithTimeout(url, {
       timeoutMs: 15000,
       next: { revalidate: 120, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
     });
+    failureStage = "response_json";
     data = await response.json();
   } catch (error) {
     logger.error("[PLP] Products fetch failed", {
       error: String(error),
       urlHint: baseUrl,
     });
-    throw new PLPProductsError("Unable to load products", "FETCH_FAILED");
+    throw new PLPProductsError("Unable to load products", "FETCH_FAILED", response?.status, {
+      stage: failureStage,
+      cause: error,
+    });
   }
 
   if (!response.ok) {
@@ -470,12 +487,21 @@ export async function getPLPProducts(
       url: (response.url || url).replace(/\?.*/, "?..."),
       error: (data as { error?: { message?: string } })?.error?.message ?? String(data),
     });
-    throw new PLPProductsError("Products service returned an error", "API_ERROR", response.status);
+    throw new PLPProductsError("Products service returned an error", "API_ERROR", response.status, {
+      stage: "response_status",
+    });
   }
 
   try {
     if (!Array.isArray(data?.data)) {
-      throw new PLPProductsError("Products response is invalid", "INVALID_RESPONSE");
+      throw new PLPProductsError(
+        "Products response is invalid",
+        "INVALID_RESPONSE",
+        response.status,
+        {
+          stage: "response_normalization",
+        },
+      );
     }
     const rawProducts = data.data
       .map(normalizeProduct)
@@ -498,7 +524,15 @@ export async function getPLPProducts(
   } catch (error) {
     if (error instanceof PLPProductsError) throw error;
     logger.error("[PLP] Error parsing or filtering products", { error: String(error) });
-    throw new PLPProductsError("Products response could not be read", "INVALID_RESPONSE");
+    throw new PLPProductsError(
+      "Products response could not be read",
+      "INVALID_RESPONSE",
+      response.status,
+      {
+        stage: "response_normalization",
+        cause: error,
+      },
+    );
   }
 }
 
