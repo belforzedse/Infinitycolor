@@ -1,6 +1,7 @@
 import { createMaintenanceQueues } from "./queues";
 import { getQueueSettings } from "./env";
 import { registerMaintenanceSchedulers } from "./scheduler-registration";
+import { initializeBackendSentry } from "../utils/sentry-initialization";
 
 const REASSERT_INTERVAL_MS = 15 * 60 * 1000;
 const HEALTH_LOG_INTERVAL_MS = 5 * 60 * 1000;
@@ -57,6 +58,7 @@ export async function startMaintenanceScheduler(): Promise<void> {
 }
 
 if (require.main === module) {
+  initializeBackendSentry();
   startMaintenanceScheduler().catch((error) => {
     console.error("[BullMQ] scheduler failed to start", error);
     process.exit(1);
