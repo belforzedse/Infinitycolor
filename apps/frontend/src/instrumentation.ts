@@ -4,11 +4,11 @@ export async function register() {
   }
 
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    await import("./sentry.server.config");
+    await import("../sentry.server.config");
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {
-    await import("./sentry.edge.config");
+    await import("../sentry.edge.config");
   }
 }
 
@@ -21,7 +21,7 @@ export const onRequestError: CaptureRequestError = async (...args) => {
 
   try {
     const Sentry = await import("@sentry/nextjs");
-    const { applyCatalogRscSentryScope } = await import("./src/lib/sentry-catalog-rsc");
+    const { applyCatalogRscSentryScope } = await import("./lib/sentry-catalog-rsc");
     const [error, , errorContext] = args;
     return await Sentry.withScope((scope) => {
       applyCatalogRscSentryScope(scope, error, errorContext);

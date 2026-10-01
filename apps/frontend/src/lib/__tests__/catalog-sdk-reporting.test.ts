@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import * as Sentry from "@sentry/nextjs";
-import { onRequestError } from "../../../instrumentation";
+import { onRequestError } from "../../instrumentation";
 import { PLPProductsError } from "@/services/product/plp";
 import { applyCatalogRscEvent } from "../sentry-catalog-rsc";
 

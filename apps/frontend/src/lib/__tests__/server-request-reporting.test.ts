@@ -5,7 +5,7 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 import * as Sentry from "@sentry/nextjs";
-import { onRequestError } from "../../../instrumentation";
+import { onRequestError } from "../../instrumentation";
 
 const request = { path: "/plp/category/example", method: "GET", headers: {} };
 const context = {
