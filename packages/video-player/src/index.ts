@@ -1,6 +1,7 @@
 export { readVideoDelivery, resolveVideoSource, type VideoAssetLike, type VideoDelivery, type VideoSource } from "./delivery";
 export {
   canPlayNativeHls,
+  canPlayWebm,
   chooseEngine,
   isHlsCircuitOpen,
   isMseH264Supported,

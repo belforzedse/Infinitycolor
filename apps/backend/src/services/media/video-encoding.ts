@@ -375,6 +375,20 @@ export function posterSeekSeconds(durationMs: number | null): number {
   return Math.max(0, Math.min(1, seconds * 0.25));
 }
 
+/** Optional progressive VP9/Opus delivery, using the same normalized SDR frames. */
+export function buildWebmArgs(inputPath: string, outputPath: string, plan: EncodePlan, { threads }: EncoderOptions): string[] {
+  return [
+    ...INPUT_ARGS, "-i", inputPath, "-map", "0:v:0",
+    ...(plan.hasAudio ? ["-map", "0:a:0"] : []), ...STRIP_METADATA,
+    "-vf", videoFilterChain(plan, plan.fallback, { fps: plan.fps }), "-fps_mode", "cfr",
+    "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-crf", "32", "-b:v", "0",
+    "-deadline", "good", "-cpu-used", "4", "-row-mt", "1", "-threads", String(threads),
+    "-g", String(plan.gopFrames), ...SDR_TAGS,
+    ...(plan.hasAudio ? ["-c:a", "libopus", "-b:a", "128k", "-ac", "2", "-ar", "48000", "-af", "aresample=async=1:first_pts=0"] : ["-an"]),
+    "-f", "webm", outputPath,
+  ];
+}
+
 /**
  * The poster only has to cover the gap until the first decoded frame, and story rails
  * also use it as the avatar image, so it is sized to the start rendition (540 short

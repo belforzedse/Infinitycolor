@@ -522,6 +522,12 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const result = await cartService.finalizeCartToOrder(user.id, shippingData);
 
     if (!result.success) {
+      const diagnostics = {
+        ...(result.telemetryOwner === "backend" ? { telemetryOwner: "backend" } : {}),
+        ...(result.errorCode === "STOCK_RESERVATION_FAILED" && result.details?.reason === "insufficient_stock"
+          ? { details: { reason: "insufficient_stock" } }
+          : {}),
+      };
       if (result.status === 503 || result.errorCode === "RESERVATION_LOOKUP_FAILED") {
         ctx.status = 503;
         return {
@@ -529,6 +535,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             success: false,
             errorCode: result.errorCode,
             message: result.message,
+            ...diagnostics,
           },
         };
       }
@@ -540,6 +547,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             errorCode: result.errorCode,
             message: result.message,
             quote: result.quote,
+            ...diagnostics,
             ...(result.paymentCapabilities
               ? { paymentCapabilities: result.paymentCapabilities }
               : {}),
@@ -556,6 +564,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           itemsRemoved: result.itemsRemoved,
           itemsAdjusted: result.itemsAdjusted,
           cart: result.cart,
+          ...diagnostics,
         },
       });
     }
@@ -1027,6 +1036,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           success: false,
           errorCode,
           message,
+          ...(error?.payload?.data?.telemetryOwner === "backend" ? { telemetryOwner: "backend" } : {}),
+          ...(errorCode === "STOCK_RESERVATION_FAILED" && error?.payload?.data?.details?.reason === "insufficient_stock"
+            ? { details: { reason: "insufficient_stock" } }
+            : {}),
           timestamp: new Date().toISOString(),
           userId: user?.id,
         },

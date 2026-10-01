@@ -67,6 +67,8 @@ export type NormalizeUploadedFileJobData = {
   fileId: number;
   /** Backfill only: reprocess rows automatic triggers skip (permanent failure, rollback). */
   force?: boolean;
+  webmEnabled?: boolean;
+  hlsEnabled?: boolean;
 };
 
 export const MAINTENANCE_SCHEDULERS = {

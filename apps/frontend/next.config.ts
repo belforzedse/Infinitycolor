@@ -107,6 +107,10 @@ const nextConfig = {
         headers: versionProbeHeaders,
       },
       {
+        source: "/sw-retire.js",
+        headers: versionProbeHeaders,
+      },
+      {
         source: "/sw-version.js",
         headers: versionProbeHeaders,
       },
@@ -136,6 +140,9 @@ const nextConfig = {
   staticPageGenerationTimeout: 180,
   compiler: {
     removeConsole: process.env.NODE_ENV === "production",
+    // Remove SDK-internal debug branches with Turbopack too. Structured Logs,
+    // Issues, tracing and Replay do not depend on this debug-only build flag.
+    ...(process.env.NODE_ENV === "production" ? { define: { __SENTRY_DEBUG__: false } } : {}),
   },
   images: {
     unoptimized: false,
@@ -187,4 +194,11 @@ const nextConfig = {
 };
 module.exports = withSentryConfig(nextConfig, {
   silent: !process.env.CI,
+  org: process.env.SENTRY_ORG || "alpagency",
+  project: process.env.SENTRY_PROJECT || "infinitycolor-frontend",
+  sentryUrl: process.env.SENTRY_URL || "https://errors.alpagency.net",
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN, deleteSourcemapsAfterUpload: true },
+  widenClientFileUpload: true,
+  release: { name: process.env.SENTRY_RELEASE || process.env.GITHUB_SHA },
 });

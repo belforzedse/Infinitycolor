@@ -25,7 +25,7 @@ const build = await esbuild.build({
   write: false,
   outdir: "/out",
   loader: { ".webp": "dataurl" },
-  define: { "process.env.NODE_ENV": '"development"' },
+  define: { "process.env.NODE_ENV": JSON.stringify(process.env.STORIES_HARNESS_MODE || "production") },
 });
 
 const assets = new Map();

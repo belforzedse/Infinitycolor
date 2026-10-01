@@ -12,6 +12,7 @@ export type VideoFailureKind =
   | "decode-unsupported"
   | "autoplay-denied"
   | "hls-fallback"
+  | "webm-fallback"
   | "unknown";
 
 export interface VideoPlaybackSummary {

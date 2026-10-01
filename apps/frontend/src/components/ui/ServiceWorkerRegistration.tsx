@@ -24,7 +24,15 @@ async function safeUpdate(registration: ServiceWorkerRegistration): Promise<void
 
 async function unregisterAllWorkers(): Promise<void> {
   const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
-  await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+  await Promise.all(registrations.filter((registration) => {
+    const worker = registration.active || registration.waiting || registration.installing;
+    try {
+      const scope = new URL(registration.scope);
+      const script = new URL(worker?.scriptURL || "");
+      return scope.pathname === "/" && scope.hostname === serviceWorkerHost.getHostname() &&
+        script.origin === scope.origin && (script.pathname === "/sw.js" || script.pathname === "/sw-retire.js");
+    } catch { return false; }
+  }).map((registration) => registration.unregister().catch(() => false)));
 }
 
 /**

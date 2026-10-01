@@ -34,7 +34,7 @@ export async function warmVideo(source: VideoSource, options: WarmOptions = {}):
     await warmHls(source.hls, options.signal).catch(() => undefined);
     return;
   }
-  if (engine === "mp4") await warmMp4(source.mp4, options);
+  if (engine === "mp4" || engine === "webm") await warmMp4(engine === "webm" ? source.webm! : source.mp4, options);
 }
 
 function warmMp4(url: string, { signal, seconds = 3, timeoutMs = 15_000 }: WarmOptions): Promise<void> {

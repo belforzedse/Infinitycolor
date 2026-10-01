@@ -1,5 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
 import * as Sentry from "@sentry/node";
+import { routeExpectedDiagnostic } from "../../../utils/diagnostic-log";
 import {
   countRecentTerminalDecisions,
   sumRecentReleasedWalletIrr,
@@ -41,6 +42,7 @@ export async function evaluateReleaseBreakers(
     walletAmountIrr: number;
     now?: Date;
     env?: NodeJS.ProcessEnv;
+    mode?: "shadow" | "enforce" | "off";
   },
 ): Promise<BreakerVerdict> {
   const config = recoveryConfig(params.env ?? process.env);
@@ -55,14 +57,14 @@ export async function evaluateReleaseBreakers(
         open: true,
         decision: "refused_breaker_value",
         reason: "wallet_value_limits_unset",
-      });
+      }, params.mode);
     }
     if (walletAmountIrr > config.maxSingleWalletIrr) {
       return trip(strapi, params.path, {
         open: true,
         decision: "refused_single_cap",
         reason: `wallet_amount_${walletAmountIrr}_over_cap_${config.maxSingleWalletIrr}`,
-      });
+      }, params.mode);
     }
   }
 
@@ -76,7 +78,7 @@ export async function evaluateReleaseBreakers(
       open: true,
       decision: "refused_breaker_count",
       reason: `${recentCount}_releases_in_15m_over_${config.maxAutoReleasePer15m}`,
-    });
+    }, params.mode);
   }
 
   if (walletAmountIrr > 0 && config.maxWalletIrrPer24h !== null) {
@@ -89,7 +91,7 @@ export async function evaluateReleaseBreakers(
         open: true,
         decision: "refused_breaker_value",
         reason: `${released + walletAmountIrr}_irr_in_24h_over_${config.maxWalletIrrPer24h}`,
-      });
+      }, params.mode);
     }
   }
 
@@ -100,15 +102,17 @@ function trip(
   strapi: Strapi,
   path: RecoveryPath,
   verdict: Extract<BreakerVerdict, { open: true }>,
+  mode: "shadow" | "enforce" | "off" = "enforce",
 ): BreakerVerdict {
   strapi.log.error(
     `SnappPay automatic release breaker open for ${path}: ${verdict.decision} (${verdict.reason})`,
   );
-  Sentry.captureMessage("snappay.recovery.breaker_open", {
+  if (mode !== "enforce" && routeExpectedDiagnostic("snappay.recovery.breaker_open", { path, breaker: verdict.decision, mode })) return verdict;
+  try { Sentry.captureMessage("snappay.recovery.breaker_open", {
     level: "warning",
-    tags: { path, breaker: verdict.decision },
+    tags: { path, breaker: verdict.decision, mode },
     extra: { reason: verdict.reason },
-  });
+  }); } catch { /* Reporting cannot change the fail-closed verdict. */ }
   return verdict;
 }
 

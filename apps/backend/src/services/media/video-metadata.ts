@@ -78,12 +78,13 @@ export interface VideoOutput {
   durationMs: number | null;
   hasAudio: boolean;
   mp4: { url: string; bytes: number };
+  webm?: { url: string; bytes: number; profileVersion: 1 } | null;
   poster: { url: string; width: number; height: number } | null;
   hls: HlsOutput | null;
 }
 
 export interface VideoFailure {
-  stage: "probe" | "mp4" | "hls" | "publish" | "worker";
+  stage: "probe" | "mp4" | "hls" | "webm" | "publish" | "worker";
   code: MediaFailureCode;
   message: string;
   attempt: number;
@@ -115,8 +116,9 @@ export interface VideoMetadata {
   output?: VideoOutput | null;
   previous?: RowSnapshot | null;
   failure?: VideoFailure | null;
+  webmFailure?: VideoFailure | null;
   lease?: VideoLease | null;
-  timings?: Partial<Record<"probeMs" | "mp4Ms" | "posterMs" | "hlsMs", number>>;
+  timings?: Partial<Record<"probeMs" | "mp4Ms" | "posterMs" | "hlsMs" | "webmMs", number>>;
   warnings?: string[];
 }
 

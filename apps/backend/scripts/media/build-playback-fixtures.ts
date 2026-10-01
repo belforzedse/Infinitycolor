@@ -14,7 +14,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { writeMasterPlaylist } from "../../src/services/media/hls-manifest";
 import { FFMPEG } from "../../src/services/media/media-process";
-import { buildHlsArgs, buildMp4Args, buildPosterArgs, planEncode } from "../../src/services/media/video-encoding";
+import { buildHlsArgs, buildMp4Args, buildWebmArgs, buildPosterArgs, planEncode } from "../../src/services/media/video-encoding";
 import { probeVideo } from "../../src/services/media/video-normalization";
 
 const HUES = [0, 120, 240, 60, 300];
@@ -38,9 +38,9 @@ async function main() {
   const clips = [];
   for (let index = 0; index < count; index += 1) {
     const id = `clip${index}-${seconds}s-seg${segmentSeconds}`;
-    const clip = { id, mp4: `${id}.mp4`, poster: `${id}.jpg`, hls: `${id}-hls/master.m3u8` };
+    const clip = { id, mp4: `${id}.mp4`, webm: `${id}.webm`, poster: `${id}.jpg`, hls: `${id}-hls/master.m3u8` };
     clips.push(clip);
-    if (existsSync(join(out, clip.hls)) && existsSync(join(out, clip.mp4)) && existsSync(join(out, clip.poster))) {
+    if (existsSync(join(out, clip.hls)) && existsSync(join(out, clip.mp4)) && existsSync(join(out, clip.poster)) && existsSync(join(out, clip.webm))) {
       continue;
     }
 
@@ -57,6 +57,7 @@ async function main() {
     const probe = await probeVideo(source);
     const plan = planEncode(probe);
     ffmpeg(buildMp4Args(source, join(out, clip.mp4), plan, { threads: 4, preset: "veryfast" }));
+    ffmpeg(buildWebmArgs(source, join(out, clip.webm), plan, { threads: 4 }));
     ffmpeg(buildPosterArgs(source, join(out, clip.poster), plan, probe.durationMs));
     const hlsDir = join(out, `${id}-hls`);
     await rm(hlsDir, { recursive: true, force: true });

@@ -10,7 +10,8 @@ import { computeCouponDiscount, findFirstActiveGeneralDiscount } from "./lib/dis
 import { claimLimitedDiscountUsage } from "./lib/discount-claim";
 import { computeTotals } from "./lib/financials";
 import { createContract } from "./lib/contract";
-import { reserveStockAtomic } from "./lib/stock";
+import { reserveStockAtomic, StockReservationError } from "./lib/stock";
+import { routeExpectedDiagnostic } from "../../../utils/diagnostic-log";
 import {
   lockReserveGroup,
   RESERVE_GROUP_STATES,
@@ -253,7 +254,10 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       // here because it never reaches the catch block below, which means it is
       // otherwise invisible in both Sentry and the order-log table.
       try {
-        Sentry.captureMessage("checkout.stock_changed_before_payment", {
+        if (!routeExpectedDiagnostic("checkout.stock_changed_before_payment", {
+          area: "checkout", stage: "stockCheck", reasonCode: "STOCK_CHANGED", gateway: gateway || "none",
+          removedCount: stockCheck.itemsRemoved?.length || 0, adjustedCount: stockCheck.itemsAdjusted?.length || 0,
+        })) Sentry.captureMessage("checkout.stock_changed_before_payment", {
           level: "warning",
           tags: {
             area: "checkout",
@@ -594,7 +598,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         for (const r of aggregatedReservations) {
           const reserveRes = await reserveStockAtomic(strapi as any, r.stockId, r.quantity, trx);
           if (!reserveRes.success) {
-            throw new Error(`STOCK_RESERVATION_FAILED: ${reserveRes.error || "reserve_failed"}`);
+            throw new StockReservationError(reserveRes.reason, reserveRes.error || "reserve_failed");
           }
         }
 
@@ -1000,9 +1004,13 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             details = { detail: errorDetail };
             break;
           case "STOCK_RESERVATION_FAILED":
-            userMessage =
-              "موجودی برخی از کالاها تغییر کرده است. لطفاً سبد خرید را بروزرسانی کرده و دوباره تلاش کنید";
-            details = { detail: errorDetail };
+            if (error instanceof StockReservationError && error.reason === "insufficient_stock") {
+              userMessage = "موجودی برخی از کالاها تغییر کرده است. لطفاً سبد خرید را بروزرسانی کرده و دوباره تلاش کنید";
+              details = { reason: "insufficient_stock" };
+            } else {
+              userMessage = "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید";
+              details = {};
+            }
             break;
           case "INVALID_AMOUNT":
             userMessage = "مبلغ سفارش نامعتبر است";
@@ -1049,15 +1057,22 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       // infrastructure. A missing `orders.analytics_correlation_id` column
       // silently killed checkout for four weeks as the latter.
       const mapped = errorCode !== "UNKNOWN_ERROR";
+      let telemetryOwner: "backend" | undefined;
       try {
-        Sentry.captureException(error, {
-          level: mapped ? "warning" : "error",
+        const expected = error instanceof StockReservationError && error.reason === "insufficient_stock";
+        const routed = expected && routeExpectedDiagnostic("checkout.failure", {
+          area: "checkout", stage: "finalizeCartToOrder", reasonCode: "insufficient_stock", gateway: gateway || "none",
+        });
+        if (routed) telemetryOwner = "backend";
+        else if (Sentry.captureException(error, {
+          level: mapped && (errorCode !== "STOCK_RESERVATION_FAILED" || expected) ? "warning" : "error",
           tags: {
             area: "checkout",
             stage: "finalizeCartToOrder",
             errorCode,
             gateway: gateway || "none",
             mapped: String(mapped),
+            ...(error instanceof StockReservationError ? { stock_failure_reason: error.reason || "unknown" } : {}),
           },
           extra: redactSensitive({
             userId,
@@ -1071,7 +1086,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
               shippingData?.reserveShipping || shippingData?.reserveOrderData,
             ),
           }),
-        });
+        }) && Sentry.isEnabled()) telemetryOwner = "backend";
       } catch (reportError) {
         // Reporting must never turn the shopper's 400 into a 500.
         strapi.log.error("Failed to report checkout failure", reportError);
@@ -1104,6 +1119,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         error: errorMessage,
         errorCode,
         details,
+        ...(telemetryOwner ? { telemetryOwner } : {}),
         timestamp: new Date().toISOString(),
         ...(errorCode === "RESERVATION_LOOKUP_FAILED"
           ? { status: 503 }

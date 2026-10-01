@@ -1,3 +1,4 @@
+import { reportExpectedDiagnostic } from "../../../utils/diagnostic-log";
 import type { Strapi } from "@strapi/strapi";
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/node";
@@ -3591,6 +3592,7 @@ async function handleCancelLocalNotFound(
 
   const breaker = await evaluateReleaseBreakers(strapi, {
     path: "not_found",
+    mode: context.notFoundMode,
     kinds: NOT_FOUND_KINDS,
     walletAmountIrr: legs.walletIrr,
   });
@@ -3638,7 +3640,7 @@ async function handleCancelLocalNotFound(
         breakerWouldRefuse: breaker.open ? breaker.reason : null,
       },
     });
-    Sentry.captureMessage("snappay.not_found.shadow_decision", {
+    reportExpectedDiagnostic("snappay.not_found.shadow_decision", {
       level: "info",
       tags: { kind: confirmedKind, gateway: "snappay" },
       extra: {
@@ -3684,7 +3686,7 @@ async function handleCancelLocalNotFound(
   );
   bundle.attempt.Status = "Cancelled";
   await markOperationSucceeded(strapi, operation.id, "NOT_FOUND");
-  Sentry.captureMessage("snappay.not_found.auto_released", {
+  reportExpectedDiagnostic("snappay.not_found.auto_released", {
     level: "info",
     tags: { kind: confirmedKind, gateway: "snappay" },
     extra: {
@@ -3724,6 +3726,7 @@ async function handleRevertRegisteredAged(
     // breaker beside it, and leave the readiness statistics computable.
     const wouldRefuse = await evaluateReleaseBreakers(strapi, {
       path: "registered",
+      mode: context.registeredMode,
       kinds: REGISTERED_KINDS,
       walletAmountIrr: legs.walletIrr,
     });
@@ -3739,7 +3742,7 @@ async function handleRevertRegisteredAged(
         breakerWouldRefuse: wouldRefuse.open ? wouldRefuse.reason : null,
       },
     });
-    Sentry.captureMessage("snappay.registered.shadow_decision", {
+    reportExpectedDiagnostic("snappay.registered.shadow_decision", {
       level: "info",
       tags: { gateway: "snappay" },
       extra: {
@@ -3760,6 +3763,7 @@ async function handleRevertRegisteredAged(
 
   const breaker = await evaluateReleaseBreakers(strapi, {
     path: "registered",
+    mode: context.registeredMode,
     kinds: REGISTERED_KINDS,
     walletAmountIrr: legs.walletIrr,
   });
@@ -3826,7 +3830,7 @@ async function handleRevertRegisteredAged(
     );
     bundle.attempt.Status = "Cancelled";
     await markOperationSucceeded(strapi, operation.id, "REVERT");
-    Sentry.captureMessage("snappay.registered.reverted", {
+    reportExpectedDiagnostic("snappay.registered.reverted", {
       level: "info",
       tags: { gateway: "snappay" },
       extra: { attemptId: bundle.attempt.attemptId, orderId: bundle.order?.id },
@@ -3965,7 +3969,7 @@ async function handleLateSuccess(
       details: { revertedFrom: context.providerStatus },
     });
     await markOperationSucceeded(strapi, operation.id, "REVERT");
-    Sentry.captureMessage("snappay.late_success.reverted", {
+    reportExpectedDiagnostic("snappay.late_success.reverted", {
       level: "warning",
       tags: reviewTags,
       extra: {

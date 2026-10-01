@@ -18,22 +18,10 @@ import {
   liveEngineCounts,
   setVideoTelemetrySink,
   type VideoEngineState,
-  type VideoSource,
-  type VideoTelemetryEvent,
 } from "../../../packages/video-player/src/index";
+import type { PlayerSpec } from "../helpers/video-harness";
 import "react-instagram-stories/styles.css";
 import "./harness.css";
-
-declare global {
-  interface Window {
-    __storyViews: number[];
-    __storyItemViews: string[];
-    __videoEvents: VideoTelemetryEvent[];
-    __videoStates: Record<string, VideoEngineState>;
-    __liveEngines: () => { engines: number; hls: number };
-    __setPlayer: (id: string, patch: Partial<PlayerSpec>) => void;
-  }
-}
 
 window.__storyViews = [];
 window.__storyItemViews = [];
@@ -41,14 +29,6 @@ window.__videoEvents = [];
 window.__videoStates = {};
 window.__liveEngines = liveEngineCounts;
 setVideoTelemetrySink((event) => window.__videoEvents.push(event));
-
-interface PlayerSpec {
-  id: string;
-  source: VideoSource;
-  active: boolean;
-  playing: boolean;
-  allowHls: boolean;
-}
 
 /**
  * Player mode (`?players=[...]`): bare InlineVideo instances, controlled from the test

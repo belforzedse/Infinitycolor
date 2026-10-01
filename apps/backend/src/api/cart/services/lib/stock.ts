@@ -274,16 +274,25 @@ export const decrementStockAtomic = async (
  * Atomically reserve stock (does not change Count; increments ReservedCount).
  * Ensures (Count - ReservedCount) stays non-negative under concurrency.
  */
+export type StockReservationFailureReason = "insufficient_stock" | "invalid_quantity" | "missing_inventory" | "database_failure";
+
+export class StockReservationError extends Error {
+  constructor(public readonly reason: StockReservationFailureReason | undefined, detail: string) {
+    super(`STOCK_RESERVATION_FAILED: ${detail}`);
+    this.name = "StockReservationError";
+  }
+}
+
 export const reserveStockAtomic = async (
   strapi: Strapi,
   stockId: number,
   reserveBy: number,
   trx?: any
-): Promise<{ success: boolean; newReservedCount?: number; error?: string }> => {
+): Promise<{ success: boolean; newReservedCount?: number; error?: string; reason?: StockReservationFailureReason }> => {
   try {
     const quantity = Number(reserveBy);
-    if (quantity <= 0) {
-      return { success: false, error: "Reserve amount must be positive" };
+    if (!Number.isFinite(quantity) || !Number.isInteger(quantity) || quantity <= 0) {
+      return { success: false, reason: "invalid_quantity", error: "Reserve amount must be a finite positive integer" };
     }
 
     const result = await rawSql(
@@ -303,9 +312,10 @@ export const reserveStockAtomic = async (
         where: { id: stockId },
         ...(trx ? { transacting: trx } : {}),
       });
-      if (!stock) return { success: false, error: "Stock record not found" };
+      if (!stock) return { success: false, reason: "missing_inventory", error: "Stock record not found" };
       return {
         success: false,
+        reason: "insufficient_stock",
         error: `Insufficient stock for reservation: requested ${quantity}, available ${getAvailableStockCount(stock)}`,
       };
     }
@@ -336,6 +346,7 @@ export const reserveStockAtomic = async (
     return {
       success: false,
       error: `Database error: ${(error as Error).message}`,
+      reason: "database_failure",
     };
   }
 };

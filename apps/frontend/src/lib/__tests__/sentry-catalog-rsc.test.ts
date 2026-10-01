@@ -32,7 +32,9 @@ describe("catalog RSC Sentry fingerprints", () => {
   });
 
   it("does not fingerprint unrelated server errors even on catalog routes", () => {
-    expect(catalogRscFingerprint(new Error("boom"), { routePath: "/plp/category/x" })).toBeUndefined();
+    expect(
+      catalogRscFingerprint(new Error("boom"), { routePath: "/plp/category/x" }),
+    ).toBeUndefined();
   });
 
   it("tags name, code, and route without copying the error message", () => {
@@ -99,4 +101,14 @@ describe("catalog RSC Sentry fingerprints", () => {
     expect(event.tags?.sampled).toBe(true);
     expect(event.fingerprint).toEqual(["catalog-rsc", "plp", "PLPProductsError"]);
   });
+});
+
+it("attaches the same server digest used by client recovery reports", () => {
+  const error = Object.assign(new Error("server cause"), { digest: "4073695856" });
+  const scope = { setTag: jest.fn(), setFingerprint: jest.fn() };
+  applyCatalogRscSentryScope(scope, error);
+  expect(scope.setTag).toHaveBeenCalledWith("next_error_digest", "4073695856");
+  expect(applyCatalogRscEvent({}, { originalException: error }).tags?.next_error_digest).toBe(
+    "4073695856",
+  );
 });

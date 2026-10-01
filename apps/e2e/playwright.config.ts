@@ -62,6 +62,7 @@ export default defineConfig({
     "super-admin/**/*.spec.ts",
     "analytics/**/*.spec.ts",
     "stories/**/*.spec.ts",
+    "runtime/**/*.spec.ts",
     "staging/**/*.spec.ts",
     "instant-navigation.spec.ts",
     "storefront/adaptive-quality.spec.ts",

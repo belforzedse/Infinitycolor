@@ -164,8 +164,18 @@ describe("video metadata SQL on the real files table", () => {
     expect(viaApi.provider_metadata.video.output.mp4.url).toBe(output.mp4.url);
     expect(viaApi.previewUrl).toBe(output.poster.url);
 
+    // Optional WebM publication uses the same lease and leaves the classic MP4 row intact.
+    const webmOutput = { ...output, webm: { url: "/uploads/JEST_TEST__optional.webm", bytes: 800, profileVersion: 1 as const } };
+    expect(await writeVideoState(strapi.db.connection, id, "intruder", { output: webmOutput })).toBe(false);
+    expect((await readFileRow(strapi.db.connection, id))?.video?.output?.webm).toBeUndefined();
+    expect(await writeVideoState(strapi.db.connection, id, "w", { output: webmOutput })).toBe(true);
+    const withWebm = await readFileRow(strapi.db.connection, id);
+    expect(withWebm?.url).toBe(output.mp4.url);
+    expect(withWebm?.video?.output?.webm).toEqual(webmOutput.webm);
+
     await releaseLease(strapi.db.connection, id, "w");
     expect((await readFileRow(strapi.db.connection, id))?.video?.lease).toBeNull();
+    expect(await writeVideoState(strapi.db.connection, id, "w", { output: { ...output, webm: null } })).toBe(false);
 
     expect(await rollbackRow(strapi.db.connection, (await readFileRow(strapi.db.connection, id))!)).toBe(true);
     const restored = await readFileRow(strapi.db.connection, id);

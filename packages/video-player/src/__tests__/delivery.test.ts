@@ -30,6 +30,7 @@ describe("readVideoDelivery", () => {
     expect(readVideoDelivery(processedRow)).toEqual({
       mp4: processedRow.url,
       hls: "/uploads/video/5/v1-11111111/master.m3u8",
+      webm: null,
       poster: processedRow.previewUrl,
       width: 720,
       height: 1280,
@@ -108,4 +109,15 @@ describe("HLS warm variant choice", () => {
     expect(pickWarmVariant(variants, 5_000_000, 1000)?.uri).toBe("r540/index.m3u8");
     expect(pickWarmVariant(variants, 100_000, 2000)?.uri).toBe("r360/index.m3u8");
   });
+});
+
+
+it("accepts only an owned, supported-profile WebM URL and resolves it", () => {
+  const asset = { ...processedRow, provider_metadata: { video: { ...processedRow.provider_metadata.video,
+    output: { ...processedRow.provider_metadata.video.output, webm: { url: "/uploads/clip.webm", profileVersion: 1, bytes: 5 } } } } };
+  expect(readVideoDelivery(asset)?.webm).toBe("/uploads/clip.webm");
+  expect(resolveVideoSource(readVideoDelivery(asset), (path) => `https://cdn.test${path}`)?.webm).toBe("https://cdn.test/uploads/clip.webm");
+  expect(readVideoDelivery({ ...asset, url: "/uploads/replaced.mp4" })?.webm).toBeNull();
+  asset.provider_metadata.video.output.webm.url = "/uploads/../../private.webm";
+  expect(readVideoDelivery(asset)?.webm).toBeNull();
 });

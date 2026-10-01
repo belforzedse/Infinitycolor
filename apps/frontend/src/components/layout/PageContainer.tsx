@@ -1,3 +1,4 @@
+import RecoverySuccessMarker from "@/components/storefront/RecoverySuccessMarker";
 import { cn } from "@/lib/utils";
 import type { HTMLAttributes, ReactNode } from "react";
 import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
@@ -24,6 +25,7 @@ export default function PageContainer({
       {...props}
     >
       {children}
+      <RecoverySuccessMarker />
     </StorefrontContainer>
   );
 }

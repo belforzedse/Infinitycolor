@@ -6,6 +6,7 @@ type CatalogErrorLike = {
   name?: string;
   message?: string;
   code?: unknown;
+  digest?: unknown;
 };
 
 type SentryScopeLike = {
@@ -36,6 +37,7 @@ function catalogErrorFields(error: unknown): CatalogErrorLike {
     name: typeof record.name === "string" ? record.name : undefined,
     message: typeof record.message === "string" ? record.message : undefined,
     code: record.code,
+    digest: record.digest,
   };
 }
 
@@ -92,7 +94,8 @@ export function applyCatalogRscSentryScope(
   error: unknown,
   errorContext?: unknown,
 ): void {
-  const { name } = catalogErrorFields(error);
+  const { name, digest } = catalogErrorFields(error);
+  if (typeof digest === "string" && digest) scope.setTag("next_error_digest", digest);
   if (name) scope.setTag("error_name", name);
   const code = catalogErrorCode(error);
   if (code) scope.setTag("catalog_error_code", code);
@@ -113,9 +116,10 @@ export function applyCatalogRscEvent<T extends SentryEventLike>(
     event.fingerprint = fingerprint;
   }
 
-  const { name } = catalogErrorFields(hint?.originalException);
+  const { name, digest } = catalogErrorFields(hint?.originalException);
   const code = catalogErrorCode(hint?.originalException);
   event.tags = event.tags || {};
+  if (typeof digest === "string" && digest) event.tags.next_error_digest = digest;
   if (name && !event.tags.error_name) event.tags.error_name = name;
   if (code && !event.tags.catalog_error_code) event.tags.catalog_error_code = code;
   if (routePath && !event.tags.route_path) event.tags.route_path = routePath;

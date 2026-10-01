@@ -1,14 +1,10 @@
-import * as Sentry from "@sentry/node";
+import { initializeBackendSentry } from "./utils/sentry-initialization";
 import bcrypt from "bcryptjs";
 import { createClient } from "redis";
 import type { Strapi } from "@strapi/strapi";
 
 // Initialize Sentry for error tracking (must be at the very top)
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  enabled: !!process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-});
+initializeBackendSentry();
 import override from "./api/auth/documentation/1.0.0/overrides/auth.json";
 import localUserOverride from "./api/local-user/documentation/1.0.0/overrides/local-user.json";
 

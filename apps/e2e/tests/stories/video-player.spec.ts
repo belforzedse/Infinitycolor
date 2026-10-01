@@ -19,7 +19,7 @@ import { VIDEO_FIXTURE_DIR, ensurePipelineClips, ffmpegAvailable, type PipelineC
 
 interface PlayerSpec {
   id: string;
-  source: { mp4: string; hls?: string | null; poster?: string | null };
+  source: { mp4: string; webm?: string | null; hls?: string | null; poster?: string | null };
   active: boolean;
   playing: boolean;
   allowHls: boolean;
@@ -75,6 +75,38 @@ test.describe("video player engine", () => {
     if (browserName === "webkit") return;
     await expectPlaying(page, id);
   }
+
+
+  test("starts directly on WebM when MP4 capability is unavailable, without an MP4 request", async ({ page }) => {
+    await page.addInitScript(() => {
+      const real = HTMLMediaElement.prototype.canPlayType;
+      HTMLMediaElement.prototype.canPlayType = function(type) { return type.includes("mp4") ? "" : real.call(this, type); };
+    });
+    await openPlayers(page, [player("a", clips[0], { allowHls: false, source: { mp4: media.url(clips[0].mp4), webm: media.url(clips[0].webm) } })]);
+    await expect(marker(page, "a")).toHaveAttribute("data-engine", "webm");
+    await expectPlaying(page, "a");
+    await expect(marker(page, "a")).toHaveAttribute("data-first-frame", "true");
+    expect(media.requests).toContain(clips[0].webm);
+    expect(media.requests).not.toContain(clips[0].mp4);
+  });
+  test("recovers a confirmed MP4 decode failure through one WebM attempt", async ({ page }) => {
+    await openPlayers(page, [player("a", clips[0], { allowHls: false, playing: false, source: { mp4: media.url(clips[0].mp4), webm: media.url(clips[0].webm) } })]);
+    await videoOf(page, "a").evaluate((video: HTMLVideoElement) => {
+      Object.defineProperty(video, "error", { configurable: true, get: () => ({ code: 3 }) });
+      video.dispatchEvent(new Event("error"));
+      delete (video as unknown as Record<string, unknown>).error;
+    });
+    await expect(marker(page, "a")).toHaveAttribute("data-engine", "webm");
+    await page.evaluate(() => window.__setPlayer("a", { playing: true }));
+    await expectPlaying(page, "a");
+    await expect(marker(page, "a")).toHaveAttribute("data-first-frame", "true");
+    expect(media.requests.filter((path) => path === clips[0].webm).length).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.__videoEvents.filter((event) => event.type === "error" && event.fatal))).toHaveLength(0);
+  });
+  test("inactive WebM-capable players request no optional media", async ({ page }) => {
+    await openPlayers(page, [player("a", clips[0], { active: false, playing: false, source: { mp4: media.url(clips[0].mp4), webm: media.url(clips[0].webm) } })]);
+    expect(media.requests.filter((path) => /\.(mp4|webm|m3u8|m4s)$/.test(path))).toHaveLength(0);
+  });
 
   test("plays the HLS ladder through hls.js over MSE", async ({ page }) => {
     await openPlayers(page, [player("a", clips[0])]);

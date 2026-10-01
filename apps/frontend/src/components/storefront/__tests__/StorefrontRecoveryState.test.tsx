@@ -6,8 +6,7 @@ const setTag = jest.fn();
 
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => captureException(...args),
-  withScope: (callback: (scope: { setTag: typeof setTag }) => void) =>
-    callback({ setTag }),
+  withScope: (callback: (scope: { setTag: typeof setTag }) => void) => callback({ setTag }),
 }));
 
 const TRANSIENT_RETRY_OFFSET_MS = 31_000;
@@ -36,10 +35,7 @@ describe("StorefrontRecoveryState", () => {
     const heading = screen.getByRole("heading", { name: "بارگذاری کامل نشد" });
     expect(alert).toHaveAttribute("dir", "rtl");
     expect(heading).toHaveFocus();
-    expect(screen.getByRole("link", { name: "بازگشت به فروشگاه" })).toHaveAttribute(
-      "href",
-      "/",
-    );
+    expect(screen.getByRole("link", { name: "بازگشت به فروشگاه" })).toHaveAttribute("href", "/");
 
     fireEvent.click(screen.getByRole("button", { name: "تلاش دوباره" }));
     expect(retry).toHaveBeenCalledTimes(1);
@@ -58,9 +54,13 @@ describe("StorefrontRecoveryState", () => {
       />,
     );
 
-    expect(setTag).toHaveBeenCalledWith("recovery_surface", "account");
-    expect(setTag).toHaveBeenCalledWith("next_error_digest", "digest-123");
-    expect(captureException).toHaveBeenCalledWith(error);
+    expect(captureException).toHaveBeenCalledWith(error, {
+      tags: {
+        recovery_surface: "account",
+        next_error_digest: "digest-123",
+        recovery_outcome: "failed",
+      },
+    });
   });
 
   it("silently retries once on a transient RSC stream closure, then displays it if it recurs immediately", () => {
@@ -88,7 +88,10 @@ describe("StorefrontRecoveryState", () => {
     render(<StorefrontRecoveryState {...props} />);
     expect(retry).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("heading", { name: "خطا" })).toBeInTheDocument();
-    expect(captureException).not.toHaveBeenCalled();
+    expect(captureException).toHaveBeenCalledWith(
+      error,
+      expect.objectContaining({ tags: expect.objectContaining({ recovery_outcome: "exhausted" }) }),
+    );
   });
 
   it.each([
@@ -99,7 +102,9 @@ describe("StorefrontRecoveryState", () => {
     "silently retries once on %s, then displays it if it recurs immediately",
     (message, windowOffset) => {
       process.env.NEXT_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
-      jest.spyOn(Date, "now").mockReturnValue(Date.now() + windowOffset * TRANSIENT_RETRY_OFFSET_MS);
+      jest
+        .spyOn(Date, "now")
+        .mockReturnValue(Date.now() + windowOffset * TRANSIENT_RETRY_OFFSET_MS);
       const retry = jest.fn();
       const error = new Error(message);
       const props = {
@@ -119,7 +124,12 @@ describe("StorefrontRecoveryState", () => {
       render(<StorefrontRecoveryState {...props} />);
       expect(retry).toHaveBeenCalledTimes(1);
       expect(screen.getByRole("heading", { name: "خطا" })).toBeInTheDocument();
-      expect(captureException).not.toHaveBeenCalled();
+      expect(captureException).toHaveBeenCalledWith(
+        error,
+        expect.objectContaining({
+          tags: expect.objectContaining({ recovery_outcome: "exhausted" }),
+        }),
+      );
       jest.restoreAllMocks();
     },
   );
