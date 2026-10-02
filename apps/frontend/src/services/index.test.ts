@@ -12,9 +12,20 @@ jest.mock("@/utils/auth", () => ({
 }));
 
 jest.mock("@/lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async (options: unknown) => {
+        const token = await (
+          jest.requireMock("@/lib/central-auth") as {
+            centralAuth: {
+              tokenManager: { getToken: (options: unknown) => Promise<string | null> };
+            };
+          }
+        ).centralAuth.tokenManager.getToken(options);
+        return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+      }),
       expire: jest.fn(),
     },
   },
@@ -42,17 +53,19 @@ describe("ApiClient error handling", () => {
       json: async () => ({}),
     });
 
-    await expect(apiClient.get("/test")).rejects.toEqual({
+    await expect(apiClient.get("/test")).rejects.toMatchObject({
       message: ERROR_MESSAGES.DEFAULT,
       status: HTTP_STATUS.UNAUTHORIZED,
       errors: undefined,
     });
 
-    expect(handleAuthErrors).toHaveBeenCalledWith({
-      message: ERROR_MESSAGES.DEFAULT,
-      status: HTTP_STATUS.UNAUTHORIZED,
-      errors: undefined,
-    });
+    expect(handleAuthErrors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: ERROR_MESSAGES.DEFAULT,
+        status: HTTP_STATUS.UNAUTHORIZED,
+        errors: undefined,
+      }),
+    );
   });
 
   it("preserves 400 error structure and skips auth handler", async () => {
@@ -63,7 +76,7 @@ describe("ApiClient error handling", () => {
       json: async () => error,
     });
 
-    await expect(apiClient.post("/test", {})).rejects.toEqual({
+    await expect(apiClient.post("/test", {})).rejects.toMatchObject({
       status: HTTP_STATUS.BAD_REQUEST,
       message: "Invalid data",
       error: error.error,
@@ -73,7 +86,7 @@ describe("ApiClient error handling", () => {
   it("throws when baseUrl is missing", async () => {
     const client = new ApiClient({ baseUrl: "undefined" });
 
-    await expect(client.get("/test")).rejects.toEqual({
+    await expect(client.get("/test")).rejects.toMatchObject({
       message: "API base URL is not configured",
       status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
       errors: undefined,

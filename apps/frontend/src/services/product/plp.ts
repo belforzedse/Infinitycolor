@@ -18,6 +18,7 @@ import { expandSizeKeysToTitles } from "@/utils/plpSizeFilter";
 import { expandColorKeysToTitles, type CatalogColor } from "@/utils/plpColorFilter";
 import { getProductVariationColors, getProductVariationSizes } from "./variationAttributes";
 import { redactCatalogCause, type CatalogFailureStage } from "@/lib/catalog-error-diagnostics";
+import { fetchCatalogJson, CatalogTransportError } from "@/lib/catalog-transport";
 
 export interface PLPProduct {
   id: number;
@@ -92,12 +93,13 @@ export interface PLPProductsResult {
 
 export class PLPProductsError extends Error {
   public readonly failureStage?: CatalogFailureStage;
+  public readonly requestId?: string;
 
   constructor(
     message: string,
     public readonly code: "FETCH_FAILED" | "API_ERROR" | "INVALID_RESPONSE",
     public readonly status?: number,
-    diagnostics?: { stage: CatalogFailureStage; cause?: unknown },
+    diagnostics?: { stage: CatalogFailureStage; cause?: unknown; requestId?: string },
   ) {
     super(
       message,
@@ -109,6 +111,7 @@ export class PLPProductsError extends Error {
     );
     this.name = "PLPProductsError";
     this.failureStage = diagnostics?.stage;
+    this.requestId = diagnostics?.requestId;
   }
 }
 
@@ -119,11 +122,13 @@ const PLP_HERO_KEYWORDS = [
   "\u06a9\u062a\u0648\u0646\u06cc",
 ];
 
-const PLP_HERO_TITLE_FILTER = PLP_HERO_KEYWORDS
-  .map((keyword, index) => `filters[$or][${index}][Title][$containsi]=${encodeURIComponent(keyword)}`)
-  .join("&");
+const PLP_HERO_TITLE_FILTER = PLP_HERO_KEYWORDS.map(
+  (keyword, index) => `filters[$or][${index}][Title][$containsi]=${encodeURIComponent(keyword)}`,
+).join("&");
 
-const cardToSmallCard = (product: ReturnType<typeof formatProductsToCardProps>[number]): ProductSmallCardProps => ({
+const cardToSmallCard = (
+  product: ReturnType<typeof formatProductsToCardProps>[number],
+): ProductSmallCardProps => ({
   id: product.id,
   slug: product.slug,
   title: product.title,
@@ -165,16 +170,11 @@ export function parsePLPQuery(params: { [key: string]: string | string[] | undef
     usage: typeof params.usage === "string" ? params.usage : undefined,
     search: typeof params.search === "string" ? params.search : undefined,
     sort: typeof params.sort === "string" ? params.sort : undefined,
-    hasDiscount:
-      typeof params.hasDiscount === "string" ? params.hasDiscount === "true" : undefined,
+    hasDiscount: typeof params.hasDiscount === "string" ? params.hasDiscount === "true" : undefined,
   };
 }
 
-const appendIndexedInFilter = (
-  params: URLSearchParams,
-  prefix: string,
-  values: string[],
-) => {
+const appendIndexedInFilter = (params: URLSearchParams, prefix: string, values: string[]) => {
   values.forEach((value, index) => {
     params.append(`${prefix}[$in][${index}]`, value);
   });
@@ -205,7 +205,10 @@ export function buildPLPProductsQuery(
   queryParams.append(`filters[$and][${nextAnd()}][removedAt][$null]`, "true");
 
   const variationIndex = nextAnd();
-  queryParams.append(`filters[$and][${variationIndex}][product_variations][IsPublished][$eq]`, "true");
+  queryParams.append(
+    `filters[$and][${variationIndex}][product_variations][IsPublished][$eq]`,
+    "true",
+  );
   queryParams.append(`filters[$and][${variationIndex}][product_variations][Price][$gt]`, "0");
 
   if (categorySlugs.length > 0) {
@@ -225,7 +228,10 @@ export function buildPLPProductsQuery(
   if (query.search) {
     const searchIndex = nextAnd();
     queryParams.append(`filters[$and][${searchIndex}][$or][0][Title][$containsi]`, query.search);
-    queryParams.append(`filters[$and][${searchIndex}][$or][1][Description][$containsi]`, query.search);
+    queryParams.append(
+      `filters[$and][${searchIndex}][$or][1][Description][$containsi]`,
+      query.search,
+    );
   }
 
   if (query.available) {
@@ -327,9 +333,7 @@ export async function getPLPCategoryContext(
   const allCategories = await getProductCategoriesForRender({ revalidate: 3600 });
   const resolvedSlug = categoryData.attributes.Slug;
   const descendantSlugs =
-    allCategories.length > 0
-      ? getCategoryAndDescendantSlugs(allCategories, resolvedSlug)
-      : [];
+    allCategories.length > 0 ? getCategoryAndDescendantSlugs(allCategories, resolvedSlug) : [];
 
   return {
     data: categoryData,
@@ -385,9 +389,12 @@ function normalizeRelation(rel: any, isVariation = false): any {
           const normalized: any = { id, attributes: rest };
           if (isVariation) {
             normalized.attributes.product_stock = normalizeRelation(product_stock);
-            normalized.attributes.product_variation_color = normalizeRelation(product_variation_color);
-            normalized.attributes.product_variation_size = normalizeRelation(product_variation_size);
-            normalized.attributes.product_variation_model = normalizeRelation(product_variation_model);
+            normalized.attributes.product_variation_color =
+              normalizeRelation(product_variation_color);
+            normalized.attributes.product_variation_size =
+              normalizeRelation(product_variation_size);
+            normalized.attributes.product_variation_model =
+              normalizeRelation(product_variation_model);
             normalized.attributes.general_discounts = normalizeRelation(general_discounts);
           }
           return normalized;
@@ -464,21 +471,30 @@ export async function getPLPProducts(
   let failureStage: CatalogFailureStage = "request";
 
   try {
-    response = await fetchWithTimeout(url, {
-      timeoutMs: 15000,
-      next: { revalidate: 120, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
-    });
-    failureStage = "response_json";
-    data = await response.json();
+    const result = await fetchCatalogJson<typeof data>(
+      url,
+      {
+        next: { revalidate: 120, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
+      },
+      "plp",
+    );
+    response = result.response;
+    data = result.data;
   } catch (error) {
     logger.error("[PLP] Products fetch failed", {
       error: String(error),
       urlHint: baseUrl,
     });
-    throw new PLPProductsError("Unable to load products", "FETCH_FAILED", response?.status, {
-      stage: failureStage,
-      cause: error,
-    });
+    throw new PLPProductsError(
+      "Unable to load products",
+      "FETCH_FAILED",
+      error instanceof CatalogTransportError ? error.status : response?.status,
+      {
+        stage: error instanceof CatalogTransportError ? error.failureStage : failureStage,
+        cause: error instanceof CatalogTransportError ? error.cause : error,
+        requestId: error instanceof CatalogTransportError ? error.requestId : undefined,
+      },
+    );
   }
 
   if (!response.ok) {
@@ -624,15 +640,16 @@ export function buildCollectionItems(products: PLPProduct[]) {
   return products.slice(0, 20).map((product) => {
     const compactPrice = Number(product.attributes.DiscountPrice || product.attributes.Price || 0);
     const variations = product.attributes.product_variations?.data || [];
-    const prices = compactPrice > 0
-      ? [compactPrice]
-      : variations
-          .map((v: Variation) => {
-            const price = parseFloat(String(v.attributes.Price || "0"));
-            const discountPrice = parseFloat(String(v.attributes.DiscountPrice || "0"));
-            return discountPrice > 0 ? discountPrice : price;
-          })
-          .filter((price: number) => price > 0);
+    const prices =
+      compactPrice > 0
+        ? [compactPrice]
+        : variations
+            .map((v: Variation) => {
+              const price = parseFloat(String(v.attributes.Price || "0"));
+              const discountPrice = parseFloat(String(v.attributes.DiscountPrice || "0"));
+              return discountPrice > 0 ? discountPrice : price;
+            })
+            .filter((price: number) => price > 0);
     const minPrice = prices.length > 0 ? Math.min(...prices) : undefined;
     const cover: any = product.attributes.CoverImage;
     const coverUrl =
@@ -664,9 +681,7 @@ export function buildPLPMetadata(
   if (query.search) {
     const q = query.search.slice(0, 60);
     const pathname = category ? getCategoryPlpHref(category.slug) : "/plp";
-    const title = category
-      ? `جستجو در ${category.title}: "${q}"`
-      : `نتایج جستجو برای "${q}"`;
+    const title = category ? `جستجو در ${category.title}: "${q}"` : `نتایج جستجو برای "${q}"`;
     const description = category
       ? `مشاهده نتایج جستجو برای «${q}» در دسته ${category.title}.`
       : `مشاهده نتایج جستجو برای «${q}» در ${SITE_NAME}. جدیدترین و محبوب‌ترین محصولات.`;

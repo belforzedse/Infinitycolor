@@ -4,7 +4,9 @@ import { TRANSIENT_NETWORK_MESSAGES } from "./storefront-sentry-tags";
 
 export const RECOVERY_WINDOW_MS = 30_000;
 let lastRetryAt = -Infinity;
-let pending: { surface: string; digest?: string; startedAt: number; pathname: string } | undefined;
+let pending:
+  | { error: Error; surface: string; digest?: string; startedAt: number; pathname: string }
+  | undefined;
 const reported = new WeakMap<Error, number>();
 let lastReport: { key: string; at: number } | undefined;
 
@@ -30,6 +32,7 @@ export function retryStorefrontError(
     return false;
   lastRetryAt = Date.now();
   pending = {
+    error,
     surface,
     digest: error.digest,
     startedAt: lastRetryAt,
@@ -62,7 +65,7 @@ export function completeStorefrontRecovery(surface?: string): void {
 }
 
 export function reportStorefrontError(error: Error & { digest?: string }, surface: string): void {
-  const key = `${surface}:${error.digest || error.name}:${error.message}`;
+  const key = `${error.digest ? "digest" : surface}:${error.digest || error.name}:${error.message}`;
   const now = Date.now();
   if (
     now - (reported.get(error) ?? -Infinity) < RECOVERY_WINDOW_MS ||
@@ -83,4 +86,18 @@ export function reportStorefrontError(error: Error & { digest?: string }, surfac
   } catch {
     /* The recovery UI must remain available. */
   }
+}
+
+/** A successful commit/navigation clears pending; stale boundary timers then do nothing. */
+export function exhaustStorefrontRecovery(
+  error: Error & { digest?: string },
+  surface: string,
+): boolean {
+  if (!pending || pending.error !== error || pending.surface !== surface) return false;
+  if (typeof window !== "undefined" && pending.pathname !== window.location.pathname) {
+    pending = undefined;
+    return false;
+  }
+  reportStorefrontError(error, surface);
+  return true;
 }

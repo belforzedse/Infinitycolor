@@ -1,9 +1,24 @@
 import { handleAuthErrors } from "../auth";
 
 jest.mock("@/lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async (options: unknown) => {
+        try {
+          const token = await (
+            jest.requireMock("@/lib/central-auth") as {
+              centralAuth: {
+                tokenManager: { getToken: (options: unknown) => Promise<string | null> };
+              };
+            }
+          ).centralAuth.tokenManager.getToken(options);
+          return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+        } catch (error) {
+          return { state: "unavailable", reasonCode: "network" };
+        }
+      }),
       expire: jest.fn(),
       clearForLogout: jest.fn(),
     },
@@ -61,9 +76,7 @@ describe("Auth utilities", () => {
     });
 
     it("does not clear auth state on a 401 when a silent token refresh succeeds", async () => {
-      mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValueOnce(
-        "fresh-token",
-      );
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValueOnce("fresh-token");
       const error = { status: 401, message: "Unauthorized" };
 
       await handleAuthErrors(error);
@@ -112,5 +125,18 @@ describe("Auth utilities", () => {
 
       expect(() => handleAuthErrors(error)).not.toThrow();
     });
+  });
+});
+
+describe("temporary unauthorized recovery", () => {
+  it.each([
+    new TypeError("Failed to fetch"),
+    new DOMException("timed out", "AbortError"),
+    { status: 503 },
+  ])("does not publish logout or navigate after %s", async (cause) => {
+    mockedCentralAuth.clearCentralAuthForLogout.mockClear();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValueOnce(cause);
+    await handleAuthErrors({ status: 401 });
+    expect(mockedCentralAuth.clearCentralAuthForLogout).not.toHaveBeenCalled();
   });
 });

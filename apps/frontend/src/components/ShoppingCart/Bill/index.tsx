@@ -1,4 +1,5 @@
 "use client";
+import { checkoutFailureDiagnostics, type CheckoutOperation } from "@/lib/checkout-error-diagnostics";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
@@ -931,20 +932,34 @@ function ShoppingCartBillForm({}: Props) {
     }
   };
 
-  const trackCheckoutError = (errorCode?: string, category?: CheckoutFailureCategory, response?: { details?: { reason?: string }; telemetryOwner?: string }) => {
+  const checkoutOperationRef = React.useRef<CheckoutOperation>("stock_check");
+  const trackCheckoutError = (
+    errorCode?: string,
+    category?: CheckoutFailureCategory,
+    response?: { details?: { reason?: string }; telemetryOwner?: string },
+    cause?: unknown,
+  ) => {
+    const diagnostics = checkoutFailureDiagnostics(cause, checkoutOperationRef.current);
     // Umami gets a stable, low-cardinality category; the raw code goes to Sentry
     // so the generic Persian banner can still be traced back to a cause.
     trackCheckoutFailure(category ?? checkoutFailureCategoryForCode(errorCode), gateway);
     // Codeless failures are client-side validation the shopper can fix; they
     // are analytics only, never Sentry noise.
     if (!errorCode) return;
-    const attributes = { area: "checkout", stage: "storefront", reasonCode: errorCode, gateway: gateway || "none" };
+    const attributes = {
+      area: "checkout",
+      stage: "storefront",
+      reasonCode: errorCode,
+      gateway: gateway || "none",
+      ...diagnostics.attributes,
+    };
     const disposition = checkoutDiagnosticDisposition(errorCode, response);
     if (disposition === "log") {
       logDiagnostic("checkout.failure", attributes);
       return;
     }
-    if (disposition === "expected" && routeExpectedDiagnostic("checkout.failure", attributes)) return;
+    if (disposition === "expected" && routeExpectedDiagnostic("checkout.failure", attributes))
+      return;
     // Preserve already-filtered historical business states while Logs rollout is pending.
     if (isExpectedCheckoutSentryCode(errorCode)) return;
     try {
@@ -960,7 +975,11 @@ function ShoppingCartBillForm({}: Props) {
           browser: currentBrowserFamily(),
           gateway: gateway || "none",
         },
-        extra: { hasDiscountCode: Boolean(discountCode) },
+        extra: {
+          hasDiscountCode: Boolean(discountCode),
+          ...diagnostics.attributes,
+          ...(cause === undefined ? {} : { cause: diagnostics.cause }),
+        },
       });
     } catch {
       // Reporting must never block the shopper's retry.
@@ -1326,6 +1345,7 @@ function ShoppingCartBillForm({}: Props) {
 
       // Always re-checked: the shopper's previous attempt may itself be what
       // corrected the cart, and nothing is allowed to pay past this guard.
+      checkoutOperationRef.current = "stock_check";
       const stockValid = await CartService.checkCartStock(
         continuationCandidate ? resumeIdentity?.attemptId : undefined,
       );
@@ -1371,6 +1391,7 @@ function ShoppingCartBillForm({}: Props) {
           writeCheckoutIdentity(resumeIdentity);
         }
         checkoutAttemptId = resumeIdentity.attemptId;
+        checkoutOperationRef.current = "finalize";
         cartResponse = await CartService.finalizeCart({
           gateway: resumeGateway,
           attemptId: resumeIdentity.attemptId,
@@ -1446,6 +1467,7 @@ function ShoppingCartBillForm({}: Props) {
             reserveShipping: reserveShipping || undefined,
           };
 
+      checkoutOperationRef.current = "quote";
       const quote = await CartService.getCheckoutQuote(finalizeData as never);
 
       // The quote now succeeds even when SnappPay's eligibility check fails, so
@@ -1486,6 +1508,7 @@ function ShoppingCartBillForm({}: Props) {
         gateway: submittedGateway,
       });
       checkoutAttemptId = resolvedAttempt.attemptId;
+      checkoutOperationRef.current = "finalize";
       cartResponse = await CartService.finalizeCart({
         ...finalizeData,
         gateway: resolvedAttempt.gateway || submittedGateway,
@@ -1679,6 +1702,7 @@ function ShoppingCartBillForm({}: Props) {
       setOrderNumber(cartResponse.orderId.toString());
       persistCheckoutOrder(cartResponse.orderId);
 
+      checkoutOperationRef.current = "handoff";
       if (cartResponse.redirectUrl && cartResponse.redirectUrl.trim() !== "") {
         trackAnalyticsEvent({
           category: "checkout",
@@ -1858,8 +1882,8 @@ function ShoppingCartBillForm({}: Props) {
           );
         }
       } else {
-        const normalizedError = err?.message ? String(err.message).toLowerCase() : "";
-        trackCheckoutError(normalizedError.includes("network") ? "NETWORK_ERROR" : "UNKNOWN_ERROR");
+        const diagnostics = checkoutFailureDiagnostics(err, checkoutOperationRef.current);
+        trackCheckoutError(diagnostics.errorCode, undefined, undefined, err);
         displayError = getUserFacingErrorMessage(err, "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.");
       }
 

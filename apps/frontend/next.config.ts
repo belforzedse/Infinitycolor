@@ -175,6 +175,7 @@ const nextConfig = {
     remotePatterns: getNextImageRemotePatterns(),
   },
   experimental: {
+    serverSourceMaps: true,
     useOffline: true,
     turbopackRustReactCompiler: process.env.NODE_ENV !== "test",
     exposeTestingApiInProductionBuild: process.env.NEXT_INSTANT_TESTS === "true",

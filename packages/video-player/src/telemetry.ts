@@ -49,13 +49,23 @@ export interface VideoPlaybackError {
   device: "mobile" | "desktop";
   host: string;
   path: string;
+  attemptedEngines?: PlaybackEngine[];
+}
+
+export interface PlaybackDiagnostics {
+  engine: PlaybackEngine;
+  host: string;
+  path: string;
+  attemptedEngines: PlaybackEngine[];
 }
 
 export type VideoTelemetryEvent = VideoPlaybackSummary | VideoPlaybackError;
 
 let sink: ((event: VideoTelemetryEvent) => void) | null = null;
 
-export function setVideoTelemetrySink(next: ((event: VideoTelemetryEvent) => void) | null): void {
+export function setVideoTelemetrySink(
+  next: ((event: VideoTelemetryEvent) => void) | null,
+): void {
   sink = next;
 }
 
@@ -67,7 +77,9 @@ export function emitVideoTelemetry(event: VideoTelemetryEvent): void {
   }
 }
 
-export function browserFamily(userAgent = typeof navigator !== "undefined" ? navigator.userAgent : ""): string {
+export function browserFamily(
+  userAgent = typeof navigator !== "undefined" ? navigator.userAgent : "",
+): string {
   const ua = userAgent.toLowerCase();
   if (ua.includes("instagram")) return "instagram-webview";
   if (ua.includes("samsungbrowser")) return "samsung";
@@ -84,21 +96,27 @@ export function deviceClass(): "mobile" | "desktop" {
   } catch {
     // ignore
   }
-  return /mobi|android|iphone|ipad/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "")
+  return /mobi|android|iphone|ipad/i.test(
+    typeof navigator !== "undefined" ? navigator.userAgent : "",
+  )
     ? "mobile"
     : "desktop";
 }
 
 export function describeUrl(url: string): { host: string; path: string } {
   try {
-    const parsed = new URL(url, typeof window !== "undefined" ? window.location.href : "http://localhost");
+    const parsed = new URL(
+      url,
+      typeof window !== "undefined" ? window.location.href : "http://localhost",
+    );
     return { host: parsed.host, path: parsed.pathname };
   } catch {
     return { host: "", path: "" };
   }
 }
 
-const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+const now = () =>
+  typeof performance !== "undefined" ? performance.now() : Date.now();
 
 /** Accumulates one view's timings; `finish()` returns the summary exactly once. */
 export class PlaybackSession {
@@ -115,16 +133,33 @@ export class PlaybackSession {
   private failure: VideoFailureKind | null = null;
   private fellBack = false;
   private finished = false;
+  private attemptedEngines: PlaybackEngine[];
 
   constructor(
     private readonly surface: string,
     private engine: PlaybackEngine,
-    private readonly url: string,
-  ) {}
+    private url: string,
+  ) {
+    this.attemptedEngines = [engine];
+  }
 
-  setEngine(engine: PlaybackEngine, fellBack: boolean): void {
+  setEngine(engine: PlaybackEngine, fellBack: boolean, url = this.url): void {
     this.engine = engine;
+    this.url = url;
+    if (
+      this.attemptedEngines[this.attemptedEngines.length - 1] !== engine &&
+      this.attemptedEngines.length < 3
+    )
+      this.attemptedEngines.push(engine);
     this.fellBack ||= fellBack;
+  }
+
+  get diagnostics(): PlaybackDiagnostics {
+    return {
+      engine: this.engine,
+      ...describeUrl(this.url),
+      attemptedEngines: [...this.attemptedEngines],
+    };
   }
 
   requested(): void {
@@ -188,7 +223,9 @@ export class PlaybackSession {
     this.finished = true;
     this.paused();
     const startupMs =
-      this.firstFrameAt !== null ? Math.max(0, Math.round(this.firstFrameAt - this.requestedAt)) : null;
+      this.firstFrameAt !== null
+        ? Math.max(0, Math.round(this.firstFrameAt - this.requestedAt))
+        : null;
     return {
       type: "summary",
       surface: this.surface,
@@ -209,7 +246,11 @@ export class PlaybackSession {
     };
   }
 
-  error(failure: VideoFailureKind, detail: string, fatal: boolean): VideoPlaybackError {
+  error(
+    failure: VideoFailureKind,
+    detail: string,
+    fatal: boolean,
+  ): VideoPlaybackError {
     if (fatal) this.failed(failure);
     const { host, path } = describeUrl(this.url);
     return {
@@ -223,6 +264,7 @@ export class PlaybackSession {
       device: deviceClass(),
       host,
       path,
+      attemptedEngines: [...this.attemptedEngines],
     };
   }
 }

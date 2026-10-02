@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { updateRouteHint } from "@repo/auth-core/browser";
 import { useSetAtom } from "jotai";
 import { currentUserAtom, userLoadingAtom, userErrorAtom } from "@/lib/atoms/auth";
 import { addressesAtom, addressesLoadingAtom, addressesErrorAtom } from "@/atoms/addressesAtom";
@@ -25,7 +26,9 @@ import {
   centralAuthOrigin,
   initializeCentralAuthBrowser,
   subscribeToAuthState,
+  readAuthStateVersion,
 } from "@/lib/central-auth";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import { clearUserStorage } from "@/utils/userStorage";
 import { isProfileIncomplete } from "@/utils/profile";
 import { isAuthRequiredRoute } from "@/utils/routeAccessPolicy";
@@ -52,15 +55,11 @@ function clearIdentityState() {
   clearUserStorage();
 }
 
-async function clearStaleRouteHint(): Promise<void> {
+async function clearStaleRouteHint(isCurrent: () => boolean): Promise<void> {
   const protectedRoute = isAuthRequiredRoute(window.location.pathname);
-  await fetch("/api/auth/route-hint", {
-    method: protectedRoute ? "POST" : "DELETE",
-    credentials: "same-origin",
-    cache: "no-store",
-  }).catch(() => undefined);
+  await updateRouteHint(protectedRoute ? "POST" : "DELETE").catch(() => undefined);
 
-  if (protectedRoute) {
+  if (protectedRoute && isCurrent()) {
     const login = new URL("/auth", centralAuthOrigin);
     login.searchParams.set("returnTo", window.location.href);
     window.location.replace(login.toString());
@@ -79,28 +78,41 @@ export default function AuthInitializer() {
   useEffect(() => {
     if (window.location.pathname === "/auth/complete") return;
     let active = true;
+    let operationVersion = 0;
     initializeCentralAuthBrowser();
 
     const restore = async (forceRefresh = false) => {
       if (!active) return;
+      const operation = ++operationVersion;
+      const identity = readAuthStateVersion();
+      const isCurrent = () =>
+        active && operation === operationVersion && identity === readAuthStateVersion();
       setIsLoading(true);
       try {
-        const token = await centralAuth.tokenManager.getToken({ forceRefresh });
-        if (!active) return;
-        if (!token) {
+        const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh });
+        if (!isCurrent() || outcome.state === "invalidated") return;
+        logDiagnostic("auth.recovery", {
+          operation: "initialize",
+          outcome: outcome.state,
+          ...(outcome.state === "unavailable"
+            ? { reasonCode: outcome.reasonCode, http_status: outcome.status }
+            : {}),
+        });
+        if (outcome.state === "unavailable") {
+          setError(new Error("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید."));
+          return;
+        }
+        if (outcome.state === "unauthenticated") {
           clearIdentityState();
-          await clearStaleRouteHint();
+          await clearStaleRouteHint(isCurrent);
           return;
         }
         const me = await UserService.me();
-        if (!active) return;
+        if (!isCurrent()) return;
         if (!me.isAdmin && isProfileIncomplete(me)) {
           clearIdentityState();
-          await fetch("/api/auth/route-hint", {
-            method: "DELETE",
-            credentials: "same-origin",
-            cache: "no-store",
-          }).catch(() => undefined);
+          await updateRouteHint("DELETE").catch(() => undefined);
+          if (!isCurrent()) return;
           const completion = new URL("/auth/register/info", centralAuthOrigin);
           completion.searchParams.set("returnTo", window.location.href);
           window.location.replace(completion.toString());
@@ -109,7 +121,7 @@ export default function AuthInitializer() {
         setUser(me);
         setError(null);
       } catch (cause) {
-        if (!active) return;
+        if (!isCurrent()) return;
         const error = cause instanceof Error ? cause : new Error("Failed to restore session");
         setError(error);
         const status =
@@ -117,12 +129,14 @@ export default function AuthInitializer() {
             ? Number((cause as { status?: unknown }).status)
             : undefined;
         if (status === HTTP_STATUS.UNAUTHORIZED) {
-          centralAuth.tokenManager.expire();
-          clearIdentityState();
-          await clearStaleRouteHint();
+          const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
+          if (isCurrent() && outcome.state === "unauthenticated") {
+            clearIdentityState();
+            await clearStaleRouteHint(isCurrent);
+          }
         }
       } finally {
-        if (active) setIsLoading(false);
+        if (isCurrent()) setIsLoading(false);
       }
     };
 
@@ -143,23 +157,42 @@ export default function AuthInitializer() {
       lastRevalidatedAt = now;
 
       void (async () => {
-        const token = await centralAuth.tokenManager
-          .getToken({ forceRefresh: true })
-          .catch(() => null);
-        if (!active || token) return;
+        const operation = operationVersion;
+        const identity = readAuthStateVersion();
+        const isCurrent = () =>
+          active && operation === operationVersion && identity === readAuthStateVersion();
+        const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
+        if (!isCurrent() || outcome.state === "invalidated") return;
+        logDiagnostic("auth.recovery", {
+          operation: "focus",
+          outcome: outcome.state,
+          ...(outcome.state === "unavailable"
+            ? { reasonCode: outcome.reasonCode, http_status: outcome.status }
+            : {}),
+        });
+        if (outcome.state !== "unauthenticated") return;
+        operationVersion += 1;
+        const clearedOperation = operationVersion;
         clearIdentityState();
-        await clearStaleRouteHint();
+        setIsLoading(false);
+        await clearStaleRouteHint(
+          () =>
+            active && clearedOperation === operationVersion && identity === readAuthStateVersion(),
+        );
       })();
     };
 
     void restore();
     document.addEventListener("visibilitychange", revalidateOnFocus);
     const unsubscribe = subscribeToAuthState((event) => {
+      operationVersion += 1;
       if (event.type === "logout") {
         clearIdentityState();
         setIsLoading(false);
         return;
       }
+      // An explicit identity change cannot expose the previous user's data.
+      clearIdentityState();
       void restore(true);
     });
     return () => {

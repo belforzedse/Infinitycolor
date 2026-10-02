@@ -25,6 +25,7 @@ export function ensureVideoTelemetry(): void {
           video_surface: event.surface,
           video_engine: event.engine,
           video_failure: event.failure,
+          retry_count: Math.max(0, (event.attemptedEngines?.length ?? 1) - 1),
         },
       );
     }
@@ -42,6 +43,7 @@ export function ensureVideoTelemetry(): void {
           path: event.path,
           browser: event.browser,
           device: event.device,
+          attemptedEngines: event.attemptedEngines,
         },
       });
     }

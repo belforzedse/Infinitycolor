@@ -4,7 +4,8 @@ import { errorNotificationsAtom, addErrorNotification } from "@/lib/atoms/errors
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { clearAccessToken } from "@/utils/accessToken";
-import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import { centralAuth, centralLoginUrl, readAuthStateVersion } from "@/lib/central-auth";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import { safeInternalRedirect } from "@/utils/authRedirect";
 import { isAuthRequiredRoute } from "@/utils/routeAccessPolicy";
 import { clearUserStorage } from "@/utils/userStorage";
@@ -22,15 +23,24 @@ let pendingAuthRedirect: string | null = null;
  * doesn't wipe an in-progress form for a session that is actually fine.
  */
 async function handleUnauthorized(error: any, isJest: unknown): Promise<void> {
-  const refreshed = await centralAuth.tokenManager
-    .getToken({ forceRefresh: true })
-    .catch(() => null);
+  const identity = readAuthStateVersion();
+  const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
+  if (identity !== readAuthStateVersion() || outcome.state === "invalidated") return;
+  logDiagnostic("auth.recovery", {
+    operation: "unauthorized",
+    outcome: outcome.state,
+    ...(outcome.state === "unavailable"
+      ? { reasonCode: outcome.reasonCode, http_status: outcome.status }
+      : {}),
+  });
 
-  if (refreshed) {
+  if (outcome.state !== "unauthenticated") {
     if (!isJest) {
       const notification = addErrorNotification(
         401,
-        "نشست شما به‌روزرسانی شد. لطفاً دوباره تلاش کنید.",
+        outcome.state === "authenticated"
+          ? "نشست شما به‌روزرسانی شد. لطفاً دوباره تلاش کنید."
+          : "بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.",
       );
       jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
     }
@@ -71,10 +81,7 @@ async function handleUnauthorized(error: any, isJest: unknown): Promise<void> {
  * 403 (Forbidden): Shows notification explaining permission denied
  * isAdminCheck: Shows notification instead of redirecting
  */
-export const handleAuthErrors = (
-  error?: any,
-  isAdminCheck?: boolean,
-): void | Promise<void> => {
+export const handleAuthErrors = (error?: any, isAdminCheck?: boolean): void | Promise<void> => {
   // TODO: Replace `any` with a specific error type for stricter checking
   const isUnauthorized = error?.status === HTTP_STATUS.UNAUTHORIZED;
   const isForbidden = error?.status === HTTP_STATUS.FORBIDDEN;
@@ -113,10 +120,7 @@ export const handleAuthErrors = (
 
   // isNotAdmin: Not an admin user
   if (isNotAdmin && !isJest) {
-    const notification = addErrorNotification(
-      403,
-      "این صفحه فقط برای مدیران در دسترس است.",
-    );
+    const notification = addErrorNotification(403, "این صفحه فقط برای مدیران در دسترس است.");
     jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
   }
 };

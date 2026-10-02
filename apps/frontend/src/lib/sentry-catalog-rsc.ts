@@ -14,12 +14,14 @@ type CatalogErrorLike = {
 type SentryScopeLike = {
   setTag: (key: string, value: string) => void;
   setFingerprint: (fingerprint: string[]) => void;
+  setContext?: (key: string, value: Record<string, string>) => void;
 };
 
 /** Matches Sentry `Primitive` so `beforeSend(event: ErrorEvent)` can return `T`. */
 type SentryTagValue = string | number | boolean | bigint | symbol | null | undefined;
 
 type SentryEventLike = {
+  contexts?: Record<string, Record<string, unknown> | undefined>;
   fingerprint?: string[];
   tags?: { [key: string]: SentryTagValue };
   transaction?: string;
@@ -101,6 +103,10 @@ export function applyCatalogRscSentryScope(
   errorContext?: unknown,
 ): void {
   const { name, digest } = catalogErrorFields(error);
+  const requestId =
+    error && typeof error === "object" && "requestId" in error ? error.requestId : undefined;
+  if (typeof requestId === "string" && /^[a-zA-Z0-9_.:-]{1,100}$/.test(requestId))
+    scope.setContext?.("catalog_correlation", { request_id: requestId });
   if (typeof digest === "string" && digest) scope.setTag("next_error_digest", digest);
   if (name) scope.setTag("error_name", name);
   const code = catalogErrorCode(error);
@@ -123,7 +129,14 @@ export function applyCatalogRscEvent<T extends SentryEventLike>(
     event.fingerprint = fingerprint;
   }
 
-  const { name, digest } = catalogErrorFields(hint?.originalException);
+  const original = hint?.originalException;
+  const requestId =
+    original && typeof original === "object" && "requestId" in original
+      ? original.requestId
+      : undefined;
+  if (typeof requestId === "string" && /^[a-zA-Z0-9_.:-]{1,100}$/.test(requestId))
+    event.contexts = { ...event.contexts, catalog_correlation: { request_id: requestId } };
+  const { name, digest } = catalogErrorFields(original);
   const code = catalogErrorCode(hint?.originalException);
   event.tags = event.tags || {};
   if (typeof digest === "string" && digest) event.tags.next_error_digest = digest;

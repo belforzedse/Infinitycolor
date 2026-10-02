@@ -55,9 +55,24 @@ jest.mock("@/lib/analytics", () => ({
 }));
 
 jest.mock("@/lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async (options: unknown) => {
+        try {
+          const token = await (
+            jest.requireMock("@/lib/central-auth") as {
+              centralAuth: {
+                tokenManager: { getToken: (options: unknown) => Promise<string | null> };
+              };
+            }
+          ).centralAuth.tokenManager.getToken(options);
+          return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+        } catch (error) {
+          return { state: "unavailable", reasonCode: "network" };
+        }
+      }),
     },
   },
   subscribeToAuthState: jest.fn(),
@@ -99,10 +114,14 @@ const cartItem: CartItem = {
 };
 
 function CartProbe() {
-  const { cartItems, removeFromCart } = useCart();
+  const { cartItems, removeFromCart, isCartReady, authRecoveryUnavailable, retryAuthRecovery } =
+    useCart();
 
   return (
     <div>
+      <span data-testid="cart-ready">{String(isCartReady)}</span>
+      <span data-testid="auth-unavailable">{String(authRecoveryUnavailable)}</span>
+      <button onClick={retryAuthRecovery}>retry auth</button>
       <span data-testid="cart-count">{cartItems.length}</span>
       <span data-testid="cart-names">{cartItems.map((item) => item.name).join("|")}</span>
       <button type="button" onClick={() => removeFromCart(cartItem.id)}>
@@ -381,6 +400,45 @@ describe("CartProvider identity and storage hardening", () => {
     mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
     mockCartService.checkCartStock.mockResolvedValue({ valid: true });
     localStorage.clear();
+  });
+
+  it("does not initialize or overwrite a guest cart during temporary auth failure", async () => {
+    const stored = JSON.stringify([cartItem]);
+    localStorage.setItem("cart", stored);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValueOnce(
+      new Error("temporary network failure"),
+    );
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("auth-unavailable")).toHaveTextContent("true"));
+    expect(screen.getByTestId("cart-ready")).toHaveTextContent("false");
+    expect(localStorage.getItem("cart")).toBe(stored);
+    expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "retry auth" }));
+    await waitFor(() => expect(screen.getByTestId("cart-ready")).toHaveTextContent("true"));
+    expect(screen.getByTestId("cart-count")).toHaveTextContent("1");
+  });
+
+  it("discards a token result arriving after explicit logout", async () => {
+    let resolve!: (value: string) => void;
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockImplementationOnce(
+      () =>
+        new Promise<string>((r) => {
+          resolve = r;
+        }),
+    );
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+    act(() => mockAuthStateListener?.({ type: "logout", at: Date.now() }));
+    await act(async () => resolve("old-account"));
+    await waitFor(() => expect(screen.getByTestId("cart-ready")).toHaveTextContent("true"));
+    expect(mockCartService.getUserCart).not.toHaveBeenCalled();
   });
 
   it("discards malformed guest cart storage without crashing", async () => {
@@ -712,7 +770,9 @@ describe("CartProvider login-time stock correction", () => {
       <div>
         <span data-testid="loading">{String(isLoading)}</span>
         <span data-testid="count">{cartItems.length}</span>
-        <span data-testid="notice">{stockNotice ? stockNotice.removedNames.join("|") : "none"}</span>
+        <span data-testid="notice">
+          {stockNotice ? stockNotice.removedNames.join("|") : "none"}
+        </span>
       </div>
     );
   }
@@ -730,7 +790,14 @@ describe("CartProvider login-time stock correction", () => {
       success: true,
       valid: false,
       cartIsEmpty: true,
-      itemsRemoved: [{ cartItemId: 7, productVariationId: 9, productTitle: "E2E Fixture Product S17", reason: "inactive" }],
+      itemsRemoved: [
+        {
+          cartItemId: 7,
+          productVariationId: 9,
+          productTitle: "E2E Fixture Product S17",
+          reason: "inactive",
+        },
+      ],
     });
     mockCartService.getUserCart.mockResolvedValue({ id: 1, cart_items: [] });
 

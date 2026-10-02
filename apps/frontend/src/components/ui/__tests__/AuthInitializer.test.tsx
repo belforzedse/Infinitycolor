@@ -16,9 +16,24 @@ jest.mock("../../../services/user", () => ({
 
 jest.mock("../../../lib/central-auth", () => ({
   centralAuthOrigin: "http://localhost:2889",
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async (options: unknown) => {
+        try {
+          const token = await (
+            jest.requireMock("../../../lib/central-auth") as {
+              centralAuth: {
+                tokenManager: { getToken: (options: unknown) => Promise<string | null> };
+              };
+            }
+          ).centralAuth.tokenManager.getToken(options);
+          return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+        } catch (error) {
+          return { state: "unavailable", reasonCode: "network" };
+        }
+      }),
       expire: jest.fn(),
     },
   },
@@ -70,6 +85,48 @@ describe("AuthInitializer", () => {
       .mockResolvedValue({ ok: true, status: 204 } as Response) as jest.MockedFunction<
       typeof fetch
     >;
+  });
+
+  it("preserves known identity when token acquisition is temporarily unavailable", async () => {
+    const user = buildUser();
+    jotaiStore.set(currentUserAtom, user);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValueOnce(
+      new Error("network unavailable"),
+    );
+    await act(async () => {
+      render(
+        <Provider store={jotaiStore}>
+          <AuthInitializer />
+        </Provider>,
+      );
+    });
+    expect(jotaiStore.get(currentUserAtom)).toEqual(user);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockedMe).not.toHaveBeenCalled();
+  });
+
+  it("does not restore a delayed profile after logout", async () => {
+    let resolve!: (value: MeResponse) => void;
+    mockedMe.mockImplementationOnce(
+      () =>
+        new Promise<MeResponse>((r) => {
+          resolve = r;
+        }),
+    );
+    await act(async () => {
+      render(
+        <Provider store={jotaiStore}>
+          <AuthInitializer />
+        </Provider>,
+      );
+    });
+    act(() =>
+      window.dispatchEvent(
+        new CustomEvent(AUTH_STATE_EVENT, { detail: { type: "logout", at: Date.now() } }),
+      ),
+    );
+    await act(async () => resolve(buildUser()));
+    expect(jotaiStore.get(currentUserAtom)).toBeNull();
   });
 
   it("clears a stale route hint when no central session exists", async () => {
@@ -224,8 +281,7 @@ describe("AuthInitializer", () => {
     });
     await waitFor(() => expect(jotaiStore.get(currentUserAtom)).not.toBeNull());
 
-    const callsAfterMount =
-      mockedCentralAuth.centralAuth.tokenManager.getToken.mock.calls.length;
+    const callsAfterMount = mockedCentralAuth.centralAuth.tokenManager.getToken.mock.calls.length;
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
       document.dispatchEvent(new Event("visibilitychange"));
@@ -235,5 +291,51 @@ describe("AuthInitializer", () => {
     expect(mockedCentralAuth.centralAuth.tokenManager.getToken).toHaveBeenCalledTimes(
       callsAfterMount,
     );
+  });
+  it.each([
+    new TypeError("Failed to fetch"),
+    new DOMException("timed out", "AbortError"),
+    { status: 503 },
+  ])("preserves identity on a failed focus check: %s", async (cause) => {
+    const existing = buildUser({ id: 27 });
+    mockedMe.mockResolvedValueOnce(existing);
+    render(
+      <Provider store={jotaiStore}>
+        <AuthInitializer />
+      </Provider>,
+    );
+    await waitFor(() => expect(jotaiStore.get(currentUserAtom)).toEqual(existing));
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValueOnce(cause);
+    const clock = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    clock.mockRestore();
+    expect(jotaiStore.get(currentUserAtom)).toEqual(existing);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+  it("discards a profile response that resolves after logout", async () => {
+    let finish!: (value: MeResponse) => void;
+    mockedMe.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(
+      <Provider store={jotaiStore}>
+        <AuthInitializer />
+      </Provider>,
+    );
+    await waitFor(() => expect(mockedMe).toHaveBeenCalled());
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(AUTH_STATE_EVENT, { detail: { type: "logout", at: Date.now() } }),
+      );
+    });
+    await act(async () => {
+      finish(buildUser({ id: 91 }));
+    });
+    expect(jotaiStore.get(currentUserAtom)).toBeNull();
   });
 });

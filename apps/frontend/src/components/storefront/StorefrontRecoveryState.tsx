@@ -7,6 +7,7 @@ import {
   canRetryStorefrontError,
   retryStorefrontError,
   reportStorefrontError,
+  exhaustStorefrontRecovery,
   RECOVERY_WINDOW_MS,
 } from "@/lib/storefront-recovery";
 
@@ -58,7 +59,7 @@ export default function StorefrontRecoveryState({
     // A retry that never commits must not leave a blank page indefinitely.
     const timeout = window.setTimeout(() => {
       setAutoRetrying(false);
-      reportStorefrontError(error, surface);
+      exhaustStorefrontRecovery(error, surface);
     }, RECOVERY_WINDOW_MS);
     return () => window.clearTimeout(timeout);
   }, [autoRetrying, error, surface]);

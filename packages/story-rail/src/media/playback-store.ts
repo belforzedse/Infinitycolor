@@ -52,6 +52,8 @@ export interface StoryMediaIssue {
   failure: MediaFailureKind;
   /** HTMLMediaElement.error.code, when the browser supplied one. */
   mediaErrorCode: number | null;
+  videoEngine?: "mp4" | "webm" | "native-hls" | "hls.js";
+  attemptedEngines?: string[];
 }
 
 export type StoryMediaIssueReporter = (issue: StoryMediaIssue) => void;
@@ -86,9 +88,15 @@ export function createAudioPreference(): StoryAudioPreference {
   };
 }
 
-export function createPlaybackStore(reportIssue?: StoryMediaIssueReporter): StoryPlaybackStore {
+export function createPlaybackStore(
+  reportIssue?: StoryMediaIssueReporter,
+): StoryPlaybackStore {
   const listeners = new Set<() => void>();
-  let snapshot: StoryPlaybackSnapshot = { progress: 0, itemId: null, readyForNext: null };
+  let snapshot: StoryPlaybackSnapshot = {
+    progress: 0,
+    itemId: null,
+    readyForNext: null,
+  };
 
   return {
     publishProgress(itemId: string, progress: number) {
@@ -117,16 +125,24 @@ export function createPlaybackStore(reportIssue?: StoryMediaIssueReporter): Stor
   };
 }
 
-export const StoryPlaybackContext = createContext<StoryPlaybackStore | null>(null);
+export const StoryPlaybackContext = createContext<StoryPlaybackStore | null>(
+  null,
+);
 
 export function useStoryPlaybackStore(): StoryPlaybackStore | null {
   return useContext(StoryPlaybackContext);
 }
 
 /** Splits a resolved media URL into the parts that are safe to log. */
-export function describeMediaUrl(url: string): { mediaHost: string; mediaPath: string } {
+export function describeMediaUrl(url: string): {
+  mediaHost: string;
+  mediaPath: string;
+} {
   try {
-    const parsed = new URL(url, typeof window === "undefined" ? "http://localhost" : window.location.href);
+    const parsed = new URL(
+      url,
+      typeof window === "undefined" ? "http://localhost" : window.location.href,
+    );
     return { mediaHost: parsed.host, mediaPath: parsed.pathname };
   } catch {
     return { mediaHost: "", mediaPath: "" };

@@ -133,6 +133,7 @@ RUN --mount=type=cache,id=infinity-frontend-next-16.3.2-node22,target=/repo/apps
     SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" pnpm run build
 RUN grep -q '"/api/_health/route"' .next/server/app-paths-manifest.json
 RUN node scripts/check-sentry-server-hook.mjs
+RUN node scripts/check-sentry-server-maps.mjs
 RUN node scripts/check-sentry-probe-exclusion.mjs
 
 FROM docker.arvancloud.ir/library/node:22-alpine AS runner

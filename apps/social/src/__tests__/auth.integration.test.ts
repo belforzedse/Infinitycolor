@@ -52,10 +52,14 @@ describe("Infinitygram authentication flows", () => {
   beforeEach(() => {
     localStorage.clear();
     jotaiStore.set(currentUserAtom, null);
-    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.centralAuth.tokenManager.getToken
+      .mockReset()
+      .mockResolvedValue(null);
     mockedCentralAuth.centralAuth.tokenManager.expire.mockReset();
     mockedCentralAuth.centralAuth.tokenManager.clearForLogout.mockReset();
-    mockedCentralAuth.centralAuth.tokenManager.peek.mockReset().mockReturnValue(null);
+    mockedCentralAuth.centralAuth.tokenManager.peek
+      .mockReset()
+      .mockReturnValue(null);
     mockedCentralAuth.clearCentralAuthForLogout.mockReset();
   });
 
@@ -66,14 +70,18 @@ describe("Infinitygram authentication flows", () => {
       json: async () => ({}),
     });
 
-    await expect(apiClient.get("/protected")).rejects.toEqual({
+    await expect(apiClient.get("/protected")).rejects.toMatchObject({
       message: ERROR_MESSAGES.DEFAULT,
       status: HTTP_STATUS.UNAUTHORIZED,
       errors: undefined,
     });
 
-    expect(mockedCentralAuth.clearCentralAuthForLogout).toHaveBeenCalledTimes(1);
-    expect(mockedCentralAuth.centralAuth.tokenManager.expire).toHaveBeenCalledTimes(1);
+    expect(mockedCentralAuth.clearCentralAuthForLogout).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(
+      mockedCentralAuth.centralAuth.tokenManager.expire,
+    ).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("accessToken")).toBeNull();
   });
 
@@ -92,7 +100,7 @@ describe("Infinitygram authentication flows", () => {
       json: async () => ({ error: { message: "Forbidden" } }),
     });
 
-    await expect(apiClient.get("/posts")).rejects.toEqual({
+    await expect(apiClient.get("/posts")).rejects.toMatchObject({
       message: "Forbidden",
       status: HTTP_STATUS.FORBIDDEN,
       errors: undefined,
