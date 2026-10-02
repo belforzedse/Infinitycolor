@@ -35,6 +35,9 @@ const nextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   reactCompiler: true,
+  // Native IDs omit some server chunks in the installed Turbopack build.
+  // Let the existing Sentry post-build hook inject matching IDs into all artifacts.
+  turbopack: { debugIds: false },
   cacheHandlers: {
     remote: require.resolve("./cache-handlers/redis-remote.cjs"),
   },

@@ -12,8 +12,9 @@ function visit(directory) {
       const map = JSON.parse(readFileSync(path, "utf8"));
       const source = path.slice(0, -4);
       if (!existsSync(source)) continue;
+      const sources = map.sources?.filter((value) => !value.includes("node_modules")) ?? [];
       const firstParty = required.filter((name) =>
-        map.sources?.some((value) => value.replaceAll("\\", "/").includes(name)),
+        sources.some((value) => value.replaceAll("\\", "/").includes(name)),
       );
       const debugId = map.debugId || map.debug_id;
       if (
@@ -24,7 +25,7 @@ function visit(directory) {
         throw new Error(`Server source map Debug ID does not match ${item.name}`);
       matchingMaps += 1;
       for (const name of required)
-        if (map.sources?.some((value) => value.replaceAll("\\", "/").includes(name)))
+        if (sources.some((value) => value.replaceAll("\\", "/").includes(name)))
           covered.add(name);
     }
   }
