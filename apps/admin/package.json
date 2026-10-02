@@ -25,7 +25,7 @@
     "@repo/brand": "workspace:*",
     "@repo/fonts": "workspace:*",
     "@repo/ui": "workspace:*",
-    "@sentry/nextjs": "^10.51.0",
+    "@sentry/nextjs": "10.75.3",
     "@tanstack/react-table": "8.21.2",
     "@tanstack/table-core": "8.21.2",
     "@tiptap/extension-code-block-lowlight": "3.11.0",

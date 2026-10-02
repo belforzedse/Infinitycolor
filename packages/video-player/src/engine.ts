@@ -1,11 +1,31 @@
 /// <reference path="./hls-light.d.ts" />
 import type Hls from "hls.js";
 import type { ErrorData } from "hls.js";
-import { canPlayWebm, chooseEngine, openHlsCircuit, type PlaybackEngine } from "./capabilities";
+import {
+  canPlayWebm,
+  chooseEngine,
+  openHlsCircuit,
+  type PlaybackEngine,
+} from "./capabilities";
 import type { VideoSource } from "./delivery";
-import { DECODE_PROBE_ATTEMPTS, DECODE_PROBE_MS, hasDecodableVideoTrack, watchFirstFrame } from "./frames";
-import { buildHlsConfig, levelCapForPlayer, readBandwidthEstimate, recordBandwidthEstimate } from "./hls-config";
-import { emitVideoTelemetry, PlaybackSession, type VideoFailureKind } from "./telemetry";
+import {
+  DECODE_PROBE_ATTEMPTS,
+  DECODE_PROBE_MS,
+  hasDecodableVideoTrack,
+  watchFirstFrame,
+} from "./frames";
+import {
+  buildHlsConfig,
+  levelCapForPlayer,
+  readBandwidthEstimate,
+  recordBandwidthEstimate,
+} from "./hls-config";
+import {
+  emitVideoTelemetry,
+  PlaybackSession,
+  type VideoFailureKind,
+  type PlaybackDiagnostics,
+} from "./telemetry";
 
 /**
  * The single low-level playback layer: one engine per `<video>` element per source.
@@ -22,7 +42,10 @@ import { emitVideoTelemetry, PlaybackSession, type VideoFailureKind } from "./te
  * so surfaces act on `onFatal` instead.
  */
 
-export type EngineFailure = Exclude<VideoFailureKind, "autoplay-denied" | "hls-fallback" | "webm-fallback">;
+export type EngineFailure = Exclude<
+  VideoFailureKind,
+  "autoplay-denied" | "hls-fallback" | "webm-fallback"
+>;
 export type PlayOutcome = "playing" | "autoplay-denied" | "aborted" | "failed";
 
 export interface VideoEngineOptions {
@@ -39,6 +62,7 @@ export interface VideoEngineOptions {
 
 export interface VideoEngine {
   readonly engine: PlaybackEngine;
+  readonly diagnostics: PlaybackDiagnostics;
   readonly hasFirstFrame: boolean;
   /** Attaches the source. Idempotent. */
   load(): void;
@@ -67,10 +91,12 @@ let hlsLoader: Promise<typeof Hls> | null = null;
 
 /** Starts downloading hls.js ahead of the first HLS playback on a page. */
 export function preloadHls(): Promise<typeof Hls> {
-  hlsLoader ??= import("hls.js/light").then((module) => module.default).catch((error) => {
-    hlsLoader = null;
-    throw error;
-  });
+  hlsLoader ??= import("hls.js/light")
+    .then((module) => module.default)
+    .catch((error) => {
+      hlsLoader = null;
+      throw error;
+    });
   return hlsLoader;
 }
 
@@ -89,14 +115,26 @@ export function createVideoEngine(
   source: VideoSource,
   options: VideoEngineOptions,
 ): VideoEngine {
-  let engine = chooseEngine(source, { allowHls: options.allowHls ?? false, video });
-  const session = new PlaybackSession(options.surface, engine, source.mp4);
+  let engine = chooseEngine(source, {
+    allowHls: options.allowHls ?? false,
+    video,
+  });
+  const session = new PlaybackSession(
+    options.surface,
+    engine,
+    engine === "webm"
+      ? source.webm!
+      : engine === "mp4"
+        ? source.mp4
+        : source.hls!,
+  );
   let hls: Hls | null = null;
   let loaded = false;
   let disposed = false;
   let firstFrame = false;
   let fatal = false;
   let playIntent = false;
+  let sourceVersion = 0;
   let mp4NetworkRetries = 0;
   let webmAttempted = engine === "webm";
   let webmFallback = false;
@@ -140,7 +178,9 @@ export function createVideoEngine(
       if (disposed) return;
       if (engine === "webm" && webmFallback && !webmRecovered) {
         webmRecovered = true;
-        emitVideoTelemetry(session.error("webm-fallback", "first frame", false));
+        emitVideoTelemetry(
+          session.error("webm-fallback", "first frame", false),
+        );
       }
       if (firstFrame) return;
       firstFrame = true;
@@ -170,22 +210,30 @@ export function createVideoEngine(
   };
 
   const attachProgressive = (startAt = 0) => {
+    sourceVersion += 1;
     clearTimeout(decodeTimer);
     decodeChecks = 0;
+    const rate = video.playbackRate;
     video.src = engine === "webm" ? source.webm! : source.mp4;
     markAttached();
-    if (startAt > 0.1) {
-      const seek = () => {
-        video.removeEventListener("loadedmetadata", seek);
+    // load() resets the playback rate to defaultPlaybackRate in browser media engines.
+    // Restore user controls and the seek only for the currently attached source.
+    const version = sourceVersion;
+    const restore = () => {
+      video.removeEventListener("loadedmetadata", restore);
+      if (disposed || version !== sourceVersion) return;
+      video.playbackRate = rate;
+      if (startAt > 0.1) {
         try {
           video.currentTime = startAt;
         } catch {
-          // ignore: a seek before metadata can throw in older WebKit
+          /* Older WebKit may reject an early seek. */
         }
-      };
-      on("loadedmetadata", seek);
-    }
+      }
+    };
+    on("loadedmetadata", restore);
     video.load();
+    video.playbackRate = rate;
   };
 
   const destroyHls = () => {
@@ -201,26 +249,49 @@ export function createVideoEngine(
 
   const resumeIfWanted = () => {
     if (!playIntent || disposed) return;
+    const version = sourceVersion;
     const resume = () => {
-      if (!disposed && playIntent) video.play().catch((error: unknown) => {
-        if (disposed) return;
-        const name = (error as DOMException | undefined)?.name;
-        if (name === "NotSupportedError" && !fallBackToWebm()) reportFatal("decode-unsupported", "NotSupportedError after resume");
-        if (name === "NotAllowedError") emitVideoTelemetry(session.error("autoplay-denied", "NotAllowedError after resume", false));
-      });
+      if (!disposed && playIntent)
+        video.play().catch((error: unknown) => {
+          if (disposed || version !== sourceVersion) return;
+          const name = (error as DOMException | undefined)?.name;
+          if (name === "NotSupportedError" && !fallBackToWebm())
+            reportFatal("decode-unsupported", "NotSupportedError after resume");
+          else if (name === "NotAllowedError")
+            emitVideoTelemetry(
+              session.error(
+                "autoplay-denied",
+                "NotAllowedError after resume",
+                false,
+              ),
+            );
+          else if (name !== "NotSupportedError")
+            reportFatal("unknown", "play rejected after resume");
+        });
     };
-    const once = () => { video.removeEventListener("canplay", once); resume(); };
+    const once = () => {
+      video.removeEventListener("canplay", once);
+      resume();
+    };
     on("canplay", once);
   };
 
   const fallBackToWebm = (): boolean => {
-    if (disposed || fatal || engine !== "mp4" || webmAttempted || !source.webm || !canPlayWebm(video, source.hasAudio)) return false;
+    if (
+      disposed ||
+      fatal ||
+      engine !== "mp4" ||
+      webmAttempted ||
+      !source.webm ||
+      !canPlayWebm(video, source.hasAudio)
+    )
+      return false;
     webmAttempted = true;
     webmFallback = true;
     const position = video.currentTime;
     engine = "webm";
     mp4NetworkRetries = 0;
-    session.setEngine(engine, true);
+    session.setEngine(engine, true, source.webm!);
     options.onEngineChange?.(engine);
     attachProgressive(position);
     startFrameWatch();
@@ -233,7 +304,7 @@ export function createVideoEngine(
     const position = video.currentTime;
     destroyHls();
     engine = "mp4";
-    session.setEngine(engine, true);
+    session.setEngine(engine, true, source.mp4);
     emitVideoTelemetry(session.error("hls-fallback", reason, false));
     options.onEngineChange?.(engine);
     attachProgressive(position);
@@ -248,7 +319,10 @@ export function createVideoEngine(
    */
   const preflightPlaylist = async (): Promise<boolean> => {
     try {
-      const response = await fetch(source.hls!, { mode: "cors", credentials: "omit" });
+      const response = await fetch(source.hls!, {
+        mode: "cors",
+        credentials: "omit",
+      });
       if (response.ok) return true;
       fallBackToMp4(`manifest ${response.status}`);
       return false;
@@ -281,7 +355,8 @@ export function createVideoEngine(
       return;
     }
     if (data.type === HlsClass.ErrorTypes.MEDIA_ERROR) {
-      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const now =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
       // One recovery per 5 s window; a second media error that soon means recovery is not
       // helping and the MP4 is the better bet.
       if (now - lastMediaRecovery > 5_000) {
@@ -312,7 +387,9 @@ export function createVideoEngine(
     const instance = new HlsClass(buildHlsConfig(readBandwidthEstimate()));
     hls = instance;
     liveHlsInstances += 1;
-    instance.on(HlsClass.Events.ERROR, (_event, data) => onHlsError(HlsClass, data));
+    instance.on(HlsClass.Events.ERROR, (_event, data) =>
+      onHlsError(HlsClass, data),
+    );
     instance.on(HlsClass.Events.LEVEL_SWITCHED, (_event, data) => {
       session.level(instance.levels[data.level]?.height);
     });
@@ -325,7 +402,8 @@ export function createVideoEngine(
     instance.on(HlsClass.Events.MANIFEST_PARSED, () => {
       if (disposed || hls !== instance) return;
       const box = video.getBoundingClientRect();
-      const pixelRatio = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+      const pixelRatio =
+        typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
       const cap = levelCapForPlayer(instance.levels, box, pixelRatio);
       if (cap >= 0) instance.autoLevelCapping = cap;
       instance.startLoad();
@@ -339,7 +417,10 @@ export function createVideoEngine(
     // Under hls.js the element error is a symptom; hls.js reports the cause.
     if (engine === "hls.js") return;
     const code = video.error?.code ?? 0;
-    if (code === 1) return; // MEDIA_ERR_ABORTED: our own teardown/src swap
+    if (code === 1) {
+      reportFatal("unknown", "media abort without cancellation context");
+      return;
+    }
     if (engine === "native-hls") {
       fallBackToMp4(`native hls error ${code}`);
       return;
@@ -351,7 +432,14 @@ export function createVideoEngine(
       return;
     }
     if ((code === 3 || code === 4) && fallBackToWebm()) return;
-    reportFatal(code === 3 || code === 4 ? "decode-unsupported" : code === 2 ? "network" : "unknown", `media error ${code}`);
+    reportFatal(
+      code === 3 || code === 4
+        ? "decode-unsupported"
+        : code === 2
+          ? "network"
+          : "unknown",
+      `media error ${code}`,
+    );
   };
 
   on("error", onElementError);
@@ -365,6 +453,9 @@ export function createVideoEngine(
   on("ended", () => session.paused());
 
   return {
+    get diagnostics() {
+      return session.diagnostics;
+    },
     get engine() {
       return engine;
     },
@@ -382,7 +473,10 @@ export function createVideoEngine(
         video.src = source.hls!;
         markAttached();
         video.load();
-      } else if (video.getAttribute("src") === (engine === "webm" ? source.webm : source.mp4)) {
+      } else if (
+        video.getAttribute("src") ===
+        (engine === "webm" ? source.webm : source.mp4)
+      ) {
         // The owner rendered the MP4 declaratively, so the browser has been fetching it
         // since the element was created — for a lazily revealed viewer that is during the
         // render React holds back before the reveal, a few hundred ms before any effect
@@ -408,13 +502,13 @@ export function createVideoEngine(
         await attached;
         if (disposed) return "aborted";
       }
+      const version = sourceVersion;
       try {
         await video.play();
         return "playing";
       } catch (error) {
-        if (disposed) return "aborted";
+        if (disposed || version !== sourceVersion) return "aborted";
         const name = (error as DOMException | undefined)?.name;
-        if (name === "AbortError") return "aborted";
         if (name === "NotAllowedError") {
           if (!video.muted && mutedFallback) {
             video.muted = true;
@@ -422,16 +516,25 @@ export function createVideoEngine(
               await video.play();
               return "playing";
             } catch (retryError) {
-              if ((retryError as DOMException | undefined)?.name === "AbortError") return "aborted";
+              if (disposed || version !== sourceVersion) return "aborted";
+              if (
+                (retryError as DOMException | undefined)?.name !==
+                "NotAllowedError"
+              ) {
+                reportFatal("unknown", "muted play rejected");
+                return "failed";
+              }
             }
           }
-          emitVideoTelemetry(session.error("autoplay-denied", "NotAllowedError", false));
+          emitVideoTelemetry(
+            session.error("autoplay-denied", "NotAllowedError", false),
+          );
           return "autoplay-denied";
         }
         if (name === "NotSupportedError") {
           if (fallBackToWebm()) return "aborted";
           reportFatal("decode-unsupported", "NotSupportedError");
-        }
+        } else reportFatal("unknown", "play rejected");
         return "failed";
       }
     },
@@ -443,7 +546,8 @@ export function createVideoEngine(
       liveEngines -= 1;
       cancelFrameWatch();
       clearTimeout(decodeTimer);
-      for (const [type, handler] of listeners) video.removeEventListener(type, handler);
+      for (const [type, handler] of listeners)
+        video.removeEventListener(type, handler);
       const summary = session.finish();
       if (summary) emitVideoTelemetry(summary);
       try {

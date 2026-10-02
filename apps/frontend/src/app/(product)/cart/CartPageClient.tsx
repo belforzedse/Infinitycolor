@@ -7,6 +7,7 @@ import ShoppingCartMobileTable from "@/components/ShoppingCart/Table/Mobile";
 import CartSkeleton from "@/components/Skeletons/CartSkeleton";
 import EmptyShoppingCart from "@/components/ShoppingCart/Empty";
 import CartStockNotice from "@/components/ShoppingCart/CartStockNotice";
+import AuthRecoveryNotice from "@/components/ShoppingCart/AuthRecoveryNotice";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { ProductCardProps } from "@/components/Product/Card";
@@ -24,7 +25,7 @@ const OffersListHomePage = dynamic(() => import("@/components/PDP/OffersListHome
 });
 
 export default function CartPageClient() {
-  const { cartItems, isLoading } = useCart();
+  const { cartItems, isLoading, isCartReady, authRecoveryUnavailable } = useCart();
   const isCartShellReady = useCartShellReady();
   useEffect(() => {
     if (isCartShellReady && !isLoading && consumeCartScrollTop()) {
@@ -81,6 +82,13 @@ export default function CartPageClient() {
       },
     });
   }, [isLoading, cartItems, totalValue]);
+
+  if (!isCartReady && authRecoveryUnavailable)
+    return (
+      <PageContainer variant="wide">
+        <AuthRecoveryNotice />
+      </PageContainer>
+    );
 
   if (!isCartShellReady || isLoading) {
     return (

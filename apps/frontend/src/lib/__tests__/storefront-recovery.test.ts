@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import {
   completeStorefrontRecovery,
+  exhaustStorefrontRecovery,
   RECOVERY_WINDOW_MS,
   reportStorefrontError,
   retryStorefrontError,
@@ -70,4 +71,24 @@ it("does not claim recovery after navigation and permits another incident after 
   reportStorefrontError(error, "catalog");
   expect(Sentry.captureException).toHaveBeenCalledTimes(2);
   window.history.replaceState(null, "", "/");
+});
+
+it("does not let an old boundary timer report after a confirmed recovery", () => {
+  const error = new Error("Connection closed.");
+  retryStorefrontError(error, "catalog", jest.fn());
+  completeStorefrontRecovery("catalog");
+  now += RECOVERY_WINDOW_MS;
+  expect(exhaustStorefrontRecovery(error, "catalog")).toBe(false);
+  expect(Sentry.captureException).not.toHaveBeenCalled();
+});
+it("deduplicates the same digest across remounted boundaries", () => {
+  reportStorefrontError(
+    Object.assign(new Error("Connection closed."), { digest: "shared" }),
+    "catalog",
+  );
+  reportStorefrontError(
+    Object.assign(new Error("Connection closed."), { digest: "shared" }),
+    "root-layout",
+  );
+  expect(Sentry.captureException).toHaveBeenCalledTimes(1);
 });

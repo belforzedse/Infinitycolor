@@ -35,6 +35,9 @@ const nextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   reactCompiler: true,
+  // Native IDs omit some server chunks in the installed Turbopack build.
+  // Let the existing Sentry post-build hook inject matching IDs into all artifacts.
+  turbopack: { debugIds: false },
   cacheHandlers: {
     remote: require.resolve("./cache-handlers/redis-remote.cjs"),
   },
@@ -139,6 +142,10 @@ const nextConfig = {
   // Allow sitemap and other static generation to run longer during build (default 60s)
   staticPageGenerationTimeout: 180,
   compiler: {
+    async runAfterProductionCompile({ distDir }: { distDir: string }) {
+      const { prepareServerMapReferences } = require("./scripts/prepare-sentry-server-maps.cjs");
+      prepareServerMapReferences(path.join(distDir, "server"));
+    },
     removeConsole: process.env.NODE_ENV === "production",
     // Remove SDK-internal debug branches with Turbopack too. Structured Logs,
     // Issues, tracing and Replay do not depend on this debug-only build flag.
@@ -175,6 +182,7 @@ const nextConfig = {
     remotePatterns: getNextImageRemotePatterns(),
   },
   experimental: {
+    serverSourceMaps: true,
     useOffline: true,
     turbopackRustReactCompiler: process.env.NODE_ENV !== "test",
     exposeTestingApiInProductionBuild: process.env.NEXT_INSTANT_TESTS === "true",
@@ -198,7 +206,13 @@ module.exports = withSentryConfig(nextConfig, {
   project: process.env.SENTRY_PROJECT || "infinitycolor-frontend",
   sentryUrl: process.env.SENTRY_URL || "https://errors.alpagency.net",
   authToken: process.env.SENTRY_AUTH_TOKEN,
-  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN, deleteSourcemapsAfterUpload: true },
+  sourcemaps: {
+    disable: !process.env.SENTRY_AUTH_TOKEN,
+    // Server maps use the mandatory bounded upload inside the build-secret
+    // step. Keep the SDK's browser upload and public map deletion intact.
+    assets: [path.resolve(__dirname, ".next/static")],
+    deleteSourcemapsAfterUpload: true,
+  },
   widenClientFileUpload: true,
   release: { name: process.env.SENTRY_RELEASE || process.env.GITHUB_SHA },
 });

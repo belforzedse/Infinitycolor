@@ -9,7 +9,13 @@ import {
 } from "@repo/auth-core/browser";
 import { jotaiStore } from "@/lib/jotaiStore";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import { centralAuth, centralAuthOrigin, initializeCentralAuthBrowser } from "@/lib/central-auth";
+import {
+  centralAuth,
+  centralAuthOrigin,
+  initializeCentralAuthBrowser,
+  readAuthStateVersion,
+} from "@/lib/central-auth";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import UserService from "@/services/user";
 import { isProfileIncomplete } from "@/utils/profile";
 
@@ -31,17 +37,22 @@ export default function AuthCompleteClient({
     if (started.current === runKey) return;
     started.current = runKey;
     setFatal("");
+    let active = true;
+    initializeCentralAuthBrowser();
+    const identity = readAuthStateVersion();
+    const isCurrent = () => active && identity === readAuthStateVersion();
     const restore = async () => {
       try {
-        if (callbackError) {
+        if (callbackError && callbackError !== "grant_exchange_unavailable") {
           throw new AuthHandoffError("مجوز بازگشت معتبر نیست. دوباره وارد شوید.", 401);
         }
-        initializeCentralAuthBrowser();
         const token = await withTransientAuthRetry(() =>
           centralAuth.tokenManager.getToken({ forceRefresh: true }),
         );
+        if (!isCurrent()) return;
         if (!token) throw new AuthHandoffError("نشست فعال یافت نشد", 401);
         const me = await withTransientAuthRetry(() => UserService.me());
+        if (!isCurrent()) return;
 
         if (!me.isAdmin && isProfileIncomplete(me)) {
           const url = new URL("/auth/register/info", centralAuthOrigin);
@@ -51,12 +62,20 @@ export default function AuthCompleteClient({
         }
 
         await withTransientAuthRetry(() => updateRouteHint("PUT"));
+        if (!isCurrent()) return;
         jotaiStore.set(currentUserAtom, me);
         jotaiStore.set(userLoadingAtom, false);
         jotaiStore.set(userErrorAtom, null);
+        logDiagnostic("auth.recovery", { operation: "complete", outcome: "recovered" });
         const destination = returnPath !== "/" ? returnPath : "/account";
         window.location.replace(destination);
       } catch (cause) {
+        if (!isCurrent()) return;
+        logDiagnostic("auth.recovery", {
+          operation: "complete",
+          outcome: authErrorStatus(cause) === 401 ? "unauthenticated" : "unavailable",
+          http_status: authErrorStatus(cause),
+        });
         if (authErrorStatus(cause) !== 401) {
           setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
           return;
@@ -72,12 +91,17 @@ export default function AuthCompleteClient({
           setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
           return;
         }
+        if (!isCurrent()) return;
         const login = new URL("/auth", centralAuthOrigin);
         login.searchParams.set("returnTo", new URL(returnPath, window.location.origin).toString());
         window.location.replace(login.toString());
       }
     };
     void restore();
+    return () => {
+      active = false;
+      if (started.current === runKey) started.current = null;
+    };
   }, [attempt, callbackError, retryKey, returnPath]);
 
   return (

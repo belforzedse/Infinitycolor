@@ -1,6 +1,11 @@
 "use client";
 
-import { retryStorefrontError, reportStorefrontError, RECOVERY_WINDOW_MS } from "@/lib/storefront-recovery";
+import {
+  retryStorefrontError,
+  reportStorefrontError,
+  exhaustStorefrontRecovery,
+  RECOVERY_WINDOW_MS,
+} from "@/lib/storefront-recovery";
 import { useEffect, useRef } from "react";
 
 export default function GlobalError({
@@ -36,7 +41,7 @@ export default function GlobalError({
     if (retriedError.current !== error) return;
     const timeout = window.setTimeout(() => {
       retriedError.current = null;
-      reportStorefrontError(error, "root-layout");
+      exhaustStorefrontRecovery(error, "root-layout");
     }, RECOVERY_WINDOW_MS);
     return () => window.clearTimeout(timeout);
   }, [error]);

@@ -112,6 +112,8 @@ interface CartContextType {
   isLoading: boolean;
   /** False until the first client-side cart init (token + API or localStorage) completes. */
   isCartReady: boolean;
+  authRecoveryUnavailable: boolean;
+  retryAuthRecovery: () => void;
   checkCartStock: () => Promise<boolean>;
   /**
    * Re-fetch the cart from the server (no-op for guest carts).
@@ -153,6 +155,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isCartReady, setIsCartReady] = useState(false);
   const [initializedMode, setInitializedMode] = useState<"guest" | "account" | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  const [authRecoveryUnavailable, setAuthRecoveryUnavailable] = useState(false);
+  const [authRetry, setAuthRetry] = useState(0);
   const [sessionGeneration, setSessionGeneration] = useState(0);
   const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
@@ -164,19 +168,28 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     let active = true;
     const updateLoginState = async (forceRefresh = false) => {
-      const token = await centralAuth.tokenManager.getToken({ forceRefresh }).catch(() => null);
-      if (active) {
-        setIsLoggedIn(Boolean(token));
+      const requestGeneration = cartInitGenerationRef.current;
+      const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh });
+      if (active && requestGeneration === cartInitGenerationRef.current)
+        setAuthRecoveryUnavailable(outcome.state === "unavailable");
+      if (
+        active &&
+        requestGeneration === cartInitGenerationRef.current &&
+        (outcome.state === "authenticated" || outcome.state === "unauthenticated")
+      ) {
+        setIsLoggedIn(outcome.state === "authenticated");
         if (forceRefresh) setSessionGeneration((generation) => generation + 1);
       }
     };
-    void updateLoginState();
+    void updateLoginState(authRetry > 0);
     const unsubscribe = subscribeToAuthState((event) => {
+      cartInitGenerationRef.current += 1;
       if (event.type === "logout") {
         setIsLoggedIn(false);
         setSessionGeneration((generation) => generation + 1);
       } else {
         setCartItems([]);
+        setIsLoggedIn(null);
         setIsCartReady(false);
         void updateLoginState(true);
       }
@@ -185,7 +198,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [authRetry]);
 
   // Close drawer when path changes
   useEffect(() => {
@@ -664,9 +677,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           // The server says why (e.g. the product left the store); errorTranslations
           // has the Persian for it. Resync, since the page's view of it is stale.
           await fetchUserCart();
-          notify.error(
-            getUserFacingErrorMessage(error, "افزودن کالا به سبد خرید با خطا مواجه شد"),
-          );
+          notify.error(getUserFacingErrorMessage(error, "افزودن کالا به سبد خرید با خطا مواجه شد"));
         }
       } finally {
         setIsLoading(false);
@@ -984,6 +995,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     cartDiscountTotal,
     isLoading,
     isCartReady,
+    authRecoveryUnavailable,
+    retryAuthRecovery: () => setAuthRetry((value) => value + 1),
     checkCartStock,
     refreshCart: async (options?: { silent?: boolean }) => {
       if (isLoggedIn) {

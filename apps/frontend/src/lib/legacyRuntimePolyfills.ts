@@ -15,6 +15,27 @@
 export function getLegacyRuntimePolyfillScript(): string {
   return `(function(){
 try{
+var eventProto=window.EventTarget&&window.EventTarget.prototype;
+var nativeAdd=eventProto&&eventProto.addEventListener,nativeRemove=eventProto&&eventProto.removeEventListener;
+var originalAdd=window.addEventListener,originalRemove=window.removeEventListener;
+if(typeof nativeAdd==="function"&&typeof nativeRemove==="function"&&originalAdd!==nativeAdd){
+var recovered=[];
+var diagnostics=window.__infinityListenerRecovery={popstate:false,pageshow:false};
+function signature(e){return e&&e.name==="TypeError"&&e.message==="Cannot read properties of null (reading 'tagName')"&&typeof e.stack==="string"&&e.stack.indexOf("addEL_hook")>=0&&e.stack.indexOf("top.addEventListener")>=0&&e.stack.indexOf("<anonymous>")>=0;}
+window.addEventListener=function(type,listener,options){
+try{return originalAdd.call(this,type,listener,options);}catch(e){
+if(this!==window||(type!=="popstate"&&type!=="pageshow")||!signature(e))throw e;
+try{nativeAdd.call(window,type,listener,options);}catch(fallbackError){throw e;}
+recovered.push([type,listener,typeof options==="boolean"?options:!!(options&&options.capture)]);
+diagnostics[type]=true;try{if(typeof diagnostics.flush==="function")diagnostics.flush();}catch(loggingError){}
+}};
+window.removeEventListener=function(type,listener,options){
+var capture=typeof options==="boolean"?options:!!(options&&options.capture);
+for(var j=recovered.length-1;j>=0;j--){if(recovered[j][0]===type&&recovered[j][1]===listener&&recovered[j][2]===capture){recovered.splice(j,1);return nativeRemove.call(window,type,listener,options);}}
+return originalRemove.call(this,type,listener,options);
+};}
+}catch(compatibilityError){}
+try{
 var mql=window.matchMedia&&window.matchMedia("all");
 var mqProto=mql&&Object.getPrototypeOf(mql);
 if(mqProto&&mqProto!==Object.prototype&&typeof mql.addEventListener!=="function"&&typeof mql.addListener==="function"&&typeof mql.removeListener==="function"){

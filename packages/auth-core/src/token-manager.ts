@@ -10,6 +10,9 @@ export interface TokenManagerOptions {
 
 export interface TokenManager {
   getToken(options?: { forceRefresh?: boolean }): Promise<string | null>;
+  getTokenOutcome(options?: {
+    forceRefresh?: boolean;
+  }): Promise<TokenAcquisitionOutcome>;
   peek(): string | null;
   expire(): void;
   clearForLogout(): void;
@@ -17,6 +20,31 @@ export interface TokenManager {
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response>;
+}
+
+export type TokenAcquisitionOutcome =
+  | { state: "authenticated"; token: string }
+  | { state: "unauthenticated" }
+  | { state: "invalidated" }
+  | {
+      state: "unavailable";
+      reasonCode:
+        | "browser_unavailable"
+        | "timeout"
+        | "network"
+        | "http_failure"
+        | "invalid_response";
+      status?: number;
+    };
+
+export class TokenAcquisitionError extends Error {
+  constructor(
+    public readonly reasonCode: string,
+    public readonly status?: number,
+  ) {
+    super("Session recovery is temporarily unavailable");
+    this.name = "TokenAcquisitionError";
+  }
 }
 
 type CachedToken = { value: string; expiresAtMs: number };
@@ -88,10 +116,10 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
   const now = options.now ?? Date.now;
   const isAvailable = options.isAvailable ?? (() => true);
   let cached: CachedToken | null = null;
-  let acquisition: Promise<string | null> | null = null;
+  let acquisition: Promise<TokenAcquisitionOutcome> | null = null;
   let generation = 0;
 
-  const acquire = async (): Promise<string | null> => {
+  const acquire = async (): Promise<TokenAcquisitionOutcome> => {
     const acquisitionGeneration = generation;
     // Plain `fetch` has no timeout: a hung/slow token endpoint (an idle tab
     // resuming, a flaky network) used to leave every caller of `getToken` --
@@ -100,53 +128,93 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
     // with no visible error. The button submitting the form just never
     // updates again. Bound it the same way `updateRouteHint` above does.
     const controller = new AbortController();
+    const interrupted = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener(
+        "abort",
+        () => reject(new Error("Session deadline exceeded")),
+        { once: true },
+      );
+    });
     const timeout = setTimeout(() => controller.abort(), 5_000);
-    let response: Response;
     try {
-      response = await fetchImpl(`${authOrigin}/api/auth/token`, {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-        headers: { accept: "application/json" },
-        signal: controller.signal,
-      });
+      const response = await Promise.race([
+        fetchImpl(`${authOrigin}/api/auth/token`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: controller.signal,
+        }),
+        interrupted,
+      ]);
+      if (generation !== acquisitionGeneration) return { state: "invalidated" };
+      if (response.status === 401) {
+        cached = null;
+        return { state: "unauthenticated" };
+      }
+      if (!response.ok)
+        return {
+          state: "unavailable",
+          reasonCode: "http_failure",
+          status: response.status,
+        };
+      const payload = (await Promise.race([
+        response.json(),
+        interrupted,
+      ])) as Partial<BetterAuthTokenResponse>;
+      if (generation !== acquisitionGeneration) return { state: "invalidated" };
+      if (controller.signal.aborted)
+        return { state: "unavailable", reasonCode: "timeout" };
+      if (
+        typeof payload.token !== "string" ||
+        payload.token.split(".").length !== 3
+      )
+        return { state: "unavailable", reasonCode: "invalid_response" };
+      const expiry = readJwtExpiry(payload.token, now());
+      if (!expiry || expiry <= now())
+        return { state: "unavailable", reasonCode: "invalid_response" };
+      cached = { value: payload.token, expiresAtMs: expiry };
+      return { state: "authenticated", token: payload.token };
+    } catch (error) {
+      if (generation !== acquisitionGeneration) return { state: "invalidated" };
+      return {
+        state: "unavailable",
+        reasonCode: controller.signal.aborted
+          ? "timeout"
+          : error instanceof SyntaxError
+            ? "invalid_response"
+            : "network",
+      };
     } finally {
       clearTimeout(timeout);
     }
-    if (response.status === 401) return null;
-    if (!response.ok)
-      throw new Error(
-        `Central auth token request failed with ${response.status}`,
-      );
-
-    const payload = (await response.json()) as Partial<BetterAuthTokenResponse>;
-    if (
-      typeof payload.token !== "string" ||
-      payload.token.split(".").length !== 3
-    ) {
-      throw new Error("Central auth returned an invalid token response");
-    }
-    const expiry = readJwtExpiry(payload.token, now());
-    if (!expiry || expiry <= now())
-      throw new Error("Central auth returned an expired token");
-
-    if (generation !== acquisitionGeneration) return null;
-    cached = { value: payload.token, expiresAtMs: expiry };
-    return payload.token;
   };
 
-  const getToken: TokenManager["getToken"] = async ({
+  const getTokenOutcome: TokenManager["getTokenOutcome"] = async ({
     forceRefresh = false,
   } = {}) => {
-    if (!isAvailable()) return null;
+    if (!isAvailable())
+      return { state: "unavailable", reasonCode: "browser_unavailable" };
     if (!forceRefresh && cached && cached.expiresAtMs - refreshSkewMs > now()) {
-      return cached.value;
+      return { state: "authenticated", token: cached.value };
     }
     if (acquisition) return acquisition;
-    acquisition = acquire().finally(() => {
-      acquisition = null;
+    const pending = acquire().finally(() => {
+      if (acquisition === pending) acquisition = null;
     });
-    return acquisition;
+    acquisition = pending;
+    return pending;
+  };
+
+  const getToken: TokenManager["getToken"] = async (options) => {
+    const outcome = await getTokenOutcome(options);
+    if (outcome.state === "authenticated") return outcome.token;
+    if (
+      outcome.state === "unavailable" &&
+      outcome.reasonCode !== "browser_unavailable"
+    )
+      throw new TokenAcquisitionError(outcome.reasonCode, outcome.status);
+    return null;
   };
 
   const expire = () => {
@@ -156,10 +224,12 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
   const clearForLogout = () => {
     generation += 1;
     cached = null;
+    acquisition = null;
   };
 
   return {
     getToken,
+    getTokenOutcome,
     peek: () => (isAvailable() ? (cached?.value ?? null) : null),
     expire,
     clearForLogout,

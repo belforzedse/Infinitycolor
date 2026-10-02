@@ -1,13 +1,25 @@
 import React from "react";
 import { act, render, screen, fireEvent } from "@testing-library/react";
-import { StoryMediaSurface, type StoryMediaPayload } from "../media/StoryMediaSurface";
-import { StoryPlaybackContext, createPlaybackStore } from "../media/playback-store";
-import { controlMedia, installMediaStub, uninstallMediaStub } from "./media-stub";
+import {
+  StoryMediaSurface,
+  type StoryMediaPayload,
+} from "../media/StoryMediaSurface";
+import {
+  StoryPlaybackContext,
+  createPlaybackStore,
+} from "../media/playback-store";
+import {
+  controlMedia,
+  installMediaStub,
+  uninstallMediaStub,
+} from "./media-stub";
 
 const VIDEO_SRC = "https://cdn.test/uploads/story.mp4";
 const POSTER_SRC = "https://cdn.test/uploads/story-cover.webp";
 
-function payloadFor(overrides: Partial<StoryMediaPayload> = {}): StoryMediaPayload {
+function payloadFor(
+  overrides: Partial<StoryMediaPayload> = {},
+): StoryMediaPayload {
   return {
     storyId: 1,
     itemKey: "item-1",
@@ -22,7 +34,12 @@ function payloadFor(overrides: Partial<StoryMediaPayload> = {}): StoryMediaPaylo
 
 function renderSurface(
   payload: StoryMediaPayload,
-  options: { isActive?: boolean; isPaused?: boolean; itemId?: string; reportIssue?: Parameters<typeof createPlaybackStore>[0] } = {},
+  options: {
+    isActive?: boolean;
+    isPaused?: boolean;
+    itemId?: string;
+    reportIssue?: Parameters<typeof createPlaybackStore>[0];
+  } = {},
 ) {
   const next = jest.fn();
   const store = createPlaybackStore(options.reportIssue);
@@ -239,14 +256,20 @@ describe("StoryMediaSurface — engine behaviour", () => {
       media.emit("timeupdate");
       media.emit("waiting");
     });
-    expect(screen.getByTestId("story-media-surface")).toHaveAttribute("data-phase", "buffering");
+    expect(screen.getByTestId("story-media-surface")).toHaveAttribute(
+      "data-phase",
+      "buffering",
+    );
 
     // Playback carried on from buffer: time moves, but the browser sends no `playing`.
     await act(async () => {
       media.set({ currentTime: 2.5 });
       media.emit("timeupdate");
     });
-    expect(screen.getByTestId("story-media-surface")).toHaveAttribute("data-phase", "playing");
+    expect(screen.getByTestId("story-media-surface")).toHaveAttribute(
+      "data-phase",
+      "playing",
+    );
     media.set({ currentTime: 5 });
     await flushProgress();
     expect(progress()).toBeCloseTo(0.5, 2);
@@ -259,15 +282,26 @@ describe("StoryMediaSurface — engine behaviour", () => {
     await act(async () => {
       media.emit("stalled");
     });
-    expect(screen.getByTestId("story-media-surface")).toHaveAttribute("data-phase", "playing");
+    expect(screen.getByTestId("story-media-surface")).toHaveAttribute(
+      "data-phase",
+      "playing",
+    );
   });
 
   it("keeps the poster over the video until a frame is actually presented", async () => {
     const { video, view } = renderSurface(payloadFor());
     const media = controlMedia(video()!);
-    const poster = () => view.container.querySelector('img[aria-hidden="true"]') as HTMLImageElement;
+    const poster = () =>
+      view.container.querySelector(
+        'img[aria-hidden="true"]',
+      ) as HTMLImageElement;
     await act(async () => {
-      media.set({ readyState: 4, duration: 5, videoWidth: 1080, videoHeight: 1920 });
+      media.set({
+        readyState: 4,
+        duration: 5,
+        videoWidth: 1080,
+        videoHeight: 1920,
+      });
       media.emit("canplay");
       await media.resolvePlay();
       media.emit("playing");
@@ -280,17 +314,29 @@ describe("StoryMediaSurface — engine behaviour", () => {
     });
     expect(poster()).toHaveStyle({ opacity: "0" });
     // The poster sits above the video in paint order.
-    const children = Array.from(screen.getByTestId("story-media-surface").children);
-    expect(children.indexOf(poster())).toBeGreaterThan(children.indexOf(video()!));
+    const children = Array.from(
+      screen.getByTestId("story-media-surface").children,
+    );
+    expect(children.indexOf(poster())).toBeGreaterThan(
+      children.indexOf(video()!),
+    );
   });
 
   it("brings the poster back when the face goes inactive, so a cube turn never shows black", async () => {
     const payload = payloadFor();
     const { video, view, rerenderWith } = renderSurface(payload);
     const media = controlMedia(video()!);
-    const poster = () => view.container.querySelector('img[aria-hidden="true"]') as HTMLImageElement;
+    const poster = () =>
+      view.container.querySelector(
+        'img[aria-hidden="true"]',
+      ) as HTMLImageElement;
     await act(async () => {
-      media.set({ readyState: 4, duration: 5, videoWidth: 1080, videoHeight: 1920 });
+      media.set({
+        readyState: 4,
+        duration: 5,
+        videoWidth: 1080,
+        videoHeight: 1920,
+      });
       media.emit("canplay");
       await media.resolvePlay();
       media.emit("playing");
@@ -316,12 +362,17 @@ describe("StoryMediaSurface — engine behaviour", () => {
 
   it("uses the media worker's generated poster when the story has no cover", async () => {
     const { view } = renderSurface(
-      payloadFor({ poster: "https://cdn.test/uploads/clip_v1-0a1b2c3d.jpg", video: { mp4: VIDEO_SRC, poster: "https://cdn.test/uploads/clip_v1-0a1b2c3d.jpg" } }),
+      payloadFor({
+        poster: "https://cdn.test/uploads/clip_v1-0a1b2c3d.jpg",
+        video: {
+          mp4: VIDEO_SRC,
+          poster: "https://cdn.test/uploads/clip_v1-0a1b2c3d.jpg",
+        },
+      }),
     );
-    expect(view.container.querySelector('img[aria-hidden="true"]')).toHaveAttribute(
-      "src",
-      "https://cdn.test/uploads/clip_v1-0a1b2c3d.jpg",
-    );
+    expect(
+      view.container.querySelector('img[aria-hidden="true"]'),
+    ).toHaveAttribute("src", "https://cdn.test/uploads/clip_v1-0a1b2c3d.jpg");
   });
 
   it("offers tap-to-play when even muted autoplay is refused, and starts inside the tap", async () => {
@@ -353,15 +404,22 @@ describe("StoryMediaSurface — engine behaviour", () => {
     const element = video()!;
     const media = controlMedia(element);
     await reachPlaying(media, { durationSeconds: 10 });
-    const ranges = (end: number) => ({ length: 1, start: () => 0, end: () => end }) as unknown as TimeRanges;
+    const ranges = (end: number) =>
+      ({ length: 1, start: () => 0, end: () => end }) as unknown as TimeRanges;
 
-    Object.defineProperty(element, "buffered", { configurable: true, get: () => ranges(2) });
+    Object.defineProperty(element, "buffered", {
+      configurable: true,
+      get: () => ranges(2),
+    });
     await act(async () => {
       media.emit("progress");
     });
     expect(store.getSnapshot().readyForNext).toBeNull();
 
-    Object.defineProperty(element, "buffered", { configurable: true, get: () => ranges(5) });
+    Object.defineProperty(element, "buffered", {
+      configurable: true,
+      get: () => ranges(5),
+    });
     await act(async () => {
       media.emit("progress");
     });
@@ -375,12 +433,26 @@ describe("StoryMediaSurface — autoplay", () => {
     const { video } = renderSurface(payloadFor(), { reportIssue });
     const media = controlMedia(video()!);
     await act(async () => {
-      media.set({ duration: 5, readyState: 4, videoWidth: 720, videoHeight: 1280 }); media.emit("canplay");
+      media.set({
+        duration: 5,
+        readyState: 4,
+        videoWidth: 720,
+        videoHeight: 1280,
+      });
+      media.emit("canplay");
       await media.rejectPlay("NotAllowedError");
     });
-    await act(async () => { media.fail(3); });
-    expect(reportIssue).toHaveBeenCalledWith(expect.objectContaining({ failure: "decode-unsupported" }));
-    expect(reportIssue.mock.calls.filter(([issue]) => issue.failure === "decode-unsupported")).toHaveLength(1);
+    await act(async () => {
+      media.fail(3);
+    });
+    expect(reportIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ failure: "decode-unsupported" }),
+    );
+    expect(
+      reportIssue.mock.calls.filter(
+        ([issue]) => issue.failure === "decode-unsupported",
+      ),
+    ).toHaveLength(1);
   });
   it("falls back to muted playback when audible autoplay is refused", async () => {
     const { video, store } = renderSurface(payloadFor());
@@ -426,7 +498,7 @@ describe("StoryMediaSurface — autoplay", () => {
     expect(screen.queryByTestId("story-media-error")).not.toBeInTheDocument();
   });
 
-  it("treats AbortError as navigation, not as a broken video", async () => {
+  it("keeps an unexplained AbortError actionable", async () => {
     const { video } = renderSurface(payloadFor());
     const media = controlMedia(video()!);
 
@@ -435,7 +507,7 @@ describe("StoryMediaSurface — autoplay", () => {
       await media.rejectPlay("AbortError");
     });
 
-    expect(screen.queryByTestId("story-media-error")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("story-media-error")).toBeInTheDocument();
   });
 });
 
@@ -468,27 +540,30 @@ describe("StoryMediaSurface — CTA", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it.each(["javascript:alert(1)", "//evil.example/path", "/\\evil.example/path"])(
-    "does not render an unsafe CTA destination %s",
-    (ctaUrl) => {
-      renderSurface(
-        payloadFor({
-          kind: "image",
-          src: "https://cdn.test/uploads/story.webp",
-          ctaUrl,
-        }),
-      );
+  it.each([
+    "javascript:alert(1)",
+    "//evil.example/path",
+    "/\\evil.example/path",
+  ])("does not render an unsafe CTA destination %s", (ctaUrl) => {
+    renderSurface(
+      payloadFor({
+        kind: "image",
+        src: "https://cdn.test/uploads/story.webp",
+        ctaUrl,
+      }),
+    );
 
-      expect(screen.queryByTestId("story-cta")).not.toBeInTheDocument();
-    },
-  );
+    expect(screen.queryByTestId("story-cta")).not.toBeInTheDocument();
+  });
 });
 
 describe("StoryMediaSurface — undecodable and broken media", () => {
   it("falls back to the cover image when the video track decodes no frames", async () => {
     // Production's HEVC-in-.mov: Chromium reports readyState 4, fires `playing` and
     // advances currentTime while decoding nothing, and never fires `error`.
-    const { video, progress, next } = renderSurface(payloadFor({ durationMs: 4000 }));
+    const { video, progress, next } = renderSurface(
+      payloadFor({ durationMs: 4000 }),
+    );
     const media = controlMedia(video()!);
 
     await act(async () => {
@@ -627,9 +702,12 @@ describe("StoryMediaSurface — undecodable and broken media", () => {
 
 describe("StoryMediaSurface — lifecycle", () => {
   it("ignores events and a settling play() promise from the story just left", async () => {
-    const { video, next, progress, rerenderWith } = renderSurface(payloadFor(), {
-      itemId: "item-1",
-    });
+    const { video, next, progress, rerenderWith } = renderSurface(
+      payloadFor(),
+      {
+        itemId: "item-1",
+      },
+    );
     const first = video()!;
     const firstMedia = controlMedia(first);
 
@@ -645,9 +723,12 @@ describe("StoryMediaSurface — lifecycle", () => {
 
     // Move to the next story while the first story's play() is still in flight.
     await act(async () => {
-      rerenderWith(payloadFor({ storyId: 2, src: "https://cdn.test/uploads/second.mp4" }), {
-        itemId: "item-2",
-      });
+      rerenderWith(
+        payloadFor({ storyId: 2, src: "https://cdn.test/uploads/second.mp4" }),
+        {
+          itemId: "item-2",
+        },
+      );
     });
 
     const second = video()!;
@@ -739,7 +820,9 @@ describe("StoryMediaSurface — lifecycle", () => {
     const { video } = renderSurface(payloadFor(), { isActive: false });
     // Cube neighbours used to mount and autoplay their own video on every navigation.
     expect(video()).toBeNull();
-    expect(document.querySelector(`img[src="${POSTER_SRC}"]`)).toBeInTheDocument();
+    expect(
+      document.querySelector(`img[src="${POSTER_SRC}"]`),
+    ).toBeInTheDocument();
   });
 });
 

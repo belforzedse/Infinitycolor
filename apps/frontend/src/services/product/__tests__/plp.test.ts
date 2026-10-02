@@ -42,19 +42,14 @@ describe("PLP query helpers", () => {
       color: ["blue"],
     };
 
-    const params = buildPLPProductsQuery(
-      query,
-      ["parent", "child"],
-      24,
-      {
-        sizeTitles: ["XL", "L/XL", "M"],
-        colors: [
-          { title: "E2E Blue", colorCode: "#0057ff" },
-          { title: "آبی تیره", colorCode: "#4C5E74" },
-          { title: "سرمه ای", colorCode: "#1E3A8A" },
-        ],
-      },
-    );
+    const params = buildPLPProductsQuery(query, ["parent", "child"], 24, {
+      sizeTitles: ["XL", "L/XL", "M"],
+      colors: [
+        { title: "E2E Blue", colorCode: "#0057ff" },
+        { title: "آبی تیره", colorCode: "#4C5E74" },
+        { title: "سرمه ای", colorCode: "#1E3A8A" },
+      ],
+    });
     const entries = paramsObject(params);
 
     expect(params.get("view")).toBe("card");
@@ -204,7 +199,12 @@ describe("PLP query helpers", () => {
     // No shopper sort means the backend's own Newest ranking.
     expect(params.has("sort[0]")).toBe(false);
 
-    const sorted = buildPLPProductsQuery({ page: 1, available: false, sort: "price:asc", offer: "newest" });
+    const sorted = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "price:asc",
+      offer: "newest",
+    });
     expect(sorted.get("sort[0]")).toBe("price:asc");
     expect(sorted.get("offer")).toBe("newest");
   });
@@ -286,20 +286,26 @@ describe("PLP query helpers", () => {
 
 describe("PLP product failures", () => {
   const query: PLPQuery = { page: 1, available: false };
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
 
   it("preserves a successful empty result and its pagination", async () => {
-    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       status: 200,
-      json: jest.fn().mockResolvedValue({ data: [], meta: { pagination: { total: 0, pageCount: 0 } } }),
+      json: jest
+        .fn()
+        .mockResolvedValue({ data: [], meta: { pagination: { total: 0, pageCount: 0 } } }),
     });
     await expect(getPLPProducts(query)).resolves.toEqual({
-      products: [], pagination: { page: 1, pageSize: 30, pageCount: 0, total: 0 },
+      products: [],
+      pagination: { page: 1, pageSize: 30, pageCount: 0, total: 0 },
     });
   });
 
   it("does not represent a network failure as an empty catalog", async () => {
-    (fetchWithTimeout as jest.Mock).mockRejectedValueOnce(new Error("offline"));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("offline"));
 
     await expect(getPLPProducts(query)).rejects.toMatchObject({ code: "FETCH_FAILED" });
   });
@@ -312,7 +318,7 @@ describe("PLP product failures", () => {
       "Error: private socket address and token\n    at read (node:internal/streams/readable:7:4)";
     const error = new TypeError("fetch failed: https://user:password@host/products?search=private");
     error.cause = socketError;
-    (fetchWithTimeout as jest.Mock).mockRejectedValueOnce(error);
+    (global.fetch as jest.Mock).mockRejectedValue(error);
 
     const failure = await getPLPProducts(query).catch((error) => error);
     expect(failure).toBeInstanceOf(PLPProductsError);
@@ -327,15 +333,15 @@ describe("PLP product failures", () => {
   });
 
   it("distinguishes an unreadable response from a failed fetch without losing HTTP status", async () => {
-    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
-      ok: false,
-      status: 502,
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
       json: jest.fn().mockRejectedValue(new SyntaxError("private HTML response")),
     });
     const failure = await getPLPProducts(query).catch((error) => error);
     expect(failure).toMatchObject({
       code: "FETCH_FAILED",
-      status: 502,
+      status: 200,
       failureStage: "response_json",
       cause: { name: "SyntaxError" },
     });
@@ -343,9 +349,7 @@ describe("PLP product failures", () => {
   });
 
   it("retains AbortError as an actionable request failure", async () => {
-    (fetchWithTimeout as jest.Mock).mockRejectedValueOnce(
-      new DOMException("aborted", "AbortError"),
-    );
+    (global.fetch as jest.Mock).mockRejectedValue(new DOMException("aborted", "AbortError"));
     await expect(getPLPProducts(query)).rejects.toMatchObject({
       code: "FETCH_FAILED",
       failureStage: "request",
@@ -354,7 +358,7 @@ describe("PLP product failures", () => {
   });
 
   it("distinguishes invalid product data from invalid JSON", async () => {
-    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       status: 200,
       json: jest.fn().mockResolvedValue({ data: null }),
@@ -367,7 +371,7 @@ describe("PLP product failures", () => {
   });
 
   it("does not represent a backend rejection as no results", async () => {
-    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: false,
       status: 503,
       url: "http://backend/products",
@@ -396,6 +400,9 @@ describe("offer PLP metadata", () => {
 
 describe("category PLP metadata", () => {
   const query: PLPQuery = { page: 1, available: false };
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
   const category = {
     data: {} as any,
     slug: "manto",

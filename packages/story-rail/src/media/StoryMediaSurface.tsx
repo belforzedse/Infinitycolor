@@ -18,10 +18,18 @@ import {
   type MediaFailureKind,
   type PlaybackState,
 } from "./playback-machine";
-import { describeMediaUrl, useStoryPlaybackStore, type StoryPlaybackStore } from "./playback-store";
+import {
+  describeMediaUrl,
+  useStoryPlaybackStore,
+  type StoryPlaybackStore,
+} from "./playback-store";
 import { getSafeStoryCtaUrl } from "../story-utils";
 import type { StoryRailOverlay } from "../types";
-import { createVideoEngine, chooseEngine, type VideoSource } from "@repo/video-player";
+import {
+  createVideoEngine,
+  chooseEngine,
+  type VideoSource,
+} from "@repo/video-player";
 
 /** Payload we attach to each package story item; the package passes it through untouched. */
 export interface StoryMediaPayload {
@@ -103,7 +111,10 @@ function SpeakerIcon({ muted }: { muted: boolean }) {
 function OverlayLayer({ overlays }: { overlays?: StoryRailOverlay[] }) {
   if (!overlays?.length) return null;
   return (
-    <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" data-testid="story-overlays">
+    <div
+      className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
+      data-testid="story-overlays"
+    >
       {overlays.map((overlay) => {
         const style: React.CSSProperties = {
           left: `${overlay.x}%`,
@@ -116,18 +127,47 @@ function OverlayLayer({ overlays }: { overlays?: StoryRailOverlay[] }) {
           fontSize: overlay.fontSize ? `${overlay.fontSize}px` : undefined,
         };
         if (overlay.type === "sticker" && overlay.imageUrl) {
-          return <img key={overlay.id} src={overlay.imageUrl} alt="" aria-hidden className="absolute object-contain" style={style} />;
+          return (
+            <img
+              key={overlay.id}
+              src={overlay.imageUrl}
+              alt=""
+              aria-hidden
+              className="absolute object-contain"
+              style={style}
+            />
+          );
         }
         if (overlay.type === "shape") {
-          return <span key={overlay.id} aria-hidden className="absolute rounded-2xl" style={{ ...style, backgroundColor: overlay.fontColor ?? "#ffffff" }} />;
+          return (
+            <span
+              key={overlay.id}
+              aria-hidden
+              className="absolute rounded-2xl"
+              style={{
+                ...style,
+                backgroundColor: overlay.fontColor ?? "#ffffff",
+              }}
+            />
+          );
         }
-        return <span key={overlay.id} className="absolute whitespace-pre-wrap text-center font-peyda font-semibold drop-shadow" style={style}>{overlay.content}</span>;
+        return (
+          <span
+            key={overlay.id}
+            className="absolute whitespace-pre-wrap text-center font-peyda font-semibold drop-shadow"
+            style={style}
+          >
+            {overlay.content}
+          </span>
+        );
       })}
     </div>
   );
 }
 
-export function StoryMediaSurface(props: StoryMediaSurfaceProps): React.ReactElement | null {
+export function StoryMediaSurface(
+  props: StoryMediaSurfaceProps,
+): React.ReactElement | null {
   const store = useStoryPlaybackStore();
   const [attempt, setAttempt] = useState(0);
   const payload = props.item?.metadata as StoryMediaPayload | undefined;
@@ -179,6 +219,7 @@ function StoryMedia({
   );
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const engineRef = useRef<ReturnType<typeof createVideoEngine> | null>(null);
   const stateRef = useRef<PlaybackState>(state);
   const nextRef = useRef(next);
   const [showSpinner, setShowSpinner] = useState(false);
@@ -209,6 +250,14 @@ function StoryMedia({
         storyId: payload.storyId,
         mediaType: payload.kind,
         ...describeMediaUrl(payload.src),
+        ...(payload.kind === "video" && engineRef.current
+          ? {
+              mediaHost: engineRef.current.diagnostics.host,
+              mediaPath: engineRef.current.diagnostics.path,
+              videoEngine: engineRef.current.diagnostics.engine,
+              attemptedEngines: engineRef.current.diagnostics.attemptedEngines,
+            }
+          : {}),
         failure,
         mediaErrorCode,
       });
@@ -230,7 +279,9 @@ function StoryMedia({
       dispatch({
         type: "hold",
         hold: "hidden",
-        value: typeof document !== "undefined" && document.visibilityState !== "visible",
+        value:
+          typeof document !== "undefined" &&
+          document.visibilityState !== "visible",
       });
     };
     sync();
@@ -274,7 +325,10 @@ function StoryMedia({
     // nothing" probe (Chromium without HEVC), error classification and teardown. Stories
     // stay on the progressive MP4: clips are seconds long and the next one is pre-warmed,
     // so HLS would add playlist round trips without room for adaptation to pay them back.
-    const source: VideoSource = payload.video ?? { mp4: payload.src, poster: payload.poster ?? null };
+    const source: VideoSource = payload.video ?? {
+      mp4: payload.src,
+      poster: payload.poster ?? null,
+    };
     const engine = createVideoEngine(video, source, {
       surface: "story",
       allowHls: false,
@@ -286,7 +340,11 @@ function StoryMedia({
         if (disposed || stateRef.current.generation !== generation) return;
         if (failure === "decode-unsupported" && payload.poster) {
           // Nothing decoded; show the cover as a still for the configured duration.
-          dispatch({ type: "fallback", generation, durationMs: payload.durationMs });
+          dispatch({
+            type: "fallback",
+            generation,
+            durationMs: payload.durationMs,
+          });
         } else {
           dispatch({ type: "failed", generation, failure });
         }
@@ -304,7 +362,7 @@ function StoryMedia({
         // the viewer has already moved on, and must not touch the new story's state.
         if (disposed || stateRef.current.generation !== generation) return;
         const name = (error as DOMException)?.name;
-        if (name === "AbortError") {
+        if (name === "AbortError" && held()) {
           // pause()/remove during navigation — a lifecycle event, not a broken video.
           return;
         }
@@ -326,12 +384,16 @@ function StoryMedia({
         }
         if (name === "NotSupportedError") {
           if (engine.recoverDecodeFailure()) return;
-          dispatch({ type: "failed", generation, failure: "decode-unsupported" });
+          dispatch({
+            type: "failed",
+            generation,
+            failure: "decode-unsupported",
+          });
           reportOnce("decode-unsupported", video.error?.code ?? null);
           return;
         }
-        dispatch({ type: "failed", generation, failure: "network" });
-        reportOnce("network", video.error?.code ?? null);
+        dispatch({ type: "failed", generation, failure: "unknown" });
+        reportOnce("unknown", video.error?.code ?? null);
       });
     };
 
@@ -383,6 +445,7 @@ function StoryMedia({
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("ended", onEnded);
 
+    engineRef.current = engine;
     engine.load();
 
     // The element may already be past these by the time the effect runs.
@@ -392,6 +455,7 @@ function StoryMedia({
 
     return () => {
       disposed = true;
+      if (engineRef.current === engine) engineRef.current = null;
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       video.removeEventListener("loadeddata", onReady);
       video.removeEventListener("canplay", onReady);
@@ -425,7 +489,10 @@ function StoryMedia({
       const { buffered, currentTime, duration } = video;
       if (!buffered || buffered.length === 0) return;
       const end = buffered.end(buffered.length - 1);
-      if (end - currentTime >= 4 || (Number.isFinite(duration) && duration > 0 && end >= duration - 0.25)) {
+      if (
+        end - currentTime >= 4 ||
+        (Number.isFinite(duration) && duration > 0 && end >= duration - 0.25)
+      ) {
         store.publishReadyForNext(item.id);
       }
     };
@@ -436,7 +503,15 @@ function StoryMedia({
       video.removeEventListener("progress", check);
       video.removeEventListener("timeupdate", check);
     };
-  }, [store, isActive, item.id, payload.kind, state.phase, state.hasPresented, showingVideoElement]);
+  }, [
+    store,
+    isActive,
+    item.id,
+    payload.kind,
+    state.phase,
+    state.hasPresented,
+    showingVideoElement,
+  ]);
 
   // ── Follow holds: only the live, unheld story may play ───────────────────────
   const held = isHeld(state.holds);
@@ -447,7 +522,11 @@ function StoryMedia({
       video.pause();
       return;
     }
-    if (state.phase === "ready" || state.phase === "buffering" || state.phase === "playing") {
+    if (
+      state.phase === "ready" ||
+      state.phase === "buffering" ||
+      state.phase === "playing"
+    ) {
       const playPromise = video.play();
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch(() => {
@@ -530,7 +609,9 @@ function StoryMedia({
 
   // ── Spinner only for perceptible stalls ──────────────────────────────────────
   const stalled =
-    state.phase === "loading" || state.phase === "buffering" || state.phase === "idle";
+    state.phase === "loading" ||
+    state.phase === "buffering" ||
+    state.phase === "idle";
   useEffect(() => {
     if (!stalled || !isActive) {
       setShowSpinner(false);
@@ -592,7 +673,8 @@ function StoryMedia({
   // poster, the story being left would turn black for the whole rotation.
   const showPoster =
     Boolean(posterUrl) &&
-    (state.phase === "fallback" || (isVideo ? !showingVideoElement || !firstFrame : !state.hasPresented));
+    (state.phase === "fallback" ||
+      (isVideo ? !showingVideoElement || !firstFrame : !state.hasPresented));
   const ctaUrl = getSafeStoryCtaUrl(payload.ctaUrl);
   const opensNewTab = Boolean(ctaUrl && /^https?:\/\//i.test(ctaUrl));
 
@@ -633,7 +715,12 @@ function StoryMedia({
         // a presented frame is what the poster waits for.
         <video
           ref={videoRef}
-          src={payload.video && chooseEngine(payload.video, { allowHls: false }) === "webm" ? payload.video.webm! : payload.video?.mp4 ?? payload.src}
+          src={
+            payload.video &&
+            chooseEngine(payload.video, { allowHls: false }) === "webm"
+              ? payload.video.webm!
+              : (payload.video?.mp4 ?? payload.src)
+          }
           className="relative h-full w-full object-contain"
           playsInline
           preload="auto"
@@ -663,7 +750,9 @@ function StoryMedia({
         </p>
       ) : null}
 
-      {state.phase !== "error" ? <OverlayLayer overlays={payload.overlays} /> : null}
+      {state.phase !== "error" ? (
+        <OverlayLayer overlays={payload.overlays} />
+      ) : null}
 
       {ctaUrl && state.phase !== "error" ? (
         <a
@@ -694,7 +783,11 @@ function StoryMedia({
           onMouseUp={stopTap}
           onTouchStart={stopTap}
           onTouchEnd={stopTap}
-          aria-label={audioEnabled ? (payload.labels?.mute ?? "Mute") : (payload.labels?.unmute ?? "Play sound")}
+          aria-label={
+            audioEnabled
+              ? (payload.labels?.mute ?? "Mute")
+              : (payload.labels?.unmute ?? "Play sound")
+          }
           aria-pressed={audioEnabled}
           className={`absolute right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${ctaUrl ? "bottom-20" : "bottom-6"}`}
         >
@@ -727,7 +820,12 @@ function StoryMedia({
           aria-label={payload.labels?.play ?? "Play"}
           className="absolute inset-0 z-20 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
         >
-          <svg viewBox="0 0 24 24" className="h-7 w-7 translate-x-0.5" fill="currentColor" aria-hidden="true">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-7 w-7 translate-x-0.5"
+            fill="currentColor"
+            aria-hidden="true"
+          >
             <path d="M8 5v14l11-7z" />
           </svg>
         </button>
@@ -748,7 +846,8 @@ function StoryMedia({
           className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/70 px-8 text-center"
         >
           <p className="font-peyda text-base leading-7 text-white">
-            {payload.labels?.mediaFailure ?? "This story cannot be played in this browser."}
+            {payload.labels?.mediaFailure ??
+              "This story cannot be played in this browser."}
           </p>
           <button
             type="button"

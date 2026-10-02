@@ -1,6 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { startMediaServer, type MediaServer } from "../../helpers/media-server";
-import { VIDEO_FIXTURE_DIR, ensurePipelineClips, ffmpegAvailable, type PipelineClip } from "../../helpers/video-fixtures";
+import {
+  VIDEO_FIXTURE_DIR,
+  ensurePipelineClips,
+  ffmpegAvailable,
+  type PipelineClip,
+} from "../../helpers/video-fixtures";
 
 /**
  * The shared playback engine (@repo/video-player) against real browser media pipelines,
@@ -19,7 +24,12 @@ import { VIDEO_FIXTURE_DIR, ensurePipelineClips, ffmpegAvailable, type PipelineC
 
 interface PlayerSpec {
   id: string;
-  source: { mp4: string; webm?: string | null; hls?: string | null; poster?: string | null };
+  source: {
+    mp4: string;
+    webm?: string | null;
+    hls?: string | null;
+    poster?: string | null;
+  };
   active: boolean;
   playing: boolean;
   allowHls: boolean;
@@ -46,9 +56,17 @@ test.describe("video player engine", () => {
     media.requests.length = 0;
   });
 
-  const player = (id: string, clip: PipelineClip, extra: Partial<PlayerSpec> = {}): PlayerSpec => ({
+  const player = (
+    id: string,
+    clip: PipelineClip,
+    extra: Partial<PlayerSpec> = {},
+  ): PlayerSpec => ({
     id,
-    source: { mp4: media.url(clip.mp4), hls: media.url(clip.hls), poster: media.url(clip.poster) },
+    source: {
+      mp4: media.url(clip.mp4),
+      hls: media.url(clip.hls),
+      poster: media.url(clip.poster),
+    },
     active: true,
     playing: true,
     allowHls: true,
@@ -60,13 +78,22 @@ test.describe("video player engine", () => {
     await expect(page.getByTestId("harness-ready")).toBeVisible();
   }
 
-  const marker = (page: Page, id: string) => page.locator(`[data-player="${id}"]`);
-  const videoOf = (page: Page, id: string) => marker(page, id).locator("xpath=..").locator("video");
-  const posterOf = (page: Page, id: string) => marker(page, id).locator("xpath=..").locator('img[aria-hidden="true"]');
+  const marker = (page: Page, id: string) =>
+    page.locator(`[data-player="${id}"]`);
+  const videoOf = (page: Page, id: string) =>
+    marker(page, id).locator("xpath=..").locator("video");
+  const posterOf = (page: Page, id: string) =>
+    marker(page, id).locator("xpath=..").locator('img[aria-hidden="true"]');
 
   async function expectPlaying(page: Page, id: string) {
     await expect
-      .poll(() => videoOf(page, id).evaluate((video: HTMLVideoElement) => video.currentTime), { timeout: 30_000 })
+      .poll(
+        () =>
+          videoOf(page, id).evaluate(
+            (video: HTMLVideoElement) => video.currentTime,
+          ),
+        { timeout: 30_000 },
+      )
       .toBeGreaterThan(0.5);
   }
 
@@ -76,23 +103,58 @@ test.describe("video player engine", () => {
     await expectPlaying(page, id);
   }
 
-
-  test("starts directly on WebM when MP4 capability is unavailable, without an MP4 request", async ({ page }) => {
+  test("starts directly on WebM when MP4 capability is unavailable, without an MP4 request", async ({
+    page,
+  }) => {
     await page.addInitScript(() => {
       const real = HTMLMediaElement.prototype.canPlayType;
-      HTMLMediaElement.prototype.canPlayType = function(type) { return type.includes("mp4") ? "" : real.call(this, type); };
+      HTMLMediaElement.prototype.canPlayType = function (type) {
+        return type.includes("mp4") ? "" : real.call(this, type);
+      };
     });
-    await openPlayers(page, [player("a", clips[0], { allowHls: false, source: { mp4: media.url(clips[0].mp4), webm: media.url(clips[0].webm) } })]);
+    await openPlayers(page, [
+      player("a", clips[0], {
+        allowHls: false,
+        source: {
+          mp4: media.url(clips[0].mp4),
+          webm: media.url(clips[0].webm),
+        },
+      }),
+    ]);
     await expect(marker(page, "a")).toHaveAttribute("data-engine", "webm");
     await expectPlaying(page, "a");
     await expect(marker(page, "a")).toHaveAttribute("data-first-frame", "true");
     expect(media.requests).toContain(clips[0].webm);
     expect(media.requests).not.toContain(clips[0].mp4);
   });
-  test("recovers a confirmed MP4 decode failure through one WebM attempt", async ({ page }) => {
-    await openPlayers(page, [player("a", clips[0], { allowHls: false, playing: false, source: { mp4: media.url(clips[0].mp4), webm: media.url(clips[0].webm) } })]);
+  test("recovers a confirmed MP4 decode failure through one WebM attempt", async ({
+    page,
+  }) => {
+    await openPlayers(page, [
+      player("a", clips[0], {
+        allowHls: false,
+        playing: false,
+        source: {
+          mp4: media.url(clips[0].mp4),
+          webm: media.url(clips[0].webm),
+        },
+      }),
+    ]);
+    await expect
+      .poll(() =>
+        videoOf(page, "a").evaluate((video) =>
+          Number.isFinite((video as HTMLVideoElement).duration),
+        ),
+      )
+      .toBe(true);
     await videoOf(page, "a").evaluate((video: HTMLVideoElement) => {
-      Object.defineProperty(video, "error", { configurable: true, get: () => ({ code: 3 }) });
+      video.currentTime = 1.25;
+      video.playbackRate = 0.75;
+      video.controls = true;
+      Object.defineProperty(video, "error", {
+        configurable: true,
+        get: () => ({ code: 3 }),
+      });
       video.dispatchEvent(new Event("error"));
       delete (video as unknown as Record<string, unknown>).error;
     });
@@ -100,12 +162,63 @@ test.describe("video player engine", () => {
     await page.evaluate(() => window.__setPlayer("a", { playing: true }));
     await expectPlaying(page, "a");
     await expect(marker(page, "a")).toHaveAttribute("data-first-frame", "true");
-    expect(media.requests.filter((path) => path === clips[0].webm).length).toBeGreaterThan(0);
-    expect(await page.evaluate(() => window.__videoEvents.filter((event) => event.type === "error" && event.fatal))).toHaveLength(0);
+    expect(
+      media.requests.filter((path) => path === clips[0].webm).length,
+    ).toBeGreaterThan(0);
+    const selected = await videoOf(page, "a").evaluate(
+      (video: HTMLVideoElement) => ({
+        url: video.currentSrc,
+        position: video.currentTime,
+        rate: video.playbackRate,
+        controls: video.controls,
+      }),
+    );
+    expect(selected).toMatchObject({
+      url: media.url(clips[0].webm),
+      rate: 0.75,
+      controls: true,
+    });
+    expect(selected.position).toBeGreaterThanOrEqual(1.25);
+    // Seeking preserves the old position before the new source presents a frame.
+    // The recovery receipt is emitted only after that new frame is confirmed.
+    await expect.poll(() => page.evaluate(() => window.__videoEvents.filter(
+      event => event.type === "error" && event.failure === "webm-fallback",
+    ).length)).toBe(1);
+    const recovery = await page.evaluate(() =>
+      window.__videoEvents.filter(
+        (event) => event.type === "error" && event.failure === "webm-fallback",
+      ),
+    );
+    expect(recovery).toHaveLength(1);
+    expect(recovery[0]).toMatchObject({
+      engine: "webm",
+      path: new URL(media.url(clips[0].webm)).pathname,
+      attemptedEngines: ["mp4", "webm"],
+    });
+    expect(
+      await page.evaluate(() =>
+        window.__videoEvents.filter(
+          (event) => event.type === "error" && event.fatal,
+        ),
+      ),
+    ).toHaveLength(0);
   });
-  test("inactive WebM-capable players request no optional media", async ({ page }) => {
-    await openPlayers(page, [player("a", clips[0], { active: false, playing: false, source: { mp4: media.url(clips[0].mp4), webm: media.url(clips[0].webm) } })]);
-    expect(media.requests.filter((path) => /\.(mp4|webm|m3u8|m4s)$/.test(path))).toHaveLength(0);
+  test("inactive WebM-capable players request no optional media", async ({
+    page,
+  }) => {
+    await openPlayers(page, [
+      player("a", clips[0], {
+        active: false,
+        playing: false,
+        source: {
+          mp4: media.url(clips[0].mp4),
+          webm: media.url(clips[0].webm),
+        },
+      }),
+    ]);
+    expect(
+      media.requests.filter((path) => /\.(mp4|webm|m3u8|m4s)$/.test(path)),
+    ).toHaveLength(0);
   });
 
   test("plays the HLS ladder through hls.js over MSE", async ({ page }) => {
@@ -114,46 +227,89 @@ test.describe("video player engine", () => {
     await expectPlaying(page, "a");
     await expect(marker(page, "a")).toHaveAttribute("data-first-frame", "true");
     // MSE, not the progressive file.
-    expect(await videoOf(page, "a").evaluate((video: HTMLVideoElement) => video.currentSrc)).toMatch(/^blob:/);
+    expect(
+      await videoOf(page, "a").evaluate(
+        (video: HTMLVideoElement) => video.currentSrc,
+      ),
+    ).toMatch(/^blob:/);
     const hlsDir = clips[0].hls.replace(/master\.m3u8$/, "");
     expect(media.requests).toContain(clips[0].hls);
-    expect(media.requests.some((path) => path.startsWith(hlsDir) && path.endsWith("/index.m3u8"))).toBe(true);
-    expect(media.requests.some((path) => path.startsWith(hlsDir) && /init_\d+\.mp4$/.test(path))).toBe(true);
-    expect(media.requests.some((path) => path.startsWith(hlsDir) && path.endsWith(".m4s"))).toBe(true);
+    expect(
+      media.requests.some(
+        (path) => path.startsWith(hlsDir) && path.endsWith("/index.m3u8"),
+      ),
+    ).toBe(true);
+    expect(
+      media.requests.some(
+        (path) => path.startsWith(hlsDir) && /init_\d+\.mp4$/.test(path),
+      ),
+    ).toBe(true);
+    expect(
+      media.requests.some(
+        (path) => path.startsWith(hlsDir) && path.endsWith(".m4s"),
+      ),
+    ).toBe(true);
     expect(media.requests).not.toContain(clips[0].mp4);
   });
 
-  test("an unreadable playlist (no CORS) falls back to the MP4 and HLS is skipped for the session", async ({ page, browserName }) => {
+  test("an unreadable playlist (no CORS) falls back to the MP4 and HLS is skipped for the session", async ({
+    page,
+    browserName,
+  }) => {
     media.faults.set(clips[0].hls, { kind: "no-cors" });
-    await openPlayers(page, [player("a", clips[0]), player("b", clips[1], { active: false, playing: false })]);
+    await openPlayers(page, [
+      player("a", clips[0]),
+      player("b", clips[1], { active: false, playing: false }),
+    ]);
 
     await expect(marker(page, "a")).toHaveAttribute("data-engine", "mp4");
     await expectMp4Playing(page, "a", browserName);
-    expect(await videoOf(page, "a").evaluate((video: HTMLVideoElement) => video.currentSrc)).toBe(media.url(clips[0].mp4));
+    expect(
+      await videoOf(page, "a").evaluate(
+        (video: HTMLVideoElement) => video.currentSrc,
+      ),
+    ).toBe(media.url(clips[0].mp4));
     const events = await page.evaluate(() => window.__videoEvents);
     expect(events).toContainEqual(
-      expect.objectContaining({ type: "error", failure: "hls-fallback", detail: "manifest 0", fatal: false }),
+      expect.objectContaining({
+        type: "error",
+        failure: "hls-fallback",
+        detail: "manifest 0",
+        fatal: false,
+      }),
     );
 
     // The next video on the page goes straight to MP4: no playlist round trip to fail again.
-    await page.evaluate(() => window.__setPlayer("b", { active: true, playing: true }));
+    await page.evaluate(() =>
+      window.__setPlayer("b", { active: true, playing: true }),
+    );
     await expect(marker(page, "b")).toHaveAttribute("data-engine", "mp4");
     await expectMp4Playing(page, "b", browserName);
     expect(media.requests).not.toContain(clips[1].hls);
   });
 
-  test("a missing playlist falls back for that video only", async ({ page, browserName }) => {
+  test("a missing playlist falls back for that video only", async ({
+    page,
+    browserName,
+  }) => {
     media.faults.set(clips[0].hls, { kind: "status", status: 404 });
-    await openPlayers(page, [player("a", clips[0]), player("b", clips[1], { active: false, playing: false })]);
+    await openPlayers(page, [
+      player("a", clips[0]),
+      player("b", clips[1], { active: false, playing: false }),
+    ]);
     await expect(marker(page, "a")).toHaveAttribute("data-engine", "mp4");
     await expectMp4Playing(page, "a", browserName);
 
-    await page.evaluate(() => window.__setPlayer("b", { active: true, playing: true }));
+    await page.evaluate(() =>
+      window.__setPlayer("b", { active: true, playing: true }),
+    );
     await expect(marker(page, "b")).toHaveAttribute("data-engine", "hls.js");
     await expectPlaying(page, "b");
   });
 
-  test("keeps the poster up until a real frame is on screen", async ({ page }) => {
+  test("keeps the poster up until a real frame is on screen", async ({
+    page,
+  }) => {
     // Fresh URLs (nothing cached from earlier tests), with every media response held so
     // there is a measurable gap before the first frame.
     const alias = `alias-${Date.now()}`;
@@ -170,20 +326,34 @@ test.describe("video player engine", () => {
     ]);
 
     await expect(posterOf(page, "a")).toHaveCSS("opacity", "1");
-    await expect(marker(page, "a")).toHaveAttribute("data-first-frame", "false");
+    await expect(marker(page, "a")).toHaveAttribute(
+      "data-first-frame",
+      "false",
+    );
     await expectPlaying(page, "a");
     await expect(marker(page, "a")).toHaveAttribute("data-first-frame", "true");
     await expect(posterOf(page, "a")).toHaveCSS("opacity", "0");
   });
 
-  test("rapid activation never leaks engines, hls.js instances or requests", async ({ page }) => {
-    await openPlayers(page, [player("a", clips[0], { active: false, playing: false })]);
+  test("rapid activation never leaks engines, hls.js instances or requests", async ({
+    page,
+  }) => {
+    await openPlayers(page, [
+      player("a", clips[0], { active: false, playing: false }),
+    ]);
     for (let index = 0; index < 20; index += 1) {
-      await page.evaluate((active) => window.__setPlayer("a", { active, playing: active }), index % 2 === 0);
+      await page.evaluate(
+        (active) => window.__setPlayer("a", { active, playing: active }),
+        index % 2 === 0,
+      );
       await page.waitForTimeout(40);
     }
-    await page.evaluate(() => window.__setPlayer("a", { active: false, playing: false }));
-    await expect.poll(() => page.evaluate(() => window.__liveEngines())).toEqual({ engines: 0, hls: 0 });
+    await page.evaluate(() =>
+      window.__setPlayer("a", { active: false, playing: false }),
+    );
+    await expect
+      .poll(() => page.evaluate(() => window.__liveEngines()))
+      .toEqual({ engines: 0, hls: 0 });
     expect(await videoOf(page, "a").getAttribute("src")).toBeNull();
 
     const settled = media.requests.length;
@@ -208,21 +378,38 @@ test.describe("story viewer on pipeline media", () => {
   function stories() {
     return Array.from({ length: 4 }, (_, index) => {
       const clip = clips[index % clips.length];
-      const file = { id: 7000 + index, url: media.url(clip.mp4), mime: "video/mp4", previewUrl: media.url(clip.poster) };
+      const file = {
+        id: 7000 + index,
+        url: media.url(clip.mp4),
+        mime: "video/mp4",
+        previewUrl: media.url(clip.poster),
+      };
       return {
         id: 800 + index,
         Title: `pipeline ${index}`,
         MediaType: "video",
         Media: file,
         DurationMs: 6000,
-        Items: [{ Key: `pipe:${index}`, MediaType: "video", Media: file, DurationMs: 6000 }],
+        Items: [
+          {
+            Key: `pipe:${index}`,
+            MediaType: "video",
+            Media: file,
+            DurationMs: 6000,
+          },
+        ],
         updatedAt: new Date(Date.UTC(2026, 0, 100 - index)).toISOString(),
       };
     });
   }
 
-  test("rapid taps keep a single player alive and closing leaves nothing running", async ({ page, browserName }) => {
-    await page.goto(`/?stories=${encodeURIComponent(JSON.stringify(stories()))}&dir=rtl`);
+  test("rapid taps keep a single player alive and closing leaves nothing running", async ({
+    page,
+    browserName,
+  }) => {
+    await page.goto(
+      `/?stories=${encodeURIComponent(JSON.stringify(stories()))}&dir=rtl`,
+    );
     await expect(page.getByTestId("harness-ready")).toBeVisible();
     // No admin cover: the rail avatar is the media worker's generated poster.
     await page.getByRole("button", { name: "نمایش استوری pipeline 0" }).click();
@@ -230,9 +417,16 @@ test.describe("story viewer on pipeline media", () => {
     if (browserName !== "webkit") {
       // The pipeline MP4 actually plays in the story viewer (see the WebKit note above).
       await expect
-        .poll(() => page.locator("video").first().evaluate((video: HTMLVideoElement) => video.currentTime), {
-          timeout: 30_000,
-        })
+        .poll(
+          () =>
+            page
+              .locator("video")
+              .first()
+              .evaluate((video: HTMLVideoElement) => video.currentTime),
+          {
+            timeout: 30_000,
+          },
+        )
         .toBeGreaterThan(0.5);
     }
 
@@ -248,7 +442,9 @@ test.describe("story viewer on pipeline media", () => {
     expect(maxVideos).toBeLessThanOrEqual(1);
 
     await page.keyboard.press("Escape");
-    await expect.poll(() => page.evaluate(() => window.__liveEngines())).toEqual({ engines: 0, hls: 0 });
+    await expect
+      .poll(() => page.evaluate(() => window.__liveEngines()))
+      .toEqual({ engines: 0, hls: 0 });
     const settled = media.requests.length;
     await page.waitForTimeout(1_500);
     expect(media.requests.length).toBe(settled);

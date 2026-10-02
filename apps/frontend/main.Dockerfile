@@ -130,9 +130,14 @@ RUN --mount=type=cache,id=infinity-frontend-next-16.3.2-node22,target=/repo/apps
     --mount=type=cache,target=/root/.cache/node/corepack \
     --mount=type=secret,id=sentry_auth_token \
     if [ "$SENTRY_UPLOAD_ENABLED" = "true" ]; then test -s /run/secrets/sentry_auth_token || exit 1; fi; \
-    SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)" pnpm run build
+    export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)"; \
+    pnpm run build && \
+    node scripts/check-sentry-server-maps.mjs && \
+    node --test scripts/upload-sentry-server-maps.node-check.cjs && \
+    node scripts/upload-sentry-server-maps.cjs
 RUN grep -q '"/api/_health/route"' .next/server/app-paths-manifest.json
 RUN node scripts/check-sentry-server-hook.mjs
+RUN node scripts/check-sentry-server-maps.mjs
 RUN node scripts/check-sentry-probe-exclusion.mjs
 
 FROM docker.arvancloud.ir/library/node:22-alpine AS runner

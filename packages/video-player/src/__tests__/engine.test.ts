@@ -1,14 +1,29 @@
-jest.mock("hls.js/light", () => ({ __esModule: true, default: jest.requireActual("./fake-hls").FakeHls }), {
-  virtual: true,
-});
+jest.mock(
+  "hls.js/light",
+  () => ({
+    __esModule: true,
+    default: jest.requireActual("./fake-hls").FakeHls,
+  }),
+  {
+    virtual: true,
+  },
+);
 
 import { FakeHls } from "./fake-hls";
 
-import { chooseEngine, isHlsCircuitOpen, resetHlsCircuit } from "../capabilities";
+import {
+  chooseEngine,
+  isHlsCircuitOpen,
+  resetHlsCircuit,
+} from "../capabilities";
 import { createVideoEngine, liveEngineCounts } from "../engine";
 import { resetBandwidthEstimate } from "../hls-config";
 import { setVideoTelemetrySink, type VideoTelemetryEvent } from "../telemetry";
-import { controlMedia, installMediaStub, uninstallMediaStub } from "./media-stub";
+import {
+  controlMedia,
+  installMediaStub,
+  uninstallMediaStub,
+} from "./media-stub";
 
 const SOURCE = {
   mp4: "https://cdn.test/uploads/clip_v1-0a1b2c3d.mp4",
@@ -16,7 +31,9 @@ const SOURCE = {
 };
 
 function setMse(supported: boolean) {
-  (window as any).MediaSource = supported ? { isTypeSupported: () => true } : undefined;
+  (window as any).MediaSource = supported
+    ? { isTypeSupported: () => true }
+    : undefined;
 }
 
 const flush = async () => {
@@ -55,7 +72,8 @@ describe("chooseEngine", () => {
   it("uses native HLS only without MSE (iPhone before iOS 17.1)", () => {
     setMse(false);
     const video = document.createElement("video");
-    video.canPlayType = (type: string) => (type === "application/vnd.apple.mpegurl" ? "maybe" : "");
+    video.canPlayType = (type: string) =>
+      type === "application/vnd.apple.mpegurl" ? "maybe" : "";
     expect(chooseEngine(SOURCE, { allowHls: true, video })).toBe("native-hls");
   });
 
@@ -85,7 +103,10 @@ describe("MP4 engine", () => {
     const video = document.createElement("video");
     video.setAttribute("src", SOURCE.mp4);
     const media = controlMedia(video);
-    const engine = createVideoEngine(video, SOURCE, { surface: "story", preload: "auto" });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "story",
+      preload: "auto",
+    });
     engine.load();
     expect(engine.engine).toBe("mp4");
     expect(media.state().loadCalls ?? 0).toBe(0);
@@ -113,15 +134,47 @@ describe("MP4 engine", () => {
     const second = engine.play();
     await media.rejectPlay("NotAllowedError");
     await expect(second).resolves.toBe("autoplay-denied");
-    expect(events).toContainEqual(expect.objectContaining({ type: "error", failure: "autoplay-denied", fatal: false }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        failure: "autoplay-denied",
+        fatal: false,
+      }),
+    );
     engine.dispose();
+  });
+
+  it("keeps unexplained play aborts actionable and suppresses disposal aborts", async () => {
+    const video = document.createElement("video");
+    const media = controlMedia(video);
+    const onFatal = jest.fn();
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "pdp",
+      onFatal,
+    });
+    engine.load();
+    const unexpected = engine.play();
+    await media.rejectPlay("AbortError");
+    await expect(unexpected).resolves.toBe("failed");
+    expect(onFatal).toHaveBeenCalledTimes(1);
+    engine.dispose();
+    const next = createVideoEngine(video, SOURCE, { surface: "pdp", onFatal });
+    next.load();
+    const cancelled = next.play();
+    next.dispose();
+    await media.rejectPlay("AbortError");
+    await expect(cancelled).resolves.toBe("aborted");
+    expect(onFatal).toHaveBeenCalledTimes(1);
   });
 
   it("retries one network error at the same position, then gives up with a network failure", () => {
     const video = document.createElement("video");
     const media = controlMedia(video);
     const onFatal = jest.fn();
-    const engine = createVideoEngine(video, SOURCE, { surface: "pdp", onFatal });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "pdp",
+      onFatal,
+    });
     engine.load();
     media.set({ currentTime: 4.2 });
     media.fail(2);
@@ -132,16 +185,23 @@ describe("MP4 engine", () => {
     engine.dispose();
   });
 
-  it("treats decode/source errors as undecodable and ignores its own aborts", () => {
+  it("treats unexplained element aborts as actionable", () => {
     const video = document.createElement("video");
     const media = controlMedia(video);
     const onFatal = jest.fn();
-    const engine = createVideoEngine(video, SOURCE, { surface: "pdp", onFatal });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "pdp",
+      onFatal,
+    });
     engine.load();
     media.fail(1);
-    expect(onFatal).not.toHaveBeenCalled();
-    media.fail(4);
-    expect(onFatal).toHaveBeenCalledWith("decode-unsupported", "media error 4");
+    expect(onFatal).toHaveBeenCalledWith(
+      "unknown",
+      "media abort without cancellation context",
+    );
+    engine.dispose();
+    media.fail(1);
+    expect(onFatal).toHaveBeenCalledTimes(1);
     engine.dispose();
   });
 
@@ -150,14 +210,26 @@ describe("MP4 engine", () => {
     const video = document.createElement("video");
     const media = controlMedia(video);
     const onFatal = jest.fn();
-    const engine = createVideoEngine(video, SOURCE, { surface: "story", onFatal });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "story",
+      onFatal,
+    });
     engine.load();
-    media.set({ readyState: 4, currentTime: 1.5, videoWidth: 0, videoHeight: 0, totalVideoFrames: 0 });
+    media.set({
+      readyState: 4,
+      currentTime: 1.5,
+      videoWidth: 0,
+      videoHeight: 0,
+      totalVideoFrames: 0,
+    });
     media.emit("playing");
     jest.advanceTimersByTime(600);
     expect(onFatal).not.toHaveBeenCalled();
     jest.advanceTimersByTime(600);
-    expect(onFatal).toHaveBeenCalledWith("decode-unsupported", "no decoded frames");
+    expect(onFatal).toHaveBeenCalledWith(
+      "decode-unsupported",
+      "no decoded frames",
+    );
     engine.dispose();
   });
 
@@ -166,7 +238,10 @@ describe("MP4 engine", () => {
     const video = document.createElement("video");
     const media = controlMedia(video);
     const onFatal = jest.fn();
-    const engine = createVideoEngine(video, SOURCE, { surface: "story", onFatal });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "story",
+      onFatal,
+    });
     engine.load();
     media.set({ readyState: 2, currentTime: 0, videoWidth: 0 });
     media.emit("playing");
@@ -186,7 +261,10 @@ describe("first frame", () => {
     };
     video.cancelVideoFrameCallback = jest.fn();
     const onFirstFrame = jest.fn();
-    const engine = createVideoEngine(video, SOURCE, { surface: "story", onFirstFrame });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "story",
+      onFirstFrame,
+    });
     engine.load();
     expect(onFirstFrame).not.toHaveBeenCalled();
     callback!();
@@ -199,7 +277,10 @@ describe("first frame", () => {
     const video = document.createElement("video");
     const media = controlMedia(video);
     const onFirstFrame = jest.fn();
-    const engine = createVideoEngine(video, SOURCE, { surface: "story", onFirstFrame });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "story",
+      onFirstFrame,
+    });
     engine.load();
     media.set({ readyState: 3, currentTime: 0 });
     media.emit("playing");
@@ -212,9 +293,14 @@ describe("first frame", () => {
 });
 
 describe("hls.js engine", () => {
-  async function hlsEngine(extra: Parameters<typeof createVideoEngine>[2] = { surface: "post-detail" }) {
+  async function hlsEngine(
+    extra: Parameters<typeof createVideoEngine>[2] = { surface: "post-detail" },
+  ) {
     const video = document.createElement("video");
-    const engine = createVideoEngine(video, SOURCE, { allowHls: true, ...extra });
+    const engine = createVideoEngine(video, SOURCE, {
+      allowHls: true,
+      ...extra,
+    });
     engine.load();
     await flush();
     return { video, engine, hls: FakeHls.instances.at(-1)! };
@@ -243,7 +329,10 @@ describe("hls.js engine", () => {
   it("holds a play() issued before hls.js has attached, instead of letting `src` abort it", async () => {
     const video = document.createElement("video");
     const media = controlMedia(video);
-    const engine = createVideoEngine(video, SOURCE, { surface: "post-detail", allowHls: true });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "post-detail",
+      allowHls: true,
+    });
     engine.load();
     const outcome = engine.play();
     // hls.js is still loading: calling video.play() now would be aborted by its src swap.
@@ -260,7 +349,10 @@ describe("hls.js engine", () => {
       throw new TypeError("Failed to fetch");
     };
     const video = document.createElement("video");
-    const engine = createVideoEngine(video, SOURCE, { surface: "pdp", allowHls: true });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "pdp",
+      allowHls: true,
+    });
     engine.load();
     await flush();
     expect(FakeHls.instances).toHaveLength(0);
@@ -273,26 +365,43 @@ describe("hls.js engine", () => {
   it("a missing playlist falls back before hls.js exists and leaves HLS on for other videos", async () => {
     playlistResponse = async () => ({ ok: false, status: 404 });
     const video = document.createElement("video");
-    const engine = createVideoEngine(video, SOURCE, { surface: "pdp", allowHls: true });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "pdp",
+      allowHls: true,
+    });
     engine.load();
     await flush();
     expect(FakeHls.instances).toHaveLength(0);
     expect(engine.engine).toBe("mp4");
     expect(isHlsCircuitOpen()).toBe(false);
-    expect(events).toContainEqual(expect.objectContaining({ failure: "hls-fallback", detail: "manifest 404" }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        failure: "hls-fallback",
+        detail: "manifest 404",
+      }),
+    );
     engine.dispose();
   });
 
   it("an unreachable playlist (CORS/offline) falls back to MP4 and stops trying HLS this session", async () => {
     const onEngineChange = jest.fn();
-    const { hls, video, engine } = await hlsEngine({ surface: "pdp", onEngineChange });
+    const { hls, video, engine } = await hlsEngine({
+      surface: "pdp",
+      onEngineChange,
+    });
     hls.fatal(FakeHls.ErrorTypes.NETWORK_ERROR, "manifestLoadError", 0);
     expect(hls.destroyed).toBe(true);
     expect(video.src).toBe(SOURCE.mp4);
     expect(engine.engine).toBe("mp4");
     expect(onEngineChange).toHaveBeenCalledWith("mp4");
     expect(isHlsCircuitOpen()).toBe(true);
-    expect(events).toContainEqual(expect.objectContaining({ failure: "hls-fallback", detail: "manifest 0", fatal: false }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        failure: "hls-fallback",
+        detail: "manifest 0",
+        fatal: false,
+      }),
+    );
     expect(chooseEngine(SOURCE, { allowHls: true })).toBe("mp4");
     engine.dispose();
   });
@@ -344,7 +453,8 @@ describe("hls.js engine", () => {
     const { hls, video, engine } = await hlsEngine({ surface: "post-detail" });
     expect(hls.config.autoStartLoad).toBe(false);
     expect(hls.startLoadCalls).toBe(0);
-    video.getBoundingClientRect = () => ({ width: 270, height: 480 }) as DOMRect;
+    video.getBoundingClientRect = () =>
+      ({ width: 270, height: 480 }) as DOMRect;
     hls.emit(FakeHls.Events.MANIFEST_PARSED, {});
     // 270x480 CSS px at devicePixelRatio 1 fits the 360x640 rung.
     expect(hls.autoLevelCapping).toBe(0);
@@ -361,7 +471,13 @@ describe("hls.js engine", () => {
     engine.dispose();
     expect(window.sessionStorage.getItem("infinity.video.bw")).toBe("2400000");
     expect(events).toContainEqual(
-      expect.objectContaining({ type: "summary", engine: "hls.js", startHeight: 960, maxHeight: 1280, levelSwitches: 1 }),
+      expect.objectContaining({
+        type: "summary",
+        engine: "hls.js",
+        startHeight: 960,
+        maxHeight: 1280,
+        levelSwitches: 1,
+      }),
     );
   });
 });
@@ -372,13 +488,18 @@ describe("cleanup", () => {
     const media = controlMedia(video);
     const added = jest.spyOn(video, "addEventListener");
     const removed = jest.spyOn(video, "removeEventListener");
-    const engine = createVideoEngine(video, SOURCE, { surface: "pdp", allowHls: true });
+    const engine = createVideoEngine(video, SOURCE, {
+      surface: "pdp",
+      allowHls: true,
+    });
     engine.load();
     await flush();
     const hls = FakeHls.instances.at(-1)!;
     engine.dispose();
 
-    const persistent = added.mock.calls.filter(([, , opts]) => !(opts as AddEventListenerOptions | undefined)?.once);
+    const persistent = added.mock.calls.filter(
+      ([, , opts]) => !(opts as AddEventListenerOptions | undefined)?.once,
+    );
     expect(removed.mock.calls.length).toBeGreaterThanOrEqual(persistent.length);
     expect(hls.destroyed).toBe(true);
     expect(video.getAttribute("src")).toBeNull();
@@ -389,7 +510,10 @@ describe("cleanup", () => {
   it("rapid activate/deactivate never leaks engines or hls.js instances", async () => {
     const video = document.createElement("video");
     for (let index = 0; index < 50; index += 1) {
-      const engine = createVideoEngine(video, SOURCE, { surface: "post-detail", allowHls: true });
+      const engine = createVideoEngine(video, SOURCE, {
+        surface: "post-detail",
+        allowHls: true,
+      });
       engine.load();
       // Half are torn down before hls.js has even finished loading.
       if (index % 2) await flush();
@@ -397,7 +521,9 @@ describe("cleanup", () => {
     }
     await flush();
     expect(liveEngineCounts()).toEqual({ engines: 0, hls: 0 });
-    expect(FakeHls.instances.every((instance) => instance.destroyed)).toBe(true);
+    expect(FakeHls.instances.every((instance) => instance.destroyed)).toBe(
+      true,
+    );
   });
 
   it("emits a summary only for views that were actually played", () => {
@@ -412,17 +538,25 @@ describe("cleanup", () => {
     played.markPlayRequested();
     played.dispose();
     expect(events.filter((event) => event.type === "summary")).toEqual([
-      expect.objectContaining({ surface: "story", engine: "mp4", startupMs: null, host: "cdn.test" }),
+      expect.objectContaining({
+        surface: "story",
+        engine: "mp4",
+        startupMs: null,
+        host: "cdn.test",
+      }),
     ]);
   });
 });
 
-
 describe("bounded WebM fallback", () => {
-  const source = { ...SOURCE, webm: "https://cdn.test/uploads/clip_v1-01020304.webm", hasAudio: false };
+  const source = {
+    ...SOURCE,
+    webm: "https://cdn.test/uploads/clip_v1-01020304.webm",
+    hasAudio: false,
+  };
   it("selects WebM initially only when MP4 capability is absent", () => {
     const video = document.createElement("video");
-    video.canPlayType = (type) => type.includes("webm") ? "probably" : "";
+    video.canPlayType = (type) => (type.includes("webm") ? "probably" : "");
     const engine = createVideoEngine(video, source, { surface: "pdp" });
     engine.load();
     expect(engine.engine).toBe("webm");
@@ -430,42 +564,97 @@ describe("bounded WebM fallback", () => {
     engine.dispose();
   });
   it("tries WebM once after decode failure, preserves controls and position, then reports one exhausted failure", () => {
-    const video = document.createElement("video"); video.canPlayType = () => "probably";
-    const media = controlMedia(video), onFatal = jest.fn();
-    video.muted = true; video.volume = 0.4;
-    const engine = createVideoEngine(video, source, { surface: "story", onFatal });
-    engine.load(); media.set({ currentTime: 2 }); media.fail(3);
-    expect(engine.engine).toBe("webm"); expect(onFatal).not.toHaveBeenCalled();
-    expect(video.muted).toBe(true); expect(video.volume).toBe(0.4);
-    media.emit("loadedmetadata"); expect(video.currentTime).toBe(2);
-    media.fail(4); media.fail(4);
+    const video = document.createElement("video");
+    video.canPlayType = () => "probably";
+    const media = controlMedia(video),
+      onFatal = jest.fn();
+    video.muted = true;
+    video.volume = 0.4;
+    const engine = createVideoEngine(video, source, {
+      surface: "story",
+      onFatal,
+    });
+    engine.load();
+    media.set({ currentTime: 2 });
+    media.fail(3);
+    expect(engine.engine).toBe("webm");
+    expect(onFatal).not.toHaveBeenCalled();
+    expect(engine.diagnostics).toMatchObject({
+      path: "/uploads/clip_v1-01020304.webm",
+      attemptedEngines: ["mp4", "webm"],
+    });
+    expect(video.muted).toBe(true);
+    expect(video.volume).toBe(0.4);
+    media.emit("loadedmetadata");
+    expect(video.currentTime).toBe(2);
+    media.fail(4);
+    media.fail(4);
     expect(onFatal).toHaveBeenCalledTimes(1);
-    expect(events.filter((event) => event.type === "error" && event.fatal)).toHaveLength(1);
-    engine.dispose(); expect(liveEngineCounts()).toEqual({ engines: 0, hls: 0 });
+    expect(
+      events.filter((event) => event.type === "error" && event.fatal),
+    ).toHaveLength(1);
+    engine.dispose();
+    expect(liveEngineCounts()).toEqual({ engines: 0, hls: 0 });
   });
   it("never switches formats for network errors or unsupported WebM", () => {
-    const video = document.createElement("video"); video.canPlayType = () => "probably";
-    const media = controlMedia(video), onFatal = jest.fn();
-    const engine = createVideoEngine(video, source, { surface: "pdp", onFatal });
-    engine.load(); media.fail(2); media.fail(2);
-    expect(engine.engine).toBe("mp4"); expect(onFatal).toHaveBeenCalledTimes(1); engine.dispose();
-    const next = document.createElement("video"); next.canPlayType = (type) => type.includes("webm") ? "" : "probably";
-    const unsupported = createVideoEngine(next, source, { surface: "pdp", onFatal }); unsupported.load();
-    controlMedia(next).fail(3); expect(unsupported.engine).toBe("mp4"); unsupported.dispose();
+    const video = document.createElement("video");
+    video.canPlayType = () => "probably";
+    const media = controlMedia(video),
+      onFatal = jest.fn();
+    const engine = createVideoEngine(video, source, {
+      surface: "pdp",
+      onFatal,
+    });
+    engine.load();
+    media.fail(2);
+    media.fail(2);
+    expect(engine.engine).toBe("mp4");
+    expect(onFatal).toHaveBeenCalledTimes(1);
+    engine.dispose();
+    const next = document.createElement("video");
+    next.canPlayType = (type) => (type.includes("webm") ? "" : "probably");
+    const unsupported = createVideoEngine(next, source, {
+      surface: "pdp",
+      onFatal,
+    });
+    unsupported.load();
+    controlMedia(next).fail(3);
+    expect(unsupported.engine).toBe("mp4");
+    unsupported.dispose();
   });
   it("recovers NotSupportedError without escalating before the fallback is tried", async () => {
-    const video = document.createElement("video"); video.canPlayType = () => "probably";
-    const media = controlMedia(video), onFatal = jest.fn();
-    const engine = createVideoEngine(video, source, { surface: "pdp", onFatal }); engine.load();
-    const play = engine.play(); await media.rejectPlay("NotSupportedError"); await play;
-    expect(engine.engine).toBe("webm"); expect(onFatal).not.toHaveBeenCalled(); engine.dispose();
+    const video = document.createElement("video");
+    video.canPlayType = () => "probably";
+    const media = controlMedia(video),
+      onFatal = jest.fn();
+    const engine = createVideoEngine(video, source, {
+      surface: "pdp",
+      onFatal,
+    });
+    engine.load();
+    const play = engine.play();
+    await media.rejectPlay("NotSupportedError");
+    await play;
+    expect(engine.engine).toBe("webm");
+    expect(onFatal).not.toHaveBeenCalled();
+    engine.dispose();
   });
   it("reports unsupported WebM even when only the resumed play promise rejects", async () => {
-    const video = document.createElement("video"); video.canPlayType = () => "probably";
-    const media = controlMedia(video), onFatal = jest.fn();
-    const engine = createVideoEngine(video, source, { surface: "pdp", onFatal }); engine.load();
-    const play = engine.play(); await media.resolvePlay(); await play;
-    media.fail(3); media.emit("canplay"); await media.rejectPlay("NotSupportedError");
+    const video = document.createElement("video");
+    video.canPlayType = () => "probably";
+    const media = controlMedia(video),
+      onFatal = jest.fn();
+    const engine = createVideoEngine(video, source, {
+      surface: "pdp",
+      onFatal,
+    });
+    engine.load();
+    const play = engine.play();
+    await media.resolvePlay();
+    await play;
+    media.fail(3);
+    media.emit("canplay");
+    await media.rejectPlay("NotSupportedError");
     expect(onFatal).toHaveBeenCalledTimes(1);
     expect(engine.engine).toBe("webm");
     engine.dispose();

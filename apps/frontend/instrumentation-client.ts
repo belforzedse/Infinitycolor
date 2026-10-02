@@ -1,4 +1,4 @@
-import { beforeSendDiagnosticLog } from "./src/lib/diagnostic-log";
+import { beforeSendDiagnosticLog, logDiagnostic } from "./src/lib/diagnostic-log";
 import * as Sentry from "@sentry/nextjs";
 
 import type * as SentryReplay from "./src/lib/sentry-replay";
@@ -112,10 +112,35 @@ Sentry.init({
   },
 });
 
-if (process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT === "staging" &&
-    process.env.NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID && typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("sentry_probe") ===
-      process.env.NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID) {
+if (typeof window !== "undefined") {
+  const state = (
+    window as Window & {
+      __infinityListenerRecovery?: { popstate: boolean; pageshow: boolean; flush?: () => void };
+    }
+  ).__infinityListenerRecovery;
+  if (state) {
+    const sent = new Set<string>();
+    state.flush = () => {
+      for (const type of ["popstate", "pageshow"] as const) {
+        if (
+          state[type] &&
+          !sent.has(type) &&
+          logDiagnostic("browser.compatibility", { native_listener: type, outcome: "recovered" })
+        )
+          sent.add(type);
+      }
+    };
+    state.flush();
+  }
+}
+
+if (
+  process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT === "staging" &&
+  process.env.NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID &&
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("sentry_probe") ===
+    process.env.NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID
+) {
   void import("./src/lib/sentry-staging-probe")
     .then(({ runStagingSentryProbe }) => runStagingSentryProbe())
     .catch(() => undefined);

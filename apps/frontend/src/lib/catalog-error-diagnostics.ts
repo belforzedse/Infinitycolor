@@ -81,7 +81,8 @@ export function catalogFailureTags(error: unknown): Record<string, string> {
       status?: unknown;
       cause?: unknown;
     };
-    if (fields.name !== "PLPProductsError") return tags;
+    if (fields.name !== "PLPProductsError" && fields.name !== "PdpProductUnavailableError")
+      return tags;
     if (
       typeof fields.failureStage === "string" &&
       STAGES.has(fields.failureStage as CatalogFailureStage)

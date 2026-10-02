@@ -3,9 +3,20 @@ import { apiClient } from "@/lib/api-client";
 import { API_BASE_URL, ERROR_MESSAGES } from "@/constants/api";
 
 jest.mock("../../lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async (options: unknown) => {
+        const token = await (
+          jest.requireMock("../../lib/central-auth") as {
+            centralAuth: {
+              tokenManager: { getToken: (options: unknown) => Promise<string | null> };
+            };
+          }
+        ).centralAuth.tokenManager.getToken(options);
+        return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+      }),
       expire: jest.fn(),
       clearForLogout: jest.fn(),
     },
