@@ -142,6 +142,10 @@ const nextConfig = {
   // Allow sitemap and other static generation to run longer during build (default 60s)
   staticPageGenerationTimeout: 180,
   compiler: {
+    async runAfterProductionCompile({ distDir }: { distDir: string }) {
+      const { prepareServerMapReferences } = require("./scripts/prepare-sentry-server-maps.cjs");
+      prepareServerMapReferences(path.join(distDir, "server"));
+    },
     removeConsole: process.env.NODE_ENV === "production",
     // Remove SDK-internal debug branches with Turbopack too. Structured Logs,
     // Issues, tracing and Replay do not depend on this debug-only build flag.

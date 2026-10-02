@@ -46,7 +46,7 @@
     "@repo/story-rail": "workspace:*",
     "@repo/ui": "workspace:*",
     "@repo/video-player": "workspace:*",
-    "@sentry/nextjs": "^10.51.0",
+    "@sentry/nextjs": "10.75.3",
     "@tanstack/react-table": "8.21.2",
     "@tanstack/table-core": "8.21.2",
     "@tiptap/extension-character-count": "3.11.1",
