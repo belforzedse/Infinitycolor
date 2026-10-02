@@ -206,7 +206,13 @@ module.exports = withSentryConfig(nextConfig, {
   project: process.env.SENTRY_PROJECT || "infinitycolor-frontend",
   sentryUrl: process.env.SENTRY_URL || "https://errors.alpagency.net",
   authToken: process.env.SENTRY_AUTH_TOKEN,
-  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN, deleteSourcemapsAfterUpload: true },
+  sourcemaps: {
+    disable: !process.env.SENTRY_AUTH_TOKEN,
+    // Server maps use the mandatory bounded upload inside the build-secret
+    // step. Keep the SDK's browser upload and public map deletion intact.
+    assets: [path.resolve(__dirname, ".next/static")],
+    deleteSourcemapsAfterUpload: true,
+  },
   widenClientFileUpload: true,
   release: { name: process.env.SENTRY_RELEASE || process.env.GITHUB_SHA },
 });
