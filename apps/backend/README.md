@@ -184,7 +184,7 @@ ANIPO_TOKEN=
 ANIPO_BASE_URL=
 ```
 
-Postal orders marked complete advance to `Shipment` and enqueue the existing Anipo registration workflow with 500g/box size 3. Registration uses `POST /orders`; barcode issuance may remain pending until Anipo approval. The existing 15-minute worker polls `POST /orders/barcodes` in groups of at most 200, stops after seven days, and marks unresolved orders `NeedsAttention` for staff review. `POST /api/orders/:id/anipo-barcode` remains the manual registration/retry action.
+Postal orders marked complete advance to `Shipment` and enqueue the existing Anipo registration workflow, which weighs the parcel at registration as product `Weight` × quantity over the order's items (unweighed products count as the 100g schema default) with box size 3. Registration uses `POST /orders`; barcode issuance may remain pending until Anipo approval. The existing 15-minute worker polls `POST /orders/barcodes` in groups of at most 200, stops after seven days, and marks unresolved orders `NeedsAttention` for staff review. `POST /api/orders/:id/anipo-barcode` remains the manual registration/retry action.
 
 Behavior notes:
 
