@@ -68,6 +68,12 @@
       "import": "./dist/iran-phone.js",
       "require": "./dist-cjs/iran-phone.js",
       "default": "./dist/iran-phone.js"
+    },
+    "./browser-compatibility": {
+      "types": "./dist/browser-compatibility.d.ts",
+      "import": "./dist/browser-compatibility.js",
+      "require": "./dist-cjs/browser-compatibility.js",
+      "default": "./dist/browser-compatibility.js"
     }
   },
   "scripts": {

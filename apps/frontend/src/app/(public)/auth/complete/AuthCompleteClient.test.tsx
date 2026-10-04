@@ -1,4 +1,5 @@
 import React from "react";
+import * as Sentry from "@sentry/nextjs";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { updateRouteHint } from "@repo/auth-core/browser";
 import { currentUserAtom } from "@/lib/atoms/auth";
@@ -7,11 +8,23 @@ import { centralAuth, readAuthStateVersion } from "@/lib/central-auth";
 import UserService from "@/services/user";
 import AuthCompleteClient from "./AuthCompleteClient";
 
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("@/lib/central-auth", () => ({
   centralAuthOrigin: "https://auth.test",
   readAuthStateVersion: jest.fn(() => 0),
   initializeCentralAuthBrowser: jest.fn(),
-  centralAuth: { tokenManager: { getToken: jest.fn(), expire: jest.fn() } },
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async () => {
+        const token = await jest
+          .requireMock("@/lib/central-auth")
+          .centralAuth.tokenManager.getToken();
+        return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+      }),
+      expire: jest.fn(),
+    },
+  },
 }));
 jest.mock("@/services/user", () => ({ __esModule: true, default: { me: jest.fn() } }));
 jest.mock("@repo/auth-core/browser", () => ({
@@ -85,9 +98,39 @@ it("recovers after StrictMode remount without replaying the single-use exchange"
   await waitFor(() => expect(jotaiStore.get(currentUserAtom)).toEqual(user));
   expect(updateRouteHint).toHaveBeenCalledTimes(1);
 });
-it("retains the loop limit for confirmed invalid credentials", async () => {
+it("retains the loop limit only after the session is confirmed absent", async () => {
+  jest.mocked(centralAuth.tokenManager.getToken).mockResolvedValue(null);
   render(<AuthCompleteClient returnPath="/account" attempt={2} callbackError="invalid_grant" />);
   await screen.findByRole("alert");
-  expect(centralAuth.tokenManager.getToken).not.toHaveBeenCalled();
+  expect(centralAuth.tokenManager.getToken).toHaveBeenCalled();
+  expect(updateRouteHint).not.toHaveBeenCalled();
+});
+
+it.each(["invalid_grant", "grant_exchange_failed"])(
+  "checks the existing session after %s rather than assuming logout",
+  async (callbackError) => {
+    render(<AuthCompleteClient returnPath="/account" attempt={1} callbackError={callbackError} />);
+    await waitFor(() => expect(jotaiStore.get(currentUserAtom)).toEqual(user));
+    expect(centralAuth.tokenManager.expire).not.toHaveBeenCalled();
+    expect(updateRouteHint).toHaveBeenCalledTimes(1);
+    expect(updateRouteHint).toHaveBeenCalledWith("PUT");
+  },
+);
+
+it("reports the terminal unavailable outcome once while retaining retry UI", async () => {
+  jest.mocked(centralAuth.tokenManager.getToken).mockRejectedValue({ status: 503 });
+  render(<AuthCompleteClient returnPath="/account" attempt={1} />);
+  await screen.findByRole("alert");
+  expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+  expect(Sentry.captureException).toHaveBeenCalledWith(
+    expect.any(Error),
+    expect.objectContaining({
+      tags: expect.objectContaining({ operation: "complete", outcome: "unavailable" }),
+    }),
+  );
+  const retry = screen.getByRole("button", { name: "تلاش دوباره" });
+  await act(async () => retry.click());
+  await screen.findByRole("alert");
+  expect(Sentry.captureException).toHaveBeenCalledTimes(1);
   expect(updateRouteHint).not.toHaveBeenCalled();
 });

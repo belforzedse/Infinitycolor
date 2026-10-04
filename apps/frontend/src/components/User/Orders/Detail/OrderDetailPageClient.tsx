@@ -13,14 +13,13 @@ import ReserveInfoCard from "./ReserveInfoCard";
 import toast from "react-hot-toast";
 import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 import { getOrderStatusMeta } from "@/utils/statusTranslations";
-import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import { centralAuth, centralLoginUrl, readAuthStateVersion } from "@/lib/central-auth";
 
 interface OrderDetailPageClientProps {
   orderId: string;
 }
 
-const formatTitle = (order?: Order) =>
-  order ? `سفارش شماره #${order.id}` : "جزئیات سفارش";
+const formatTitle = (order?: Order) => (order ? `سفارش شماره #${order.id}` : "جزئیات سفارش");
 
 export default function OrderDetailPageClient({ orderId }: OrderDetailPageClientProps) {
   const router = useRouter();
@@ -58,12 +57,19 @@ export default function OrderDetailPageClient({ orderId }: OrderDetailPageClient
 
   useEffect(() => {
     let active = true;
-    centralAuth.tokenManager.getToken().then((token) => {
-      if (active && !token) window.location.replace(centralLoginUrl(window.location.pathname));
-    }).catch(() => {
-      if (active) window.location.replace(centralLoginUrl(window.location.pathname));
-    });
-    return () => { active = false; };
+    const version = readAuthStateVersion();
+    void centralAuth.tokenManager
+      .getTokenOutcome()
+      .then((outcome) => {
+        if (active && version === readAuthStateVersion() && outcome.state === "unauthenticated")
+          window.location.replace(centralLoginUrl(window.location.pathname));
+      })
+      .catch(() => {
+        /* Preserve the order snapshot during temporary session unavailability. */
+      });
+    return () => {
+      active = false;
+    };
   }, [router]);
 
   useEffect(() => {
@@ -84,7 +90,9 @@ export default function OrderDetailPageClient({ orderId }: OrderDetailPageClient
         if (!isMounted) return;
         const status = err?.status ?? err?.error?.status;
         if (status === 404 && hasSnapshotRef.current) {
-          setWarning("اطلاعات کامل این سفارش هنوز در دسترس نیست. داده‌های نمایش داده‌شده ممکن است ناقص باشند.");
+          setWarning(
+            "اطلاعات کامل این سفارش هنوز در دسترس نیست. داده‌های نمایش داده‌شده ممکن است ناقص باشند.",
+          );
           setFatalError(null);
           return;
         }
@@ -149,63 +157,62 @@ export default function OrderDetailPageClient({ orderId }: OrderDetailPageClient
   return (
     <UserContainer className="flex flex-col gap-6 py-6 lg:py-10" dir="rtl">
       <StorefrontAccountShell contentClassName="flex flex-col gap-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <button
-                type="button"
-                onClick={() => router.push("/orders")}
-                className="mb-2 text-xs text-slate-500 transition hover:text-slate-700"
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <button
+              type="button"
+              onClick={() => router.push("/orders")}
+              className="mb-2 text-xs text-slate-500 transition hover:text-slate-700"
+            >
+              ← بازگشت به سفارش‌ها
+            </button>
+            <h1 className="text-foreground-primary text-2xl font-semibold lg:text-3xl">
+              {formatTitle(order)}
+            </h1>
+            <p className="text-sm text-slate-500 lg:text-base">
+              وضعیت سفارش خود را به‌صورت کامل مشاهده و پیگیری کنید.
+            </p>
+            {currentStatus ? (
+              <p
+                data-testid="order-current-status"
+                className="mt-3 inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-700"
               >
-                ← بازگشت به سفارش‌ها
-              </button>
-              <h1 className="text-2xl font-semibold text-foreground-primary lg:text-3xl">
-                {formatTitle(order)}
-              </h1>
-              <p className="text-sm text-slate-500 lg:text-base">
-                وضعیت سفارش خود را به‌صورت کامل مشاهده و پیگیری کنید.
+                وضعیت فعلی: {currentStatus.label}
               </p>
-              {currentStatus ? (
-                <p
-                  data-testid="order-current-status"
-                  className="mt-3 inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-700"
-                >
-                  وضعیت فعلی: {currentStatus.label}
-                </p>
-              ) : null}
-            </div>
+            ) : null}
           </div>
+        </div>
 
-          {warning ? (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-700">
-              {warning}
-            </div>
-          ) : null}
-
-          {order.isReserveOrder && (
-            <ReserveInfoCard
-              order={order}
-              onReleased={async () => {
-                try {
-                  const result = await OrderService.getOrderDetail(order.id);
-                  setOrder(result);
-                } catch (err) {
-                  console.error("Failed to refresh order after release", err);
-                  toast.error("خطا در به‌روزرسانی سفارش");
-                }
-              }}
-            />
-          )}
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <OrderTimeline order={order} />
-            <ShippingInfoCard order={order} />
-            <PaymentSummaryCard order={order} />
-            <SupportActions orderId={order.id} shippingBarcode={order.ShippingBarcode} />
+        {warning ? (
+          <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-700">
+            {warning}
           </div>
+        ) : null}
 
-          <OrderItemsList order={order} />
+        {order.isReserveOrder && (
+          <ReserveInfoCard
+            order={order}
+            onReleased={async () => {
+              try {
+                const result = await OrderService.getOrderDetail(order.id);
+                setOrder(result);
+              } catch (err) {
+                console.error("Failed to refresh order after release", err);
+                toast.error("خطا در به‌روزرسانی سفارش");
+              }
+            }}
+          />
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <OrderTimeline order={order} />
+          <ShippingInfoCard order={order} />
+          <PaymentSummaryCard order={order} />
+          <SupportActions orderId={order.id} shippingBarcode={order.ShippingBarcode} />
+        </div>
+
+        <OrderItemsList order={order} />
       </StorefrontAccountShell>
     </UserContainer>
   );
 }
-

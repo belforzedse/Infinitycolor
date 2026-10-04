@@ -8,6 +8,7 @@ import {
   validatedStorefrontReturnPath,
 } from "@/lib/central-auth-server";
 import { browserFamily } from "@/lib/browser-family";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import { redactCatalogCause } from "@/lib/catalog-error-diagnostics";
 
 const LOOP_COOKIE = "infinity_auth_restore_loop";
@@ -24,8 +25,7 @@ function reportCallbackFailure(
     error.name = "AuthCallbackError";
     if (cause) error.cause = redactCatalogCause(cause, "request");
     Sentry.captureException(error, {
-      // A shopper bounced here has effectively failed to log in, and repeats mean
-      // the restore loop is running rather than a one-off bad grant.
+      // A grant receipt does not establish whether the central session still exists.
       level: attempt > 0 ? "error" : "warning",
       tags: {
         area: "auth",
@@ -50,9 +50,10 @@ function loopAttempt(request: NextRequest): number {
   return Number.isSafeInteger(raw) ? Math.min(Math.max(raw, 0), 3) : 0;
 }
 
-function failure(reason: string) {
+function failure(reason: string, attempt: number) {
   const url = storefrontUrl("/auth/complete");
   url.searchParams.set("error", reason);
+  url.searchParams.set("attempt", String(attempt));
   const result = NextResponse.redirect(url, 307);
   result.headers.set("Cache-Control", "no-store, max-age=0");
   return result;
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest) {
   const grant = request.nextUrl.searchParams.get("grant") ?? "";
   if (!/^[A-Za-z0-9_-]{40,80}$/.test(grant)) {
     reportCallbackFailure(request, "invalid_grant", attempt);
-    return failure("invalid_grant");
+    return failure("invalid_grant", attempt);
   }
 
   const controller = new AbortController();
@@ -96,7 +97,7 @@ export async function GET(request: NextRequest) {
       const reason =
         response.status >= 500 ? "grant_exchange_unavailable" : "grant_exchange_failed";
       reportCallbackFailure(request, reason, attempt, undefined, response.status);
-      return failure(reason);
+      return failure(reason, attempt);
     }
     const payload = (await Promise.race([
       response.json(),
@@ -110,17 +111,19 @@ export async function GET(request: NextRequest) {
         new SyntaxError("Invalid exchange response"),
         response.status,
       );
-      return failure("grant_exchange_unavailable");
+      return failure("grant_exchange_unavailable", attempt);
     }
     const returnPath = validatedStorefrontReturnPath(payload.returnTo);
     if (!returnPath) {
       reportCallbackFailure(request, "invalid_return", attempt);
-      return failure("invalid_return");
+      return failure("invalid_return", attempt);
     }
 
-    // The grant was valid, so a non-zero attempt means the shopper already came
-    // through here and was sent back anyway — the loop customers are reporting.
-    if (attempt > 0) reportCallbackFailure(request, "restore_loop", attempt);
+    logDiagnostic("auth.recovery", {
+      operation: "grant_exchange",
+      outcome: "accepted",
+      retry_count: attempt,
+    });
 
     const complete = storefrontUrl("/auth/complete");
     complete.searchParams.set("returnTo", returnPath);
@@ -133,7 +136,7 @@ export async function GET(request: NextRequest) {
     return result;
   } catch (error) {
     reportCallbackFailure(request, "grant_exchange_unavailable", attempt, error);
-    return failure("grant_exchange_unavailable");
+    return failure("grant_exchange_unavailable", attempt);
   } finally {
     clearTimeout(timeout);
   }

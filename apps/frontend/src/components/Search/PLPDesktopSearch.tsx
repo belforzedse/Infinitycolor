@@ -1,5 +1,7 @@
 "use client";
 
+import { recordBrowserHandler } from "@/lib/browser-failure-diagnostics";
+
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
@@ -33,7 +35,9 @@ const readSearchParamFromLocation = () => {
 
 function SearchRouteObserver({ onChange }: { onChange: () => void }) {
   const query = useSearchParams().toString();
-  useEffect(() => { onChange(); }, [query, onChange]);
+  useEffect(() => {
+    onChange();
+  }, [query, onChange]);
   return null;
 }
 
@@ -49,22 +53,35 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   const pathname = usePathname();
   const dismissed = useRef(true);
   const suggestionRequest = useRef<AbortController | null>(null);
+  const interaction = useRef({ open: false, focused: false, loading: false, activeIndex: -1 });
   const dismiss = useCallback(() => {
+    recordBrowserHandler("search_dismiss");
     dismissed.current = true;
-    suggestionRequest.current?.abort();
-    setOpen(false);
-    setIsFocused(false);
-    setLoading(false);
-    setActiveIndex(-1);
-    inputRef.current?.blur();
+    const request = suggestionRequest.current;
+    suggestionRequest.current = null;
+    if (request && !request.signal.aborted)
+      request.abort(new DOMException("Search dismissed", "AbortError"));
+    const previous = interaction.current;
+    interaction.current = { open: false, focused: false, loading: false, activeIndex: -1 };
+    if (previous.open) setOpen(false);
+    if (previous.focused) setIsFocused(false);
+    if (previous.loading) setLoading(false);
+    if (previous.activeIndex !== -1) setActiveIndex(-1);
+    if (inputRef.current === document.activeElement) inputRef.current?.blur();
   }, []);
   const [isFocused, setIsFocused] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-
-  const POPULAR_QUERIES = useMemo(
-    () => ["کیف", "کفش", "کتونی", "شلوار", "پیراهن"],
+  interaction.current = { open, focused: isFocused, loading, activeIndex };
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (blurTimer.current !== null) clearTimeout(blurTimer.current);
+    },
     [],
   );
+  const routeQuery = useRef<string | null>(null);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+
+  const POPULAR_QUERIES = useMemo(() => ["کیف", "کفش", "کتونی", "شلوار", "پیراهن"], []);
 
   const getSearchHref = (term: string) => {
     const basePath = pathname.startsWith("/plp/category/") ? pathname : "/plp";
@@ -72,20 +89,25 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   };
 
   const syncRouteQuery = useCallback(() => {
+    recordBrowserHandler("search_route");
+    const next = readSearchParamFromLocation();
+    const routeKey = `${pathname}:${next}`;
+    if (routeQuery.current === routeKey) return;
+    routeQuery.current = routeKey;
     dismiss();
-    setSearchQuery(readSearchParamFromLocation());
-  }, [dismiss]);
+    setSearchQuery((previous) => (previous === next ? previous : next));
+  }, [dismiss, pathname]);
 
   // This input lives in the (product) layout, which App Router keeps mounted
   // across `/` and `/plp`, so local state would survive leaving the results
   // page. Mirroring the URL is what makes the field empty on the way out and
   // refill when a search URL is opened directly or reached via history.
   useEffect(() => {
-    const syncFromUrl = () => { dismiss(); setSearchQuery(readSearchParamFromLocation()); };
+    const syncFromUrl = syncRouteQuery;
     syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [pathname, dismiss]);
+  }, [pathname, syncRouteQuery]);
 
   useEffect(() => {
     try {
@@ -133,10 +155,6 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   // Debounced live search suggestions (native fetch to avoid global overlays)
   useEffect(() => {
     let mounted = true;
-    const controller = new AbortController();
-    suggestionRequest.current = controller;
-    setActiveIndex(-1);
-
     const q = searchQuery.trim();
     if (dismissed.current || !isFocused) return;
     if (q.length < 2) {
@@ -145,6 +163,9 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
       return;
     }
 
+    const controller = new AbortController();
+    suggestionRequest.current = controller;
+    setActiveIndex((previous) => (previous === -1 ? previous : -1));
     setLoading(true);
     const t = setTimeout(async () => {
       try {
@@ -156,7 +177,15 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
           signal: controller.signal,
         });
         if (!mounted || controller.signal.aborted || dismissed.current) return;
+        if (!res.ok) throw new Error("Search unavailable");
         const json = await res.json();
+        if (
+          !mounted ||
+          controller.signal.aborted ||
+          dismissed.current ||
+          suggestionRequest.current !== controller
+        )
+          return;
 
         const items = (json?.data || []).map((raw: any) => {
           const attrs = raw?.attributes ? raw.attributes : raw;
@@ -205,14 +234,16 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
         dismiss();
         // Silently ignore; console already logs in service
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted && suggestionRequest.current === controller) setLoading(false);
       }
     }, 300);
 
     return () => {
       mounted = false;
       clearTimeout(t);
-      controller.abort();
+      if (suggestionRequest.current === controller) suggestionRequest.current = null;
+      if (!controller.signal.aborted)
+        controller.abort(new DOMException("Search disposed", "AbortError"));
     };
   }, [isFocused, searchQuery]);
 
@@ -229,7 +260,10 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   }, []);
 
   const onKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
-    if (e.key === "Escape") { dismiss(); return; }
+    if (e.key === "Escape") {
+      dismiss();
+      return;
+    }
     if (!open || suggestions.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -240,7 +274,10 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       const item = suggestions[activeIndex];
-      if (item) { dismiss(); router.push(`/pdp/${item.slug || item.id}`); }
+      if (item) {
+        dismiss();
+        router.push(`/pdp/${item.slug || item.id}`);
+      }
     } else if (e.key === "Escape") {
       dismiss();
     }
@@ -260,7 +297,9 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
         className,
       ].join(" ")}
     >
-      <Suspense fallback={null}><SearchRouteObserver onChange={syncRouteQuery} /></Suspense>
+      <Suspense fallback={null}>
+        <SearchRouteObserver onChange={syncRouteQuery} />
+      </Suspense>
       <div className="flex items-center gap-2 py-2 pl-2 pr-5" dir="ltr">
         <button
           type="submit"
@@ -292,19 +331,23 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
             setOpen(true);
           }}
           onFocus={() => {
+            if (blurTimer.current !== null) clearTimeout(blurTimer.current);
+            blurTimer.current = null;
             setIsFocused(true);
             dismissed.current = false;
             setOpen(true);
           }}
           onBlur={() => {
-            setTimeout(() => {
-              if (!open) setIsFocused(false);
+            if (blurTimer.current !== null) clearTimeout(blurTimer.current);
+            blurTimer.current = setTimeout(() => {
+              blurTimer.current = null;
+              if (!interaction.current.open && interaction.current.focused) setIsFocused(false);
             }, 80);
           }}
           onKeyDown={onKeyDown}
           placeholder="دنبال چی میگردی؟"
           dir="rtl"
-          className="min-w-0 flex-1 bg-transparent text-right text-xs leading-[21px] text-neutral-600 placeholder:text-neutral-400 outline-none"
+          className="min-w-0 flex-1 bg-transparent text-right text-xs leading-[21px] text-neutral-600 outline-none placeholder:text-neutral-400"
           role="combobox"
           aria-expanded={open}
           aria-controls="plp-desktop-suggestions"
@@ -319,39 +362,19 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
           aria-label="پیشنهادهای جستجو"
           id="plp-desktop-suggestions"
         >
-            {/* Screen reader announcement for result count */}
-            {!loading && suggestions.length > 0 && (
-              <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-                {suggestions.length} نتیجه یافت شد برای "{searchQuery.trim()}"
-              </div>
-            )}
-            {searchQuery.trim().length < 2 && !loading ? (
-              <div className="flex flex-col gap-2 p-3 text-right text-sm text-neutral-600">
-                {recentSearches.length > 0 && (
-                  <div>
-                    <span className="text-xs font-medium text-neutral-500">جستجوهای اخیر</span>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {recentSearches.map((term) => (
-                        <button
-                          key={term}
-                          type="button"
-                          onClick={() => {
-                            setSearchQuery(term);
-                            dismiss();
-                            router.push(getSearchHref(term));
-                          }}
-                          className="pressable text-xs rounded-full border border-slate-200 px-3 py-1 text-infinity-primary hover:border-infinity-primary-lighter hover:bg-infinity-primary-lighter/20"
-                        >
-                          {term}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+          {/* Screen reader announcement for result count */}
+          {!loading && suggestions.length > 0 && (
+            <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+              {suggestions.length} نتیجه یافت شد برای "{searchQuery.trim()}"
+            </div>
+          )}
+          {searchQuery.trim().length < 2 && !loading ? (
+            <div className="flex flex-col gap-2 p-3 text-right text-sm text-neutral-600">
+              {recentSearches.length > 0 && (
                 <div>
-                  <span className="text-xs font-medium text-neutral-500">جستجوهای محبوب</span>
+                  <span className="text-xs font-medium text-neutral-500">جستجوهای اخیر</span>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {POPULAR_QUERIES.map((term) => (
+                    {recentSearches.map((term) => (
                       <button
                         key={term}
                         type="button"
@@ -360,79 +383,99 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
                           dismiss();
                           router.push(getSearchHref(term));
                         }}
-                        className="pressable text-xs rounded-full border border-slate-200 px-3 py-1 text-neutral-600 hover:border-infinity-primary-lighter hover:bg-infinity-primary-lighter/20"
+                        className="pressable rounded-full border border-slate-200 px-3 py-1 text-xs text-infinity-primary hover:border-infinity-primary-lighter hover:bg-infinity-primary-lighter/20"
                       >
                         {term}
                       </button>
                     ))}
                   </div>
                 </div>
-                <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs text-neutral-500">
-                  <span>برای جستجوی سریع‌تر از کلید‌های جهت‌دار استفاده کنید</span>
-                  <span className="font-medium text-slate-400">↕ / ↵</span>
+              )}
+              <div>
+                <span className="text-xs font-medium text-neutral-500">جستجوهای محبوب</span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {POPULAR_QUERIES.map((term) => (
+                    <button
+                      key={term}
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery(term);
+                        dismiss();
+                        router.push(getSearchHref(term));
+                      }}
+                      className="pressable rounded-full border border-slate-200 px-3 py-1 text-xs text-neutral-600 hover:border-infinity-primary-lighter hover:bg-infinity-primary-lighter/20"
+                    >
+                      {term}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ) : (
-              <>
-                {loading && (
-                  <div className="space-y-2 px-3 py-3">
-                    {Array.from({ length: 3 }).map((_, index) => (
-                      <div key={index} className="flex items-center gap-3">
-                        <div className="skeleton-shimmer h-12 w-12 rounded-xl" />
-                        <div className="flex-1 space-y-2">
-                          <div className="skeleton-shimmer-light h-3 w-2/3 rounded" />
-                          <div className="skeleton-shimmer-light h-3 w-1/3 rounded" />
-                        </div>
+              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs text-neutral-500">
+                <span>برای جستجوی سریع‌تر از کلید‌های جهت‌دار استفاده کنید</span>
+                <span className="font-medium text-slate-400">↕ / ↵</span>
+              </div>
+            </div>
+          ) : (
+            <>
+              {loading && (
+                <div className="space-y-2 px-3 py-3">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="flex items-center gap-3">
+                      <div className="skeleton-shimmer h-12 w-12 rounded-xl" />
+                      <div className="flex-1 space-y-2">
+                        <div className="skeleton-shimmer-light h-3 w-2/3 rounded" />
+                        <div className="skeleton-shimmer-light h-3 w-1/3 rounded" />
                       </div>
-                    ))}
-                  </div>
-                )}
-                {!loading && suggestions.length === 0 && (
-                  <div className="text-xs px-3 py-2 text-neutral-500">موردی یافت نشد</div>
-                )}
-                {!loading &&
-                  suggestions.map((s, idx) => (
-                    <div
-                      key={s.id}
-                      role="option"
-                      aria-selected={activeIndex === idx}
-                      aria-label={`${s.Title} - ${s.Price ? `${s.Price} تومان` : ''}`}
-                    >
-                      <SearchSuggestionCard
-                        id={s.id}
-                        title={s.Title}
-                        price={s.Price}
-                        discountPrice={s.DiscountPrice}
-                        discount={s.Discount}
-                        category={s.category}
-                        image={s.image}
-                        isAvailable={s.isAvailable}
-                        onClick={() => {
-                          persistRecent(s.Title);
-                          dismiss();
-                          router.push(`/pdp/${s.slug || s.id}`);
-                        }}
-                        index={idx}
-                        isActive={activeIndex === idx}
-                        query={searchQuery.trim()}
-                      />
                     </div>
                   ))}
-                {!loading && suggestions.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      persistRecent(searchQuery);
-                      dismiss();
-                      router.push(getSearchHref(searchQuery.trim()));
-                    }}
-                    className="text-xs block w-full border-t border-slate-200 bg-white/0 px-3 py-2 text-right text-infinity-primary hover:bg-slate-50"
+                </div>
+              )}
+              {!loading && suggestions.length === 0 && (
+                <div className="px-3 py-2 text-xs text-neutral-500">موردی یافت نشد</div>
+              )}
+              {!loading &&
+                suggestions.map((s, idx) => (
+                  <div
+                    key={s.id}
+                    role="option"
+                    aria-selected={activeIndex === idx}
+                    aria-label={`${s.Title} - ${s.Price ? `${s.Price} تومان` : ""}`}
                   >
-                    مشاهده همه نتایج
-                  </button>
-                )}
-              </>
-            )}
+                    <SearchSuggestionCard
+                      id={s.id}
+                      title={s.Title}
+                      price={s.Price}
+                      discountPrice={s.DiscountPrice}
+                      discount={s.Discount}
+                      category={s.category}
+                      image={s.image}
+                      isAvailable={s.isAvailable}
+                      onClick={() => {
+                        persistRecent(s.Title);
+                        dismiss();
+                        router.push(`/pdp/${s.slug || s.id}`);
+                      }}
+                      index={idx}
+                      isActive={activeIndex === idx}
+                      query={searchQuery.trim()}
+                    />
+                  </div>
+                ))}
+              {!loading && suggestions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    persistRecent(searchQuery);
+                    dismiss();
+                    router.push(getSearchHref(searchQuery.trim()));
+                  }}
+                  className="block w-full border-t border-slate-200 bg-white/0 px-3 py-2 text-right text-xs text-infinity-primary hover:bg-slate-50"
+                >
+                  مشاهده همه نتایج
+                </button>
+              )}
+            </>
+          )}
         </div>
       )}
     </form>

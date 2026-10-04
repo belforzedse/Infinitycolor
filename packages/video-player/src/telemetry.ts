@@ -50,6 +50,22 @@ export interface VideoPlaybackError {
   host: string;
   path: string;
   attemptedEngines?: PlaybackEngine[];
+  playback?: PlaybackDiagnostics;
+}
+
+export interface NativePlayRecord {
+  sourceGeneration: number;
+  attempt: number;
+  engine: PlaybackEngine;
+  cancellationContext?: "hold" | "pause";
+  outcome:
+    | "requested"
+    | "playing"
+    | "cancelled"
+    | "NotAllowedError"
+    | "NotSupportedError"
+    | "AbortError"
+    | "unknown";
 }
 
 export interface PlaybackDiagnostics {
@@ -57,6 +73,11 @@ export interface PlaybackDiagnostics {
   host: string;
   path: string;
   attemptedEngines: PlaybackEngine[];
+  sourceGeneration?: number;
+  rejectionType?: string;
+  mediaReadyState?: number;
+  mediaNetworkState?: number;
+  attemptHistory?: NativePlayRecord[];
 }
 
 export type VideoTelemetryEvent = VideoPlaybackSummary | VideoPlaybackError;

@@ -92,3 +92,18 @@ it("deduplicates the same digest across remounted boundaries", () => {
   );
   expect(Sentry.captureException).toHaveBeenCalledTimes(1);
 });
+
+it("does not classify an unexplained AbortError as a recoverable network cut", () => {
+  const error = new DOMException("signal is aborted without reason", "AbortError");
+  expect(retryStorefrontError(error, "global", jest.fn())).toBe(false);
+  reportStorefrontError(error, "global");
+  expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+});
+it("keeps the original exception when dispatching recovery itself fails", () => {
+  const original = new Error("Connection closed.");
+  retryStorefrontError(original, "catalog", () => {
+    throw new Error("dispatch failed");
+  });
+  expect(Sentry.captureException).toHaveBeenCalledWith(original, expect.any(Object));
+  expect(exhaustStorefrontRecovery(original, "catalog")).toBe(false);
+});

@@ -148,6 +148,24 @@ export class ApiClient {
           throw error;
         }
 
+        const diagnostics = (
+          error as {
+            name?: string;
+            diagnostics?: {
+              cancelled?: boolean;
+              stage?: string;
+              name?: string;
+            };
+          } | null
+        )?.diagnostics;
+        if (
+          diagnostics?.cancelled ||
+          (diagnostics?.stage === "response_json" &&
+            diagnostics.name === "SyntaxError") ||
+          (error as { name?: string } | null)?.name === "TokenAcquisitionError"
+        )
+          break;
+
         if (attempt >= retries) {
           break;
         }
@@ -273,6 +291,7 @@ export class ApiClient {
       try {
         return JSON.parse(text);
       } catch {
+        if (response.ok) throw new SyntaxError("Invalid API JSON response");
         return { message: text };
       }
     }
@@ -323,7 +342,9 @@ export class ApiClient {
     // Reads may be retried safely. Mutations default to one attempt because a
     // lost response does not prove the server failed to apply the operation.
     const retries =
-      options?.retries ?? (isGet ? this.retryConfig.maxRetries : 0);
+      isGet || method.toUpperCase() === "HEAD"
+        ? (options?.retries ?? this.retryConfig.maxRetries)
+        : 0;
 
     const cache = this.apiCache;
     const cacheKey = cache ? cache.generateKey(method, urlString, data) : "";
@@ -419,6 +440,7 @@ export class ApiClient {
     let failureStage: "request" | "response_json" | "response_status" =
       "request";
     let requestId: string | undefined;
+    let httpStatus: number | undefined;
     let headers = await this.buildHeaders(options?.headers, options?.skipAuth);
 
     if (etag && method.toUpperCase() === "GET") {
@@ -434,9 +456,21 @@ export class ApiClient {
     };
 
     const controller = new AbortController();
+    const abortError = () =>
+      Object.assign(new Error("Request interrupted"), { name: "AbortError" });
+    let onInterrupted!: () => void;
+    const interrupted = new Promise<never>((_, reject) => {
+      onInterrupted = () => reject(abortError());
+      controller.signal.addEventListener("abort", onInterrupted, {
+        once: true,
+      });
+    });
+    // Observe interruption even when a custom fetch/body implementation ignores the signal.
+    void interrupted.catch(() => undefined);
     const cleanupExternalAbort = options?.signal
       ? (() => {
           const onAbort = () => controller.abort();
+          if (options.signal!.aborted) onAbort();
           options.signal!.addEventListener("abort", onAbort);
           return () => options.signal!.removeEventListener("abort", onAbort);
         })()
@@ -447,10 +481,15 @@ export class ApiClient {
     );
 
     try {
-      let response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
+      if (controller.signal.aborted) throw abortError();
+      let response = await Promise.race([
+        fetch(url, {
+          ...config,
+          signal: controller.signal,
+        }),
+        interrupted,
+      ]);
+      httpStatus = response.status;
 
       const methodUpper = method.toUpperCase();
       const authRejected =
@@ -475,17 +514,20 @@ export class ApiClient {
             (headers as Record<string, string>)["If-None-Match"] = etag;
           }
           if (new Headers(headers).has("authorization")) {
-            response = await fetch(url, {
-              ...config,
-              headers,
-              signal: controller.signal,
-            });
+            response = await Promise.race([
+              fetch(url, {
+                ...config,
+                headers,
+                signal: controller.signal,
+              }),
+              interrupted,
+            ]);
+            httpStatus = response.status;
           }
         }
       }
 
-      clearTimeout(timeoutId);
-      if (cleanupExternalAbort) cleanupExternalAbort();
+      if (controller.signal.aborted) throw abortError();
 
       if (response.status === 304) {
         throw new NotModifiedError();
@@ -498,14 +540,17 @@ export class ApiClient {
       )
         requestId = candidateRequestId;
       failureStage = "response_json";
-      const responseData = await this.parseResponseData(response);
+      const responseData = await Promise.race([
+        this.parseResponseData(response),
+        interrupted,
+      ]);
 
       if (!response.ok) {
         const error = this.handleError(
           response.status,
           responseData as ErrorResponse,
         );
-        error.diagnostics = { stage: "response_status", requestId };
+        error.diagnostics = { stage: "response_status", requestId, httpStatus };
 
         if (!options?.suppressAuthRedirect) {
           this.onHttpError?.(error, { status: response.status, options });
@@ -519,9 +564,6 @@ export class ApiClient {
         headers: response.headers,
       };
     } catch (error: unknown) {
-      clearTimeout(timeoutId);
-      if (cleanupExternalAbort) cleanupExternalAbort();
-
       if (error instanceof NotModifiedError) {
         throw error;
       }
@@ -534,6 +576,7 @@ export class ApiClient {
             stage: failureStage,
             name: "AbortError",
             requestId,
+            httpStatus,
             cancelled: Boolean(options?.signal?.aborted),
           },
         } satisfies ApiError;
@@ -586,11 +629,16 @@ export class ApiClient {
         diagnostics: {
           stage: failureStage,
           requestId,
+          httpStatus,
           name:
             fields.name && safeNames.has(fields.name) ? fields.name : undefined,
           code: code && safeCodes.has(code) ? code : undefined,
         },
       } satisfies ApiError;
+    } finally {
+      clearTimeout(timeoutId);
+      cleanupExternalAbort?.();
+      controller.signal.removeEventListener("abort", onInterrupted);
     }
   }
 

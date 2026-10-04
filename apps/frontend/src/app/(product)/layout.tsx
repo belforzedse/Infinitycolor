@@ -1,4 +1,6 @@
 "use client";
+
+import { recordBrowserHandler } from "@/lib/browser-failure-diagnostics";
 import PLPDesktopHeaderTopBar from "@/components/PLP/Header/DesktopTopBar";
 import HeaderDesktopNav from "@/components/PLP/Header/DesktopNav";
 import Footer from "@/components/PLP/Footer";
@@ -21,6 +23,7 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
   const [scrolled, setScrolled] = React.useState(false);
   const [showHeader, setShowHeader] = React.useState(true);
   const lastScrollY = React.useRef(0);
+  const scrollState = React.useRef({ scrolled: false, showHeader: true });
   const updateHeaderOffset = React.useCallback(() => {
     if (typeof window === "undefined") return;
     const header = document.querySelector<HTMLElement>("[data-main-header]");
@@ -28,31 +31,53 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
     const headerHeight = header?.getBoundingClientRect().height ?? 0;
     const safeAreaHeight = safeArea?.getBoundingClientRect().height ?? 0;
     const offset = Math.max(0, Math.round(headerHeight + safeAreaHeight));
-    document.documentElement.style.setProperty("--header-offset", `${offset}px`);
+    if (document.documentElement.style.getPropertyValue("--header-offset") !== `${offset}px`)
+      document.documentElement.style.setProperty("--header-offset", `${offset}px`);
   }, []);
 
   React.useEffect(() => {
-    const handleScroll = () => {
+    let frame: number | undefined;
+    const update = () => {
+      recordBrowserHandler("header_scroll");
       const currentY = window.scrollY;
       const nextScrolled = currentY > 8;
-      setScrolled((prev) => (prev === nextScrolled ? prev : nextScrolled));
+      if (scrollState.current.scrolled !== nextScrolled) {
+        scrollState.current.scrolled = nextScrolled;
+        setScrolled(nextScrolled);
+      }
 
       if (window.innerWidth >= 1024) {
         lastScrollY.current = currentY;
-        setShowHeader((prev) => (prev === true ? prev : true));
+        if (!scrollState.current.showHeader) {
+          scrollState.current.showHeader = true;
+          setShowHeader(true);
+        }
         return;
       }
 
       const isScrollingUp = currentY <= lastScrollY.current;
       const nearTop = currentY < 80;
       const nextShowHeader = isScrollingUp || nearTop;
-      setShowHeader((prev) => (prev === nextShowHeader ? prev : nextShowHeader));
+      if (scrollState.current.showHeader !== nextShowHeader) {
+        scrollState.current.showHeader = nextShowHeader;
+        setShowHeader(nextShowHeader);
+      }
       lastScrollY.current = Math.max(0, currentY);
     };
 
-    handleScroll();
+    const handleScroll = () => {
+      if (frame !== undefined) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        update();
+      });
+    };
+    update();
     window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
+    return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", handleScroll);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -101,11 +126,12 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
 
     if (!shouldScrollTop) return;
 
-    window.requestAnimationFrame(() => {
+    const frame = window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       document.documentElement.scrollTop = 0;
       document.body.scrollTop = 0;
     });
+    return () => window.cancelAnimationFrame(frame);
   }, [pathname]);
 
   const headerStyle = !showHeader

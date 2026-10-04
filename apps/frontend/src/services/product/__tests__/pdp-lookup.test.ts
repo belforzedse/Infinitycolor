@@ -66,3 +66,24 @@ it("retains JSON parse stage, HTTP status and correlation without normalization"
   expect(normalizeProductDetail).not.toHaveBeenCalled();
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it("retains response correlation when normalization itself throws", async () => {
+  jest
+    .mocked(fetch)
+    .mockResolvedValue(
+      new Response('{"data":{}}', { headers: { "x-request-id": "receipt-normalization" } }),
+    );
+  jest.mocked(normalizeProductDetail).mockImplementationOnce(() => {
+    throw new TypeError("private payload");
+  });
+  expect(await fetchPdpProduct("malformed", 30)).toMatchObject({
+    errorDetails: {
+      status: 200,
+      requestId: "receipt-normalization",
+      attempts: 1,
+      failureStage: "response_normalization",
+      requestShape: { application_header_bytes: expect.any(Number) },
+      cause: { name: "TypeError" },
+    },
+  });
+});

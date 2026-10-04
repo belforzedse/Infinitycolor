@@ -1,14 +1,35 @@
 import { getLegacyRuntimePolyfillScript } from "../legacyRuntimePolyfills";
 
+const addDescriptor = Object.getOwnPropertyDescriptor(window, "addEventListener");
+const removeDescriptor = Object.getOwnPropertyDescriptor(window, "removeEventListener");
+const stringify = Function.prototype.toString;
 const originalAdd = window.addEventListener;
 const originalRemove = window.removeEventListener;
+function restore() {
+  if (addDescriptor) Object.defineProperty(window, "addEventListener", addDescriptor);
+  else delete (window as any).addEventListener;
+  if (removeDescriptor) Object.defineProperty(window, "removeEventListener", removeDescriptor);
+  else delete (window as any).removeEventListener;
+  delete (window as any).__infinityListenerGuard;
+}
 beforeEach(() => {
+  restore();
+  jest.spyOn(Function.prototype, "toString").mockImplementation(function (
+    this: (...args: never[]) => unknown,
+  ) {
+    if (
+      this === EventTarget.prototype.addEventListener ||
+      this === EventTarget.prototype.removeEventListener
+    )
+      return "function () { [native code] }";
+    return stringify.call(this);
+  });
   window.addEventListener = originalAdd;
   window.removeEventListener = originalRemove;
 });
 afterEach(() => {
-  window.addEventListener = originalAdd;
-  window.removeEventListener = originalRemove;
+  restore();
+  jest.restoreAllMocks();
 });
 
 function injectedError(mixed = false): Error {
@@ -18,7 +39,7 @@ function injectedError(mixed = false): Error {
     : "TypeError\n at addEL_hook (<anonymous>:675:29)\n at top.addEventListener (<anonymous>:695:9)";
   return error;
 }
-it.each(["popstate", "pageshow"])(
+it.each(["popstate", "pageshow", "resize", "focus"])(
   "recovers only the verified injected %s registration and cleans it up",
   (type) => {
     window.addEventListener = function (...args: Parameters<typeof originalAdd>) {
@@ -54,4 +75,34 @@ it("keeps normal registration unchanged", () => {
   window.dispatchEvent(new Event("popstate"));
   window.removeEventListener("popstate", listener);
   expect(listener).toHaveBeenCalledTimes(1);
+});
+
+it("recovers hooks assigned after bootstrap without SDK wrapper recursion", () => {
+  new Function(getLegacyRuntimePolyfillScript())();
+  const previous = window.addEventListener;
+  window.addEventListener = function (type, listener, options) {
+    if (type === "resize") throw injectedError();
+    return previous.call(this, type, listener, options);
+  };
+  const dependency = window.addEventListener;
+  window.addEventListener = function (type, listener, options) {
+    return dependency.call(this, type, listener, options);
+  };
+  const listener = jest.fn();
+  window.addEventListener("resize", listener);
+  window.dispatchEvent(new Event("resize"));
+  window.removeEventListener("resize", listener);
+  window.dispatchEvent(new Event("resize"));
+  expect(listener).toHaveBeenCalledTimes(1);
+});
+
+it("retains a first-party throwing frame even with injected frames below it", () => {
+  const error = injectedError();
+  error.stack =
+    "TypeError\n at application (/_next/static/app.js:1:1)\n at addEL_hook (<anonymous>:675:29)\n at top.addEventListener (<anonymous>:695:9)";
+  new Function(getLegacyRuntimePolyfillScript())();
+  window.addEventListener = () => {
+    throw error;
+  };
+  expect(() => window.addEventListener("focus", jest.fn())).toThrow(error);
 });

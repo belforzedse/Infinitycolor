@@ -2,7 +2,11 @@ import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
 import { PRODUCT_TAG, productSlugTag } from "@/constants/cacheTags";
 import type { ProductDetail } from "./product";
 import { normalizeProductDetail } from "@/app/(product)/pdp/normalizeProductDetail";
-import { fetchCatalogJson, CatalogTransportError } from "@/lib/catalog-transport";
+import {
+  fetchCatalogJson,
+  CatalogTransportError,
+  type CatalogRequestShape,
+} from "@/lib/catalog-transport";
 import { redactCatalogCause, type CatalogFailureStage } from "@/lib/catalog-error-diagnostics";
 const PDP_PRODUCT_SHELL_QUERY = "view=shell";
 type ProductLookupFailure = "missing" | "unavailable";
@@ -17,6 +21,8 @@ export type ProductLookupResult = {
     failureStage?: CatalogFailureStage;
     cause?: unknown;
     requestId?: string;
+    attempts?: number;
+    requestShape?: CatalogRequestShape;
     error?: PdpProductUnavailableError;
   };
 };
@@ -25,6 +31,8 @@ export class PdpProductUnavailableError extends Error {
   readonly failureStage: CatalogFailureStage;
   readonly status?: number;
   readonly requestId?: string;
+  readonly attempts?: number;
+  readonly requestShape?: CatalogRequestShape;
   constructor(public readonly details: NonNullable<ProductLookupResult["errorDetails"]> = {}) {
     super(
       "PRODUCT_DATA_UNAVAILABLE",
@@ -37,6 +45,8 @@ export class PdpProductUnavailableError extends Error {
     this.failureStage = details.failureStage ?? "request";
     this.status = details.status;
     this.requestId = details.requestId;
+    this.attempts = details.attempts;
+    this.requestShape = details.requestShape;
   }
 }
 
@@ -45,8 +55,13 @@ export const fetchPdpProduct = async (
   revalidateSeconds: number,
 ): Promise<ProductLookupResult> => {
   const apiUrl = `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.PRODUCT}/by-slug/${encodeURIComponent(decodedSlug)}?${PDP_PRODUCT_SHELL_QUERY}`;
+  let receipt:
+    | { status: number; requestId?: string; attempts: number; requestShape: CatalogRequestShape }
+    | undefined;
   try {
-    const { response, data, requestId } = await fetchCatalogJson<{ data?: unknown }>(
+    const { response, data, requestId, attempts, requestShape } = await fetchCatalogJson<{
+      data?: unknown;
+    }>(
       apiUrl,
       {
         headers: { Accept: "application/json" },
@@ -54,6 +69,7 @@ export const fetchPdpProduct = async (
       },
       "pdp",
     );
+    receipt = { status: response.status, requestId, attempts, requestShape };
     if (!response.ok)
       return {
         product: null,
@@ -63,6 +79,8 @@ export const fetchPdpProduct = async (
           failure: response.status === 404 ? "missing" : "unavailable",
           failureStage: "response_status",
           requestId,
+          attempts,
+          requestShape,
         },
       };
     const product = normalizeProductDetail(data?.data);
@@ -75,6 +93,8 @@ export const fetchPdpProduct = async (
           failure: "unavailable",
           failureStage: "response_normalization",
           requestId,
+          attempts,
+          requestShape,
         },
       };
     return { product };
@@ -86,8 +106,11 @@ export const fetchPdpProduct = async (
         failure: "unavailable",
         failureStage:
           cause instanceof CatalogTransportError ? cause.failureStage : "response_normalization",
-        status: cause instanceof CatalogTransportError ? cause.status : undefined,
-        requestId: cause instanceof CatalogTransportError ? cause.requestId : undefined,
+        status: cause instanceof CatalogTransportError ? cause.status : receipt?.status,
+        requestId: cause instanceof CatalogTransportError ? cause.requestId : receipt?.requestId,
+        attempts: cause instanceof CatalogTransportError ? cause.attempts : receipt?.attempts,
+        requestShape:
+          cause instanceof CatalogTransportError ? cause.requestShape : receipt?.requestShape,
         cause:
           cause instanceof CatalogTransportError
             ? cause.cause

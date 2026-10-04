@@ -5,6 +5,12 @@ export async function register() {
 
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("../sentry.server.config");
+    try {
+      const { installCatalogWireDiagnostics } = await import("./lib/catalog-wire-diagnostics");
+      installCatalogWireDiagnostics();
+    } catch {
+      /* Optional observation must not prevent server startup. */
+    }
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {

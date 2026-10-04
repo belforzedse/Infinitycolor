@@ -42,3 +42,29 @@ it("retains a sanitized original transport cause without private text", () => {
   });
   expect(JSON.stringify(result)).not.toContain("private endpoint");
 });
+
+it("distinguishes a transport compatibility status from a received HTTP status", () => {
+  expect(
+    checkoutFailureDiagnostics(
+      { status: 500, diagnostics: { stage: "request", name: "TypeError" } },
+      "quote",
+    ).attributes,
+  ).toMatchObject({ outcome: "transport", http_status: undefined });
+  expect(
+    checkoutFailureDiagnostics(
+      { status: 500, diagnostics: { stage: "response_status", httpStatus: 500 } },
+      "quote",
+    ).attributes,
+  ).toMatchObject({ outcome: "http", http_status: 500 });
+});
+it("keeps body parsing distinct from transport and HTTP rejection", () => {
+  expect(
+    checkoutFailureDiagnostics(
+      {
+        status: 500,
+        diagnostics: { stage: "response_json", httpStatus: 200, name: "SyntaxError" },
+      },
+      "finalize",
+    ).attributes,
+  ).toMatchObject({ outcome: "parsing", http_status: 200 });
+});

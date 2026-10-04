@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,8 +19,16 @@ const backendDir = join(here, "..", "..", "backend");
 export const VIDEO_FIXTURE_DIR = join(here, "..", ".cache", "video-fixtures");
 
 export function ffmpegAvailable(): boolean {
-  const ffmpeg = spawnSync(process.env.FFMPEG_PATH || "ffmpeg", ["-hide_banner", "-version"], { stdio: "ignore" });
-  const ffprobe = spawnSync(process.env.FFPROBE_PATH || "ffprobe", ["-hide_banner", "-version"], { stdio: "ignore" });
+  const ffmpeg = spawnSync(
+    process.env.FFMPEG_PATH || "ffmpeg",
+    ["-hide_banner", "-version"],
+    { stdio: "ignore" },
+  );
+  const ffprobe = spawnSync(
+    process.env.FFPROBE_PATH || "ffprobe",
+    ["-hide_banner", "-version"],
+    { stdio: "ignore" },
+  );
   return ffmpeg.status === 0 && ffprobe.status === 0;
 }
 
@@ -34,21 +43,51 @@ export interface PipelineClip {
 
 export function ensurePipelineClips(
   count = 3,
-  { segmentSeconds = 4, seconds = 10 }: { segmentSeconds?: number; seconds?: number } = {},
+  {
+    segmentSeconds = 4,
+    seconds = 10,
+  }: { segmentSeconds?: number; seconds?: number } = {},
 ): PipelineClip[] {
-  const result = spawnSync(
-    join(backendDir, "node_modules", ".bin", "tsx"),
-    [
-      "scripts/media/build-playback-fixtures.ts",
-      `--out=${VIDEO_FIXTURE_DIR}`,
-      `--count=${count}`,
-      `--seconds=${seconds}`,
-      `--segment=${segmentSeconds}`,
-    ],
-    { cwd: backendDir, encoding: "utf8", timeout: 10 * 60_000 },
-  );
-  if (result.status !== 0) {
-    throw new Error(`building playback fixtures failed:\n${result.stderr || result.stdout}`);
+  mkdirSync(VIDEO_FIXTURE_DIR, { recursive: true });
+  const lock = join(VIDEO_FIXTURE_DIR, ".build-lock");
+  const deadline = Date.now() + 10 * 60_000;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  // Browser projects share this cache. Concurrent FFmpeg writers corrupt otherwise
+  // valid MP4s, so the complete fixture build and cache check have one owner.
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (Date.now() >= deadline)
+        throw new Error(
+          "Timed out waiting for the local media fixture builder",
+        );
+      Atomics.wait(pause, 0, 0, 100);
+    }
   }
-  return JSON.parse(result.stdout.trim().split("\n").pop()!) as PipelineClip[];
+  try {
+    const result = spawnSync(
+      join(backendDir, "node_modules", ".bin", "tsx"),
+      [
+        "scripts/media/build-playback-fixtures.ts",
+        `--out=${VIDEO_FIXTURE_DIR}`,
+        `--count=${count}`,
+        `--seconds=${seconds}`,
+        `--segment=${segmentSeconds}`,
+      ],
+      { cwd: backendDir, encoding: "utf8", timeout: 10 * 60_000 },
+    );
+    if (result.status !== 0) {
+      throw new Error(
+        `building playback fixtures failed:\n${result.stderr || result.stdout}`,
+      );
+    }
+    return JSON.parse(
+      result.stdout.trim().split("\n").pop()!,
+    ) as PipelineClip[];
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
 }

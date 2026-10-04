@@ -370,6 +370,35 @@ describe("PLP product failures", () => {
     });
   });
 
+  it("preserves HTTP 431 and malformed-response receipts without retrying them", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: false, status: 431, headers: { get: () => "receipt-431" } });
+    await expect(getPLPProducts(query)).rejects.toMatchObject({
+      status: 431,
+      requestId: "receipt-431",
+      attempts: 1,
+      failureStage: "response_status",
+      requestShape: { request_target_bytes: expect.any(Number) },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    jest
+      .mocked(fetch)
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => "receipt-invalid" },
+        json: async () => ({ data: null }),
+      });
+    await expect(getPLPProducts(query)).rejects.toMatchObject({
+      status: 200,
+      requestId: "receipt-invalid",
+      attempts: 1,
+      failureStage: "response_normalization",
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("does not represent a backend rejection as no results", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: false,

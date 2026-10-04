@@ -32,6 +32,7 @@ export function checkoutFailureDiagnostics(error: unknown, operation: CheckoutOp
           status?: number;
           requestId?: string;
           diagnostics?: {
+            httpStatus?: number;
             name?: string;
             code?: string;
             stage?: string;
@@ -42,9 +43,11 @@ export function checkoutFailureDiagnostics(error: unknown, operation: CheckoutOp
       : {};
   const name = item.diagnostics?.name ?? item.name;
   const code = item.diagnostics?.code;
+  // Legacy status remains available to callers, but is not evidence of an HTTP response.
+  const receivedStatus = item.diagnostics ? item.diagnostics.httpStatus : item.status;
   const status =
-    typeof item.status === "number" && item.status >= 0 && item.status <= 599
-      ? item.status
+    typeof receivedStatus === "number" && receivedStatus >= 100 && receivedStatus <= 599
+      ? receivedStatus
       : undefined;
   const requestId = item.diagnostics?.requestId ?? item.requestId;
   const reason =
@@ -52,11 +55,17 @@ export function checkoutFailureDiagnostics(error: unknown, operation: CheckoutOp
       ? "auth_unavailable"
       : item.diagnostics?.cancelled
         ? "cancelled"
-        : status === 408 || name === "TimeoutError"
+        : (item.status === 408 && name === "AbortError") || name === "TimeoutError"
           ? "timeout"
           : name === "NetworkError" || (code && CODES.has(code))
             ? "network"
-            : "unknown";
+            : item.diagnostics?.stage === "response_status"
+              ? "http"
+              : item.diagnostics?.stage === "response_json"
+                ? "parsing"
+                : item.diagnostics?.stage === "request" && name === "TypeError"
+                  ? "transport"
+                  : "unknown";
   const attributes = {
     operation,
     outcome: reason,

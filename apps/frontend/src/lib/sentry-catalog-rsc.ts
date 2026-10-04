@@ -14,7 +14,7 @@ type CatalogErrorLike = {
 type SentryScopeLike = {
   setTag: (key: string, value: string) => void;
   setFingerprint: (fingerprint: string[]) => void;
-  setContext?: (key: string, value: Record<string, string>) => void;
+  setContext?: (key: string, value: Record<string, string | number>) => void;
 };
 
 /** Matches Sentry `Primitive` so `beforeSend(event: ErrorEvent)` can return `T`. */
@@ -55,6 +55,25 @@ export function requestRoutePath(errorContext: unknown): string | undefined {
   if (!("routePath" in errorContext)) return undefined;
   const routePath = (errorContext as CatalogErrorContext).routePath;
   return typeof routePath === "string" && routePath ? routePath : undefined;
+}
+
+function catalogCorrelation(error: unknown): Record<string, string | number> {
+  const safe: Record<string, string | number> = {};
+  if (!error || typeof error !== "object") return safe;
+  const fields = error as {
+    requestId?: unknown;
+    attempts?: unknown;
+    requestShape?: Record<string, unknown>;
+  };
+  if (typeof fields.requestId === "string" && /^[a-zA-Z0-9_.:-]{1,100}$/.test(fields.requestId))
+    safe.request_id = fields.requestId;
+  if (typeof fields.attempts === "number" && fields.attempts >= 1 && fields.attempts <= 2)
+    safe.attempts = fields.attempts;
+  for (const key of ["request_target_bytes", "application_header_bytes", "trace_header_bytes"]) {
+    const value = fields.requestShape?.[key];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) safe[key] = value;
+  }
+  return safe;
 }
 
 /**
@@ -103,10 +122,8 @@ export function applyCatalogRscSentryScope(
   errorContext?: unknown,
 ): void {
   const { name, digest } = catalogErrorFields(error);
-  const requestId =
-    error && typeof error === "object" && "requestId" in error ? error.requestId : undefined;
-  if (typeof requestId === "string" && /^[a-zA-Z0-9_.:-]{1,100}$/.test(requestId))
-    scope.setContext?.("catalog_correlation", { request_id: requestId });
+  const correlation = catalogCorrelation(error);
+  if (Object.keys(correlation).length) scope.setContext?.("catalog_correlation", correlation);
   if (typeof digest === "string" && digest) scope.setTag("next_error_digest", digest);
   if (name) scope.setTag("error_name", name);
   const code = catalogErrorCode(error);
@@ -130,12 +147,9 @@ export function applyCatalogRscEvent<T extends SentryEventLike>(
   }
 
   const original = hint?.originalException;
-  const requestId =
-    original && typeof original === "object" && "requestId" in original
-      ? original.requestId
-      : undefined;
-  if (typeof requestId === "string" && /^[a-zA-Z0-9_.:-]{1,100}$/.test(requestId))
-    event.contexts = { ...event.contexts, catalog_correlation: { request_id: requestId } };
+  const correlation = catalogCorrelation(original);
+  if (Object.keys(correlation).length)
+    event.contexts = { ...event.contexts, catalog_correlation: correlation };
   const { name, digest } = catalogErrorFields(original);
   const code = catalogErrorCode(hint?.originalException);
   event.tags = event.tags || {};

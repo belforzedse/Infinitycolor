@@ -44,6 +44,7 @@ export function ensureVideoTelemetry(): void {
           browser: event.browser,
           device: event.device,
           attemptedEngines: event.attemptedEngines,
+          playback: event.playback,
         },
       });
     }

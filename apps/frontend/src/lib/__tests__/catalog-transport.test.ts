@@ -99,3 +99,30 @@ it("refuses mutations before fetching", async () => {
   );
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it("retains 431 correlation, attempts and redacted size diagnostics without retry", async () => {
+  jest.mocked(fetch).mockResolvedValue(response(431));
+  const result = await fetchCatalogJson("http://api.test/products?q=private", {
+    headers: { "X-App": "secret", "sentry-trace": "trace" },
+  });
+  expect(result).toMatchObject({
+    response: { status: 431 },
+    requestId: "request-123",
+    attempts: 1,
+    requestShape: {
+      request_target_bytes: 19,
+      application_header_bytes: 15,
+      trace_header_bytes: 21,
+    },
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(jest.mocked(Sentry.logger.info).mock.calls)).not.toMatch(/secret|private/);
+});
+it("never fetches after caller cancellation was already established", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    fetchCatalogJson("http://api.test/products", { signal: controller.signal }),
+  ).rejects.toMatchObject({ knownCancellation: true });
+  expect(fetch).not.toHaveBeenCalled();
+});

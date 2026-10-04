@@ -192,7 +192,8 @@ class BlogService {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
     };
-    const token = typeof window !== "undefined" ? await centralAuth.tokenManager.getToken() : null;
+    const outcome = typeof window !== "undefined" ? await centralAuth.tokenManager.getTokenOutcome() : undefined;
+    const token = outcome?.state === "authenticated" ? outcome.token : null;
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }

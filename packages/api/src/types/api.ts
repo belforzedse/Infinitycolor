@@ -29,6 +29,8 @@ export interface ApiError {
   cause?: Error;
   diagnostics?: {
     stage: "request" | "response_json" | "response_status";
+    /** Present only when an HTTP response was received. */
+    httpStatus?: number;
     name?: string;
     code?: string;
     requestId?: string;

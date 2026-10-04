@@ -18,7 +18,11 @@ import { expandSizeKeysToTitles } from "@/utils/plpSizeFilter";
 import { expandColorKeysToTitles, type CatalogColor } from "@/utils/plpColorFilter";
 import { getProductVariationColors, getProductVariationSizes } from "./variationAttributes";
 import { redactCatalogCause, type CatalogFailureStage } from "@/lib/catalog-error-diagnostics";
-import { fetchCatalogJson, CatalogTransportError } from "@/lib/catalog-transport";
+import {
+  fetchCatalogJson,
+  CatalogTransportError,
+  type CatalogRequestShape,
+} from "@/lib/catalog-transport";
 
 export interface PLPProduct {
   id: number;
@@ -94,12 +98,20 @@ export interface PLPProductsResult {
 export class PLPProductsError extends Error {
   public readonly failureStage?: CatalogFailureStage;
   public readonly requestId?: string;
+  public readonly attempts?: number;
+  public readonly requestShape?: CatalogRequestShape;
 
   constructor(
     message: string,
     public readonly code: "FETCH_FAILED" | "API_ERROR" | "INVALID_RESPONSE",
     public readonly status?: number,
-    diagnostics?: { stage: CatalogFailureStage; cause?: unknown; requestId?: string },
+    diagnostics?: {
+      stage: CatalogFailureStage;
+      cause?: unknown;
+      requestId?: string;
+      attempts?: number;
+      requestShape?: CatalogRequestShape;
+    },
   ) {
     super(
       message,
@@ -112,6 +124,8 @@ export class PLPProductsError extends Error {
     this.name = "PLPProductsError";
     this.failureStage = diagnostics?.stage;
     this.requestId = diagnostics?.requestId;
+    this.attempts = diagnostics?.attempts;
+    this.requestShape = diagnostics?.requestShape;
   }
 }
 
@@ -469,6 +483,9 @@ export async function getPLPProducts(
   let response: Response | undefined;
   let data: { data?: unknown[]; meta?: { pagination?: { total?: number; pageCount?: number } } };
   let failureStage: CatalogFailureStage = "request";
+  let requestId: string | undefined;
+  let attempts: number | undefined;
+  let requestShape: CatalogRequestShape | undefined;
 
   try {
     const result = await fetchCatalogJson<typeof data>(
@@ -480,6 +497,9 @@ export async function getPLPProducts(
     );
     response = result.response;
     data = result.data;
+    requestId = result.requestId;
+    attempts = result.attempts;
+    requestShape = result.requestShape;
   } catch (error) {
     logger.error("[PLP] Products fetch failed", {
       error: String(error),
@@ -492,7 +512,9 @@ export async function getPLPProducts(
       {
         stage: error instanceof CatalogTransportError ? error.failureStage : failureStage,
         cause: error instanceof CatalogTransportError ? error.cause : error,
-        requestId: error instanceof CatalogTransportError ? error.requestId : undefined,
+        requestId: error instanceof CatalogTransportError ? error.requestId : requestId,
+        attempts: error instanceof CatalogTransportError ? error.attempts : attempts,
+        requestShape: error instanceof CatalogTransportError ? error.requestShape : requestShape,
       },
     );
   }
@@ -505,6 +527,9 @@ export async function getPLPProducts(
     });
     throw new PLPProductsError("Products service returned an error", "API_ERROR", response.status, {
       stage: "response_status",
+      requestId,
+      attempts,
+      requestShape,
     });
   }
 
@@ -516,6 +541,9 @@ export async function getPLPProducts(
         response.status,
         {
           stage: "response_normalization",
+          requestId,
+          attempts,
+          requestShape,
         },
       );
     }
@@ -546,6 +574,9 @@ export async function getPLPProducts(
       response.status,
       {
         stage: "response_normalization",
+        requestId,
+        attempts,
+        requestShape,
         cause: error,
       },
     );

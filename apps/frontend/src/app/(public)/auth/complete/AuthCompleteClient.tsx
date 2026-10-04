@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useEffect, useRef, useState } from "react";
 import {
   AuthHandoffError,
@@ -29,6 +30,7 @@ export default function AuthCompleteClient({
   callbackError?: string;
 }) {
   const started = useRef<string | null>(null);
+  const reportedTerminal = useRef(new Set<string>());
   const [fatal, setFatal] = useState("");
   const [retryKey, setRetryKey] = useState(0);
 
@@ -41,16 +43,37 @@ export default function AuthCompleteClient({
     initializeCentralAuthBrowser();
     const identity = readAuthStateVersion();
     const isCurrent = () => active && identity === readAuthStateVersion();
+    let confirmedSessionLoss = false;
+    let stage = "token";
+    const reportTerminal = (outcome: "unavailable" | "exhausted", status?: number) => {
+      const key = `${stage}:${outcome}`;
+      if (reportedTerminal.current.has(key)) return;
+      reportedTerminal.current.add(key);
+      try {
+        Sentry.captureException(new AuthHandoffError("Session recovery failed", status ?? 503), {
+          tags: { area: "auth", operation: "complete", outcome, failure_stage: stage },
+          extra: { attempt, http_status: status },
+          fingerprint: ["auth", "complete", stage, outcome],
+        });
+      } catch {
+        /* Telemetry cannot affect recovery. */
+      }
+    };
     const restore = async () => {
       try {
-        if (callbackError && callbackError !== "grant_exchange_unavailable") {
-          throw new AuthHandoffError("مجوز بازگشت معتبر نیست. دوباره وارد شوید.", 401);
+        // Grants are single-use. Recovery checks the session; it never repeats the exchange.
+        const outcome = await withTransientAuthRetry(async () => {
+          const result = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
+          if (result.state === "unavailable")
+            throw new AuthHandoffError("بازیابی حساب موقتاً ممکن نیست.", 503);
+          return result;
+        });
+        if (!isCurrent() || outcome.state === "invalidated") return;
+        if (outcome.state === "unauthenticated") {
+          confirmedSessionLoss = true;
+          throw new AuthHandoffError("نشست فعال یافت نشد", 401);
         }
-        const token = await withTransientAuthRetry(() =>
-          centralAuth.tokenManager.getToken({ forceRefresh: true }),
-        );
-        if (!isCurrent()) return;
-        if (!token) throw new AuthHandoffError("نشست فعال یافت نشد", 401);
+        stage = "self";
         const me = await withTransientAuthRetry(() => UserService.me());
         if (!isCurrent()) return;
 
@@ -61,33 +84,59 @@ export default function AuthCompleteClient({
           return;
         }
 
+        stage = "route_hint";
         await withTransientAuthRetry(() => updateRouteHint("PUT"));
         if (!isCurrent()) return;
         jotaiStore.set(currentUserAtom, me);
         jotaiStore.set(userLoadingAtom, false);
         jotaiStore.set(userErrorAtom, null);
-        logDiagnostic("auth.recovery", { operation: "complete", outcome: "recovered" });
+        logDiagnostic("auth.recovery", {
+          operation: "complete",
+          outcome: "recovered",
+          retry_count: attempt,
+        });
         const destination = returnPath !== "/" ? returnPath : "/account";
         window.location.replace(destination);
       } catch (cause) {
         if (!isCurrent()) return;
+        if (authErrorStatus(cause) === 401 && !confirmedSessionLoss) {
+          const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
+          if (!isCurrent() || outcome.state === "invalidated") return;
+          confirmedSessionLoss = outcome.state === "unauthenticated";
+          if (!confirmedSessionLoss) {
+            reportTerminal("unavailable", authErrorStatus(cause));
+            logDiagnostic("auth.recovery", {
+              operation: "complete",
+              outcome: "unavailable",
+              retry_count: attempt,
+            });
+            setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
+            return;
+          }
+        }
         logDiagnostic("auth.recovery", {
+          retry_count: attempt,
           operation: "complete",
           outcome: authErrorStatus(cause) === 401 ? "unauthenticated" : "unavailable",
           http_status: authErrorStatus(cause),
         });
         if (authErrorStatus(cause) !== 401) {
+          reportTerminal("unavailable", authErrorStatus(cause));
           setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
           return;
         }
         centralAuth.tokenManager.expire();
         if (attempt >= 2) {
-          setFatal(cause instanceof Error ? cause.message : "بازیابی نشست ناموفق بود");
+          reportTerminal("exhausted", 401);
+          setFatal("بازیابی نشست ناموفق بود. دوباره وارد شوید.");
           return;
         }
         try {
+          stage = "route_hint";
           await updateRouteHint("POST");
         } catch {
+          if (!isCurrent()) return;
+          reportTerminal("unavailable");
           setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
           return;
         }

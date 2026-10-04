@@ -660,3 +660,77 @@ describe("bounded WebM fallback", () => {
     engine.dispose();
   });
 });
+
+describe("native play source and cancellation ownership", () => {
+  it("ignores a replaced source's rejection and records the actual selected WebM", async () => {
+    const video = document.createElement("video");
+    video.canPlayType = () => "maybe";
+    const media = controlMedia(video);
+    const engine = createVideoEngine(
+      video,
+      { mp4: SOURCE.mp4, webm: "https://cdn.test/uploads/fallback.webm" },
+      { surface: "story" },
+    );
+    engine.load();
+    const pending = engine.play();
+    media.fail(3);
+    await media.rejectPlay("AbortError");
+    expect(await pending).toBe("aborted");
+    expect(engine.diagnostics).toMatchObject({
+      engine: "webm",
+      path: "/uploads/fallback.webm",
+      attemptedEngines: ["mp4", "webm"],
+    });
+    expect(
+      events.filter((event) => event.type === "error" && event.fatal),
+    ).toHaveLength(0);
+    engine.dispose();
+  });
+  it("invalidates a paused attempt even after a new play begins", async () => {
+    const video = document.createElement("video");
+    const media = controlMedia(video);
+    const engine = createVideoEngine(video, SOURCE, { surface: "pdp" });
+    engine.load();
+    const first = engine.play();
+    engine.cancelPlay("pause");
+    video.pause();
+    const next = engine.play();
+    await media.rejectPlay("AbortError");
+    await media.resolvePlay();
+    expect(await first).toBe("aborted");
+    expect(await next).toBe("playing");
+    expect(
+      events.filter((event) => event.type === "error" && event.fatal),
+    ).toHaveLength(0);
+    engine.dispose();
+  });
+  it("bounds diagnostic history without invalidating a current-source attempt", () => {
+    const video = document.createElement("video");
+    const engine = createVideoEngine(video, SOURCE, { surface: "pdp" });
+    engine.load();
+    const first = engine.markPlayRequested();
+    for (let i = 0; i < 12; i += 1) engine.markPlayRequested();
+    expect(first.isCurrent()).toBe(true);
+    expect(engine.diagnostics.attemptHistory).toHaveLength(8);
+    engine.dispose();
+    expect(first.isCurrent()).toBe(false);
+  });
+});
+
+it("preserves a queued play intent when initial HLS preflight attaches MP4", async () => {
+  playlistResponse = async () => ({ ok: false, status: 404 });
+  const video = document.createElement("video");
+  const media = controlMedia(video);
+  const engine = createVideoEngine(video, SOURCE, {
+    surface: "post",
+    allowHls: true,
+  });
+  engine.load();
+  const play = engine.play();
+  await flush();
+  expect(engine.engine).toBe("mp4");
+  expect(media.playCalls()).toBe(1);
+  await media.resolvePlay();
+  await expect(play).resolves.toBe("playing");
+  engine.dispose();
+});

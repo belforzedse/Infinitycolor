@@ -224,7 +224,9 @@ class BlogService {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
     };
-    const token = typeof window !== "undefined" ? await centralAuth.tokenManager.getToken() : null;
+    const outcome =
+      typeof window !== "undefined" ? await centralAuth.tokenManager.getTokenOutcome() : undefined;
+    const token = outcome?.state === "authenticated" ? outcome.token : null;
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
@@ -594,11 +596,9 @@ class BlogService {
       searchParams.append(`populate[blog_tags][fields][${index}]`, field);
     });
     searchParams.append("populate[blog_author][fields][0]", "Name");
-    ["url", "alternativeText", "width", "height", "formats"].forEach(
-      (field, index) => {
-        searchParams.append(`populate[FeaturedImage][fields][${index}]`, field);
-      },
-    );
+    ["url", "alternativeText", "width", "height", "formats"].forEach((field, index) => {
+      searchParams.append(`populate[FeaturedImage][fields][${index}]`, field);
+    });
 
     const baseUrl = this.getBaseUrl();
     const response = await fetch(`${baseUrl}/blog-posts?${searchParams}`, {
