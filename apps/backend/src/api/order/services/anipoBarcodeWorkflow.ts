@@ -69,6 +69,7 @@ type AnipoService = {
 type SubmitOptions = {
   weight?: unknown;
   boxSizeId?: unknown;
+  weightFromItems?: boolean;
   actor?: AnipoWorkflowActor;
   now?: Date;
   forceRetry?: boolean;
@@ -473,7 +474,15 @@ export async function submitAnipoBarcode(
   }
 
   const recipient = validateRecipient(order);
-  const packageData = resolveAnipoPackage(order, options);
+  // ShippingWeight is only a checkout snapshot until registration, so the
+  // automatic path re-weighs from the products as they are now: weights staff
+  // enter after checkout still count.
+  const packageData = resolveAnipoPackage(
+    order,
+    options.weightFromItems
+      ? { ...options, weight: computeProductWeight(order.order_items || []) }
+      : options,
+  );
   const now = options.now ?? new Date();
   const deadline = new Date(now.getTime() + POLLING_WINDOW_MS);
   const anipo = strapi.service("api::shipping.anipo") as AnipoService;
@@ -720,7 +729,7 @@ export async function processAnipoRegistrationJob(
   if (!row || row.Status !== "Shipment" || row.AnipoSubmittedAt || row.ShippingBarcode ||
       row.AnipoBarcodeState !== ANIPO_BARCODE_STATES.pending) return { skipped: true };
   try {
-    return await submitAnipoBarcode(strapi, orderId, { weight: 500, boxSizeId: 3 });
+    return await submitAnipoBarcode(strapi, orderId, { weightFromItems: true, boxSizeId: 3 });
   } catch (error) {
     const status = error instanceof AnipoWorkflowError ? error.status : 0;
     const retryable = !status || status === 408 || status === 429 || status >= 500;

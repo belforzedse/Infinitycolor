@@ -213,11 +213,13 @@ describe("Anipo barcode workflow", () => {
     expect(harness.anipo.getOrder).toHaveBeenCalledTimes(1);
   });
 
-  it("registers queued shipments with fixed 500g/size 3 and accepts an absent immediate barcode", async () => {
-    const harness = createHarness(baseOrder({ Status: "Shipment", AnipoBarcodeState: "Pending", AnipoSubmittedAt: null }), { current: null });
+  it("registers queued shipments weighed from current product weights/size 3 and accepts an absent immediate barcode", async () => {
+    // ShippingWeight 100 is a stale checkout snapshot; the product now weighs 200g x 2.
+    const harness = createHarness(baseOrder({ Status: "Shipment", AnipoBarcodeState: "Pending", AnipoSubmittedAt: null, ShippingWeight: 100 }), { current: null });
     const result = await processAnipoRegistrationJob(harness.strapi, 10, 1, 5);
     expect(result).toMatchObject({ state: "Pending", issued: false });
-    expect(harness.anipo.createOrUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ order_code: "10", weight_g: 500, package_count: 1, box_type: 3, order_total: 9500 }));
+    expect(harness.anipo.createOrUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ order_code: "10", weight_g: 400, package_count: 1, box_type: 3, order_total: 9500 }));
+    expect(harness.getOrder().ShippingWeight).toBe(400);
     expect(harness.anipo.getOrder).not.toHaveBeenCalled();
     expect(harness.getOrder().AnipoSubmittedAt).toBeInstanceOf(Date);
   });
