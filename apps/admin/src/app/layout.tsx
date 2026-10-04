@@ -74,6 +74,7 @@ export default async function RootLayout({
     >
       <head>
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{ __html: getLegacyRuntimePolyfillScript() }}
         />
         <meta name="csp-nonce" content={nonce} />
