@@ -72,3 +72,30 @@ it("keeps the deadline active through body parsing without replaying the grant",
     jest.useRealTimers();
   }
 });
+
+it.each(["invalid", "rejected", "unavailable"])(
+  "propagates the existing attempt through %s redirects",
+  async (kind) => {
+    const req =
+      kind === "invalid"
+        ? new NextRequest("https://store.test/auth/callback?grant=bad")
+        : request();
+    req.cookies.set("infinity_auth_restore_loop", "2");
+    jest
+      .mocked(fetch)
+      .mockResolvedValue(new Response("{}", { status: kind === "rejected" ? 400 : 503 }));
+    const result = await GET(req);
+    expect(new URL(result.headers.get("location")!).searchParams.get("attempt")).toBe("2");
+    expect(result.headers.get("cache-control")).toContain("no-store");
+    expect(fetch).toHaveBeenCalledTimes(kind === "invalid" ? 0 : 1);
+  },
+);
+it("does not report a successful recovery attempt as a restore loop", async () => {
+  const req = request();
+  req.cookies.set("infinity_auth_restore_loop", "1");
+  jest
+    .mocked(fetch)
+    .mockResolvedValue(new Response(JSON.stringify({ authenticated: true, returnTo: "/account" })));
+  expect(new URL((await GET(req)).headers.get("location")!).searchParams.get("attempt")).toBe("1");
+  expect(Sentry.captureException).not.toHaveBeenCalled();
+});

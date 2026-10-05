@@ -1,9 +1,16 @@
+import * as Sentry from "@sentry/nextjs";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Provider, createStore } from "jotai";
 import { apiClient } from "@/services";
 import { currentUserAtom } from "@/lib/atoms/auth";
-import useProductLike, { likedProductsAtom, likedProductsOwnerAtom } from "../useProductLike";
+import useProductLike, {
+  likedProductsAtom,
+  likedProductsOwnerAtom,
+  __resetUseProductLikeState,
+} from "../useProductLike";
+
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn(), logger: { info: jest.fn() } }));
 
 // Mock the apiClient
 jest.mock("@/services", () => ({
@@ -14,9 +21,16 @@ jest.mock("@/services", () => ({
 }));
 
 jest.mock("@/lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async () => {
+        const token = await jest
+          .requireMock("@/lib/central-auth")
+          .centralAuth.tokenManager.getToken();
+        return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+      }),
     },
   },
   centralLoginUrl: jest.fn(() => "http://localhost:2889/auth"),
@@ -39,6 +53,7 @@ describe("useProductLike", () => {
   const mockToken = "mock-token";
 
   beforeEach(() => {
+    __resetUseProductLikeState();
     jest.clearAllMocks();
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (apiClient.get as jest.Mock).mockResolvedValue({ data: [] });
@@ -183,14 +198,13 @@ describe("useProductLike", () => {
 
   it("can retry after a failed fetch", async () => {
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
-    const consoleError = jest.spyOn(console, "error").mockImplementation();
     (apiClient.get as jest.Mock).mockRejectedValueOnce(new Error("Network error"));
 
     const store = createStore();
     store.set(currentUserAtom, asUser(1));
     const { hook } = await renderUseProductLike(store);
 
-    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    await waitFor(() => expect(Sentry.captureException).toHaveBeenCalled());
     // A failed fetch must not be recorded as "loaded" — otherwise it could never retry.
     expect(store.get(likedProductsOwnerAtom)).toBeNull();
 
@@ -201,7 +215,6 @@ describe("useProductLike", () => {
     });
 
     await waitFor(() => expect(hook.result.current.isLiked).toBe(true));
-    consoleError.mockRestore();
   });
 
   it("should redirect to auth when toggling like without token", async () => {
@@ -256,7 +269,6 @@ describe("useProductLike", () => {
 
   it("should handle errors when toggling like", async () => {
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
-    const consoleError = jest.spyOn(console, "error").mockImplementation();
     (apiClient.post as jest.Mock).mockRejectedValue(new Error("Network error"));
 
     const store = createStore();
@@ -273,15 +285,18 @@ describe("useProductLike", () => {
     });
 
     await waitFor(() => {
-      expect(consoleError).toHaveBeenCalled();
+      expect(Sentry.captureException).toHaveBeenCalled();
     });
-
-    consoleError.mockRestore();
   });
   it("coalesces duplicate clicks and uses the authoritative response", async () => {
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
     let resolve!: (value: unknown) => void;
-    (apiClient.post as jest.Mock).mockImplementation(() => new Promise(r => { resolve = r; }));
+    (apiClient.post as jest.Mock).mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
     const store = createStore();
     store.set(currentUserAtom, asUser(1));
     const { hook } = await renderUseProductLike(store);
@@ -292,24 +307,100 @@ describe("useProductLike", () => {
       await hook.result.current.toggleLike(event);
     });
     expect(apiClient.post).toHaveBeenCalledTimes(1);
-    expect(apiClient.post).toHaveBeenCalledWith(expect.any(String), { productId: "123", isFavorite: true });
-    await act(async () => { resolve({ isFavorite: false }); await first; });
+    expect(apiClient.post).toHaveBeenCalledWith(expect.any(String), {
+      productId: "123",
+      isFavorite: true,
+    });
+    await act(async () => {
+      resolve({ isFavorite: false });
+      await first;
+    });
     expect(hook.result.current.isLiked).toBe(false);
   });
 
   it("discards an in-flight mutation after switching identity", async () => {
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
     let resolve!: (value: unknown) => void;
-    (apiClient.post as jest.Mock).mockImplementation(() => new Promise(r => { resolve = r; }));
+    (apiClient.post as jest.Mock).mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
     const store = createStore();
     store.set(currentUserAtom, asUser(1));
     const { hook } = await renderUseProductLike(store);
     let request!: Promise<void>;
-    await act(async () => { request = hook.result.current.toggleLike({ preventDefault() {}, stopPropagation() {} } as any); });
-    await act(async () => { store.set(currentUserAtom, asUser(2)); });
-    await act(async () => { resolve({ isFavorite: true }); await request; });
+    await act(async () => {
+      request = hook.result.current.toggleLike({
+        preventDefault() {},
+        stopPropagation() {},
+      } as any);
+    });
+    await act(async () => {
+      store.set(currentUserAtom, asUser(2));
+    });
+    await act(async () => {
+      resolve({ isFavorite: true });
+      await request;
+    });
     expect(store.get(likedProductsAtom)).toEqual([]);
     expect(store.get(likedProductsOwnerAtom)).toBe(2);
   });
+});
 
+describe("temporary wishlist authentication recovery", () => {
+  beforeEach(() => {
+    __resetUseProductLikeState();
+    jest.clearAllMocks();
+    jest.requireMock("@/lib/central-auth").centralAuth.tokenManager.getTokenOutcome.mockReset();
+  });
+  const mount = (store: ReturnType<typeof createStore>) =>
+    renderHook(
+      () => {
+        const first = useProductLike({ productId: "123" });
+        useProductLike({ productId: "456" });
+        useProductLike({ productId: "789" });
+        return first;
+      },
+      {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <Provider store={store}>{children}</Provider>
+        ),
+      },
+    );
+  it("coalesces unavailable acquisition across cards and preserves known wishlist state", async () => {
+    const token = jest.requireMock("@/lib/central-auth").centralAuth.tokenManager.getTokenOutcome;
+    token.mockResolvedValue({ state: "unavailable", reasonCode: "timeout" });
+    const store = createStore();
+    store.set(currentUserAtom, asUser(1));
+    store.set(likedProductsOwnerAtom, 1);
+    store.set(likedProductsAtom, [like(123)]);
+    const hook = mount(store);
+    await waitFor(() => expect(token).toHaveBeenCalledTimes(1));
+    expect(hook.result.current.isLiked).toBe(true);
+    expect(store.get(currentUserAtom)).toMatchObject({ id: 1 });
+    expect(apiClient.get).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+    hook.unmount();
+    const remount = mount(store);
+    await act(async () => undefined);
+    expect(token).toHaveBeenCalledTimes(1);
+    remount.unmount();
+  });
+  it("catches asynchronous token failure once and prevents a wishlist mutation", async () => {
+    const token = jest.requireMock("@/lib/central-auth").centralAuth.tokenManager.getTokenOutcome;
+    token.mockResolvedValue({ state: "unavailable", reasonCode: "network" });
+    const store = createStore();
+    store.set(currentUserAtom, asUser(1));
+    const hook = mount(store);
+    await act(async () => {
+      await hook.result.current.toggleLike({
+        preventDefault() {},
+        stopPropagation() {},
+      } as React.MouseEvent<HTMLButtonElement>);
+    });
+    expect(apiClient.post).not.toHaveBeenCalled();
+    expect(store.get(currentUserAtom)).toMatchObject({ id: 1 });
+  });
 });

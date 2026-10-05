@@ -3,7 +3,12 @@ import type { ApiError } from "@repo/api/types";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { jotaiStore } from "@/lib/jotaiStore";
 import { clearAccessToken } from "@/utils/accessToken";
-import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import {
+  centralAuth,
+  centralLoginUrl,
+  readAuthStateVersion,
+} from "@/lib/central-auth";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import { isAuthRequiredRoute } from "@/utils/routeAccessPolicy";
 
 let pendingAuthRedirect: string | null = null;
@@ -16,7 +21,7 @@ let pendingAuthRedirect: string | null = null;
 export function handleAuthErrors(
   error?: ApiError | null,
   isAdminCheck?: boolean,
-): void {
+): void | Promise<void> {
   const isUnauthorized = error?.status === HTTP_STATUS.UNAUTHORIZED;
   const isForbidden = error?.status === HTTP_STATUS.FORBIDDEN;
   const isNotAdmin = isAdminCheck === false;
@@ -30,17 +35,34 @@ export function handleAuthErrors(
   }
 
   if (isUnauthorized) {
-    clearAccessToken();
-    jotaiStore.set(currentUserAtom, null);
-    const requestedPath = `${window.location.pathname}${window.location.search}`;
-    if (isAuthRequiredRoute(window.location.pathname)) {
-      const target = centralLoginUrl(requestedPath);
-      if (pendingAuthRedirect !== target) {
-        pendingAuthRedirect = target;
-        window.location.replace(target);
+    return (async () => {
+      const version = readAuthStateVersion();
+      const outcome = await centralAuth.tokenManager.getTokenOutcome({
+        forceRefresh: true,
+      });
+      if (version !== readAuthStateVersion() || outcome.state === "invalidated")
+        return;
+      logDiagnostic("auth.recovery", {
+        operation: "unauthorized",
+        outcome: outcome.state,
+      });
+      if (outcome.state !== "unauthenticated") return;
+      clearAccessToken();
+      jotaiStore.set(currentUserAtom, null);
+      const requestedPath = `${window.location.pathname}${window.location.search}`;
+      if (isAuthRequiredRoute(window.location.pathname)) {
+        const target = centralLoginUrl(requestedPath);
+        if (pendingAuthRedirect !== target) {
+          pendingAuthRedirect = target;
+          window.location.replace(target);
+        }
       }
-    }
-    return;
+    })().catch(() => {
+      logDiagnostic("auth.recovery", {
+        operation: "unauthorized",
+        outcome: "unavailable",
+      });
+    });
   }
 
   if (isForbidden) {
@@ -69,9 +91,14 @@ export async function hasActiveSession(): Promise<boolean> {
   if (typeof window === "undefined") return false;
   if (hasCachedAccessToken()) return true;
   try {
-    return Boolean(await centralAuth.tokenManager.getToken());
+    const outcome = await centralAuth.tokenManager.getTokenOutcome();
+    return (
+      outcome.state === "authenticated" ||
+      (outcome.state === "unavailable" &&
+        jotaiStore.get(currentUserAtom) !== null)
+    );
   } catch {
-    return false;
+    return jotaiStore.get(currentUserAtom) !== null;
   }
 }
 

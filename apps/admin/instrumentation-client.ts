@@ -1,3 +1,4 @@
+import { beforeSendDiagnosticLog } from "./src/lib/diagnostic-log";
 import * as Sentry from "@sentry/nextjs";
 
 Sentry.init({
@@ -6,6 +7,8 @@ Sentry.init({
   environment: process.env.NEXT_PUBLIC_ADMIN_ENVIRONMENT || "development",
   release: process.env.NEXT_PUBLIC_RELEASE_SHA || "development",
   sendDefaultPii: false,
+  enableLogs: true,
+  beforeSendLog: beforeSendDiagnosticLog,
   initialScope: { tags: { service: "infinity-admin" } },
   beforeSend(event) {
     if (event.request) {

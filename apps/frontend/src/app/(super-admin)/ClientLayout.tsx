@@ -6,21 +6,29 @@ import ScrollToTop from "@/components/ScrollToTop";
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { UserService } from "@/services";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import { HTTP_STATUS } from "@/constants/api";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { useAtomValue, useSetAtom } from "jotai";
 import { canRoleAccessPath, getRoleAdminLandingPath } from "@/constants/roleAccess";
 import clsx from "clsx";
-import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import {
+  centralAuth,
+  centralLoginUrl,
+  readAuthStateVersion,
+  subscribeToAuthState,
+} from "@/lib/central-auth";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
+  const [authError, setAuthError] = useState(false);
   const setCurrentUser = useSetAtom(currentUserAtom);
   const currentUser = useAtomValue(currentUserAtom);
-  const hasRunRef = useRef(false);
+  const mounted = useRef(false);
+  const operation = useRef(0);
   const lastCheckRef = useRef<number>(0);
   const isCheckingRef = useRef(false);
 
@@ -32,118 +40,105 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [router]);
 
-  // Silent background auth check - doesn't show loading state
-  const checkAuthSilently = useCallback(async () => {
-    // Prevent concurrent checks
-    if (isCheckingRef.current) return;
-
-    // Throttle: don't check more than once per 30 seconds
-    const now = Date.now();
-    if (now - lastCheckRef.current < 30000) return;
-
-    isCheckingRef.current = true;
-    lastCheckRef.current = now;
-
-    try {
-      const token = await centralAuth.tokenManager.getToken();
-      if (!token) {
-        setIsAuthorized(false);
-        window.location.replace(centralLoginUrl(pathname));
-        return;
-      }
-
-      const me = await UserService.me(true);
-      setCurrentUser(me);
-
-      // Check if user is still admin - update isAuthorized state and redirect immediately
-      if (!me?.isAdmin) {
-        setIsAuthorized(false);
-        // Redirect immediately - don't wait
-        redirectToPrevious();
-        return;
-      }
-
-      // Ensure isAuthorized is true if user is admin
-      setIsAuthorized(true);
-    } catch (error: any) {
-      setCurrentUser(null);
-
-      if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
-        setIsAuthorized(false);
-        window.location.replace(centralLoginUrl(pathname));
-        return;
-      }
-      if (error?.status === HTTP_STATUS.FORBIDDEN) {
-        setIsAuthorized(false);
-        redirectToPrevious();
-        return;
-      }
-      // For other errors, don't redirect - might be temporary network issues
-      // But still update isAuthorized if we can't verify
-      setIsAuthorized(false);
-    } finally {
-      isCheckingRef.current = false;
-    }
-  }, [router, setCurrentUser, redirectToPrevious]);
-
-  // Initial mount check - with loading state
-  useEffect(() => {
-    // Prevent running multiple times
-    if (hasRunRef.current) return;
-    hasRunRef.current = true;
-
-    let isMounted = true;
-    setIsLoading(true);
-
-    const run = async () => {
-      const token = await centralAuth.tokenManager.getToken();
-      if (!token) {
-        window.location.replace(centralLoginUrl(pathname));
-        return;
-      }
-      setCurrentUser(null);
-      return UserService.me(true);
-    };
-    run()
-      .then((me) => {
-        if (!isMounted || !me) return;
-        // Update the cached user data with fresh data
-        setCurrentUser(me);
-
-        if (!me?.isAdmin) {
-          redirectToPrevious();
-          return;
-        }
-        setIsAuthorized(true);
-        setIsLoading(false);
-        // Update last check time for initial mount
-        lastCheckRef.current = Date.now();
-      })
-      .catch((error: any) => {
-        if (!isMounted) return;
-        // Clear user data on auth errors
+  const checkAuthSilently = useCallback(
+    async (initial = false) => {
+      if (isCheckingRef.current || (!initial && Date.now() - lastCheckRef.current < 30_000)) return;
+      isCheckingRef.current = true;
+      lastCheckRef.current = Date.now();
+      const run = ++operation.current;
+      const version = readAuthStateVersion();
+      const current = () =>
+        mounted.current && run === operation.current && version === readAuthStateVersion();
+      const sessionLost = () => {
         setCurrentUser(null);
-
-        if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
-          window.location.replace(centralLoginUrl(pathname));
+        setIsAuthorized(false);
+        window.location.replace(centralLoginUrl(pathname));
+      };
+      try {
+        const outcome = await centralAuth.tokenManager.getTokenOutcome();
+        if (!current() || outcome.state === "invalidated") return;
+        if (outcome.state === "unauthenticated") {
+          sessionLost();
           return;
         }
-        if (error?.status === HTTP_STATUS.FORBIDDEN) {
+        if (outcome.state === "unavailable") {
+          setAuthError(true);
+          return;
+        }
+        const me = await UserService.me(true);
+        if (!current()) return;
+        setCurrentUser(me);
+        if (!me?.isAdmin) {
+          setIsAuthorized(false);
           redirectToPrevious();
           return;
         }
-        redirectToPrevious();
-      });
+        setAuthError(false);
+        setIsAuthorized(true);
+        logDiagnostic("auth.recovery", { operation: "admin_initialize", outcome: "recovered" });
+      } catch (error: unknown) {
+        if (!current()) return;
+        const status = (error as { status?: number })?.status;
+        if (status === HTTP_STATUS.UNAUTHORIZED) {
+          const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
+          if (!current()) return;
+          if (outcome.state === "unauthenticated") {
+            sessionLost();
+            return;
+          }
+        }
+        if (status === HTTP_STATUS.FORBIDDEN) {
+          setIsAuthorized(false);
+          redirectToPrevious();
+          return;
+        }
+        setAuthError(true);
+        logDiagnostic("auth.recovery", {
+          operation: "admin_initialize",
+          outcome: "unavailable",
+          http_status: status,
+        });
+      } finally {
+        if (run === operation.current) isCheckingRef.current = false;
+        if (current()) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [pathname, redirectToPrevious, setCurrentUser],
+  );
 
+  useEffect(() => {
+    mounted.current = true;
+
+    void checkAuthSilently(true);
+    const unsubscribe = subscribeToAuthState((event) => {
+      operation.current += 1;
+      isCheckingRef.current = false;
+      if (event.type === "logout") {
+        setCurrentUser(null);
+        setIsAuthorized(false);
+
+        window.location.replace(centralLoginUrl(pathname));
+      } else {
+        setCurrentUser(null);
+        setIsAuthorized(false);
+        void checkAuthSilently(true);
+      }
+    });
     return () => {
-      isMounted = false;
+      mounted.current = false;
+      operation.current += 1;
+      isCheckingRef.current = false;
+      unsubscribe();
     };
+    // The silent check uses current path; initial loading runs only for this mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount - use ref to prevent re-runs
+  }, []);
 
   // Background check on window focus (when user returns to tab)
   useEffect(() => {
-    if (!isAuthorized) return; // Only check if already authorized
+    if (!isAuthorized && !authError) return;
 
     const handleFocus = () => {
       checkAuthSilently();
@@ -153,11 +148,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => {
       window.removeEventListener("focus", handleFocus);
     };
-  }, [isAuthorized, checkAuthSilently]);
+  }, [isAuthorized, authError, checkAuthSilently]);
 
   // Periodic background check (every 5 minutes)
   useEffect(() => {
-    if (!isAuthorized) return; // Only check if already authorized
+    if (!isAuthorized && !authError) return;
 
     const interval = setInterval(
       () => {
@@ -169,11 +164,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => {
       clearInterval(interval);
     };
-  }, [isAuthorized, checkAuthSilently]);
+  }, [isAuthorized, authError, checkAuthSilently]);
 
   // Background check on route changes (throttled)
   useEffect(() => {
-    if (!isAuthorized) return; // Only check if already authorized
+    if (!isAuthorized && !authError) return;
 
     // Throttle route change checks - only if last check was more than 30 seconds ago
     const now = Date.now();
@@ -181,14 +176,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       checkAuthSilently();
     }
   }, [pathname, isAuthorized, checkAuthSilently]);
-
-  // Immediately redirect if user loses authorization
-  useEffect(() => {
-    if (!isLoading && !isAuthorized) {
-      // User is no longer authorized - redirect immediately
-      redirectToPrevious();
-    }
-  }, [isLoading, isAuthorized, redirectToPrevious]);
 
   // Backend permissions are authoritative; this centralized route guard keeps
   // Store manager and Founder navigation consistent with those grants.
@@ -212,7 +199,19 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   }
 
   if (!isAuthorized) {
-    return null;
+    return authError ? (
+      <main className="p-6 text-center" dir="rtl">
+        <p>بررسی حساب موقتاً ممکن نیست.</p>
+        <button
+          type="button"
+          onClick={() => {
+            void checkAuthSilently(true);
+          }}
+        >
+          تلاش دوباره
+        </button>
+      </main>
+    ) : null;
   }
 
   // Don't render restricted content while the guard redirects.

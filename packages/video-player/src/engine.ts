@@ -25,6 +25,7 @@ import {
   PlaybackSession,
   type VideoFailureKind,
   type PlaybackDiagnostics,
+  type NativePlayRecord,
 } from "./telemetry";
 
 /**
@@ -60,6 +61,12 @@ export interface VideoEngineOptions {
   onEngineChange?: (engine: PlaybackEngine) => void;
 }
 
+export interface NativePlayAttempt {
+  readonly sourceGeneration: number;
+  readonly attempt: number;
+  isCurrent(): boolean;
+}
+
 export interface VideoEngine {
   readonly engine: PlaybackEngine;
   readonly diagnostics: PlaybackDiagnostics;
@@ -72,7 +79,10 @@ export interface VideoEngine {
    */
   play(options?: { mutedFallback?: boolean }): Promise<PlayOutcome>;
   /** For surfaces that call `video.play()` themselves: starts the startup clock. */
-  markPlayRequested(): void;
+  markPlayRequested(): NativePlayAttempt;
+  /** Records only results owned by the current source and uncancelled play request. */
+  settleNativePlay(attempt: NativePlayAttempt, error?: unknown): boolean;
+  cancelPlay(reason: "hold" | "pause"): void;
   /** Lets a surface with its own play-policy UX recover a NotSupportedError. */
   recoverDecodeFailure(): boolean;
   /** Pauses, tears down hls.js, releases the element's resource. Idempotent. */
@@ -135,6 +145,62 @@ export function createVideoEngine(
   let fatal = false;
   let playIntent = false;
   let sourceVersion = 0;
+  let playAttempt = 0;
+  let cancellationVersion = 0;
+  let rejectionType: string | undefined;
+  const attemptHistory: NativePlayRecord[] = [];
+  const diagnostics = (): PlaybackDiagnostics => ({
+    ...session.diagnostics,
+    sourceGeneration: sourceVersion,
+    rejectionType,
+    mediaReadyState: video.readyState,
+    mediaNetworkState: video.networkState,
+    attemptHistory: attemptHistory.map((entry) => ({ ...entry })),
+  });
+  const markPlayRequested = (): NativePlayAttempt => {
+    playIntent = true;
+    session.requested();
+    const version = sourceVersion;
+    const attempt = ++playAttempt;
+    const cancellation = cancellationVersion;
+    attemptHistory.push({
+      sourceGeneration: version,
+      attempt,
+      engine,
+      outcome: "requested",
+    });
+    if (attemptHistory.length > 8) attemptHistory.shift();
+    return {
+      sourceGeneration: version,
+      attempt,
+      isCurrent: () =>
+        !disposed &&
+        playIntent &&
+        version === sourceVersion &&
+        cancellation === cancellationVersion,
+    };
+  };
+  const settleNativePlay = (
+    attempt: NativePlayAttempt,
+    error?: unknown,
+  ): boolean => {
+    if (!attempt.isCurrent()) return false;
+    const name = (error as { name?: string } | undefined)?.name;
+    rejectionType = error
+      ? ["NotAllowedError", "NotSupportedError", "AbortError"].includes(
+          name ?? "",
+        )
+        ? name
+        : "unknown"
+      : undefined;
+    const record = attemptHistory.find(
+      (entry) => entry.attempt === attempt.attempt,
+    );
+    if (record)
+      record.outcome = (rejectionType ??
+        "playing") as NativePlayRecord["outcome"];
+    return true;
+  };
   let mp4NetworkRetries = 0;
   let webmAttempted = engine === "webm";
   let webmFallback = false;
@@ -168,7 +234,10 @@ export function createVideoEngine(
   const reportFatal = (failure: EngineFailure, detail: string) => {
     if (disposed || fatal) return;
     fatal = true;
-    emitVideoTelemetry(session.error(failure, detail, true));
+    emitVideoTelemetry({
+      ...session.error(failure, detail, true),
+      playback: diagnostics(),
+    });
     options.onFatal?.(failure, detail);
   };
 
@@ -251,9 +320,14 @@ export function createVideoEngine(
     if (!playIntent || disposed) return;
     const version = sourceVersion;
     const resume = () => {
-      if (!disposed && playIntent)
-        video.play().catch((error: unknown) => {
-          if (disposed || version !== sourceVersion) return;
+      if (disposed || !playIntent || version !== sourceVersion) return;
+      const attempt = markPlayRequested();
+      void video.play().then(
+        () => {
+          settleNativePlay(attempt);
+        },
+        (error: unknown) => {
+          if (!settleNativePlay(attempt, error)) return;
           const name = (error as DOMException | undefined)?.name;
           if (name === "NotSupportedError" && !fallBackToWebm())
             reportFatal("decode-unsupported", "NotSupportedError after resume");
@@ -267,7 +341,8 @@ export function createVideoEngine(
             );
           else if (name !== "NotSupportedError")
             reportFatal("unknown", "play rejected after resume");
-        });
+        },
+      );
     };
     const once = () => {
       video.removeEventListener("canplay", once);
@@ -454,7 +529,7 @@ export function createVideoEngine(
 
   return {
     get diagnostics() {
-      return session.diagnostics;
+      return diagnostics();
     },
     get engine() {
       return engine;
@@ -487,36 +562,47 @@ export function createVideoEngine(
         attachProgressive();
       }
     },
-    markPlayRequested() {
-      playIntent = true;
-      session.requested();
+    markPlayRequested,
+    settleNativePlay,
+    cancelPlay(reason) {
+      playIntent = false;
+      cancellationVersion += 1;
+      const record = attemptHistory[attemptHistory.length - 1];
+      if (record?.outcome === "requested") {
+        record.outcome = "cancelled";
+        record.cancellationContext = reason;
+      }
     },
     recoverDecodeFailure: fallBackToWebm,
     async play({ mutedFallback = true } = {}) {
       if (disposed) return "aborted";
-      playIntent = true;
-      session.requested();
+      let attempt = markPlayRequested();
+      const cancellation = cancellationVersion;
       // Only wait while hls.js is still attaching: with a source already in place, play()
       // must run synchronously so a tap's user activation (WebKit) still covers it.
       if (!isAttached) {
         await attached;
-        if (disposed) return "aborted";
+        if (disposed || !playIntent || cancellation !== cancellationVersion)
+          return "aborted";
+        // An initial HLS preflight may choose MP4 before anything was attached.
+        // Ownership starts at that first source, while logout/pause/disposal still cancels intent.
+        if (attempt.sourceGeneration !== sourceVersion)
+          attempt = markPlayRequested();
       }
-      const version = sourceVersion;
       try {
         await video.play();
-        return "playing";
+        return settleNativePlay(attempt) ? "playing" : "aborted";
       } catch (error) {
-        if (disposed || version !== sourceVersion) return "aborted";
+        if (!settleNativePlay(attempt, error)) return "aborted";
         const name = (error as DOMException | undefined)?.name;
         if (name === "NotAllowedError") {
           if (!video.muted && mutedFallback) {
             video.muted = true;
             try {
               await video.play();
-              return "playing";
+              return settleNativePlay(attempt) ? "playing" : "aborted";
             } catch (retryError) {
-              if (disposed || version !== sourceVersion) return "aborted";
+              if (!settleNativePlay(attempt, retryError)) return "aborted";
               if (
                 (retryError as DOMException | undefined)?.name !==
                 "NotAllowedError"

@@ -215,8 +215,10 @@ describe("dropNoisyStorefrontSentryEvent", () => {
     );
   });
 
-  it("drops wasm-bindgen rust aliasing panics", () => {
-    expect(dropNoisyStorefrontSentryEvent({ message: WASM_BINDGEN_ALIASING_MESSAGE })).toBeNull();
+  it("retains title-only wasm panics until their frames establish ownership", () => {
+    expect(
+      dropNoisyStorefrontSentryEvent({ message: WASM_BINDGEN_ALIASING_MESSAGE }),
+    ).not.toBeNull();
   });
 
   it("keeps transport candidates without a confirmed recovery", () => {

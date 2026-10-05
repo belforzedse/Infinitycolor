@@ -1,13 +1,15 @@
+import {
+  installBrowserFailureDiagnostics,
+  browserFailureSnapshot,
+} from "./src/lib/browser-failure-diagnostics";
+import { cancelStorefrontRecovery } from "./src/lib/storefront-recovery";
 import { beforeSendDiagnosticLog, logDiagnostic } from "./src/lib/diagnostic-log";
 import * as Sentry from "@sentry/nextjs";
 
 import type * as SentryReplay from "./src/lib/sentry-replay";
 
 import { isReplayAllowedUrl, replaySampleRate } from "./src/lib/sentry-replay-privacy";
-import {
-  dropExpectedCheckoutSentryEvent,
-  EXPECTED_CHECKOUT_SENTRY_IGNORE,
-} from "./src/lib/expected-checkout-sentry";
+import { dropExpectedCheckoutSentryEvent } from "./src/lib/expected-checkout-sentry";
 import {
   dropNoisyStorefrontSentryEvent,
   tagStorefrontSentryEvent,
@@ -85,26 +87,10 @@ Sentry.init({
   // prevents even a short sensitive-route capture during initialization.
   replaysSessionSampleRate: replaySessionSampleRate,
   replaysOnErrorSampleRate: replayErrorSampleRate,
-  ignoreErrors: [
-    // Safari/WebKit quirk inside Next's vendored `web-vitals` package
-    // (node_modules/next/dist/compiled/web-vitals): its flush-before-unload
-    // path calls `observer.takeRecords()`, which some WebKit builds throw on.
-    // Framework-internal, not something app code calls or can guard.
-    /takeRecords is not a function/,
-    // Sentry's Web Vitals integration asks for the visibility-state entry on
-    // very old WebKit builds where Performance#getEntriesByType is absent.
-    /globalThis\.performance\.getEntriesByType.*visibility-state/,
-    // Safari injected-range helper, same anonymous eval pattern, not app code.
-    /EmptyRanges/,
-    // wasm-bindgen / rrweb host panic; not storefront code.
-    /recursive use of an object detected which would lead to unsafe aliasing in rust/,
-    // Expected checkout leftovers. Also dropped in beforeSend so a stale
-    // checkout chunk cannot keep reporting them after a frontend cutover.
-    EXPECTED_CHECKOUT_SENTRY_IGNORE,
-  ],
   beforeSend(event) {
     // Tag injects and Flight cuts, then drop the known-noise fingerprints.
     // WebView/Java-bridge strings that are not tagName/hydration stay visible.
+    event.contexts = { ...event.contexts, browser_failure: browserFailureSnapshot() };
     const tagged = tagStorefrontSentryEvent(event);
     const withoutNoise = dropNoisyStorefrontSentryEvent(tagged);
     if (!withoutNoise) return null;
@@ -112,16 +98,24 @@ Sentry.init({
   },
 });
 
+installBrowserFailureDiagnostics();
+
 if (typeof window !== "undefined") {
   const state = (
     window as Window & {
-      __infinityListenerRecovery?: { popstate: boolean; pageshow: boolean; flush?: () => void };
+      __infinityListenerRecovery?: {
+        popstate: boolean;
+        pageshow: boolean;
+        resize: boolean;
+        focus: boolean;
+        flush?: () => void;
+      };
     }
   ).__infinityListenerRecovery;
   if (state) {
     const sent = new Set<string>();
     state.flush = () => {
-      for (const type of ["popstate", "pageshow"] as const) {
+      for (const type of ["popstate", "pageshow", "resize", "focus"] as const) {
         if (
           state[type] &&
           !sent.has(type) &&
@@ -158,6 +152,7 @@ export function onRouterTransitionStart(
   url: string,
   navigationType: "push" | "replace" | "traverse",
 ) {
+  cancelStorefrontRecovery();
   scheduleReplayRoute(url);
 
   try {

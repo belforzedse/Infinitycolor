@@ -20,7 +20,7 @@ export function onHttpError(
   _context: { status: number; options?: ApiRequestOptions },
 ): void {
   // Denying one request must never erase the signed-in identity. `handleAuthErrors`
-  // owns the response: 401 clears the session and routes to central login, while 403
+  // owns the response: 401 rechecks the session before central login, while 403
   // only surfaces a permission notice and deliberately keeps the cached user so the
   // page stays usable. Clearing `currentUserAtom` here as well made any single
   // forbidden resource look like a logout and bounced the operator off the page.

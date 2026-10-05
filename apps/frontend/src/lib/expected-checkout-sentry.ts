@@ -45,19 +45,22 @@ export function isExpectedCheckoutSentryMessage(message: string | undefined): bo
 
 type SentryEventLike = {
   message?: string;
+  tags?: Record<string, unknown>;
   exception?: {
     values?: Array<{ value?: string }>;
   };
 };
 
 /**
- * Client `beforeSend` drop for expected checkout states. Lives next to the
- * ignoreErrors regex so a stale checkout chunk cannot keep the same titles at
- * error level after a cutover.
+ * Only an owning operation can establish an expected outcome. A matching title alone is insufficient.
  */
 export function dropExpectedCheckoutSentryEvent<T extends SentryEventLike>(event: T): T | null {
   const message = event.message || event.exception?.values?.[0]?.value;
-  if (isExpectedCheckoutSentryMessage(message)) {
+  if (
+    isExpectedCheckoutSentryMessage(message) &&
+    event.tags?.operation === "checkout" &&
+    event.tags?.reporting_classification === "expected"
+  ) {
     return null;
   }
   return event;

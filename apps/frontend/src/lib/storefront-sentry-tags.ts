@@ -175,7 +175,7 @@ export function dropNoisyStorefrontSentryEvent<T extends SentryEventLike>(event:
   const message = eventMessage(event);
   if (isReplayHydrationSentryEvent(event)) return null;
   if (isProvenInjected(event)) return null;
-  if (message.includes(WASM_BINDGEN_ALIASING_MESSAGE)) return null;
+
   if (
     event.tags?.transport_cut === "rsc" &&
     (event.tags?.recovery_outcome === "recovered" || event.tags?.recovery_outcome === "cancelled")

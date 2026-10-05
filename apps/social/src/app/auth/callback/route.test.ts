@@ -58,7 +58,34 @@ describe("Infinitygram auth callback", () => {
       ),
     );
     expect(response.headers.get("location")).toContain(
-      "error=grant_exchange_failed",
+      "error=grant_exchange_unavailable",
     );
   });
 });
+
+it.each([
+  [400, "grant_exchange_failed"],
+  [503, "grant_exchange_unavailable"],
+])(
+  "preserves attempt and no-cache on HTTP %s without replaying grants",
+  async (status, reason) => {
+    process.env.AUTH_SERVER_ORIGIN = "https://auth.infinitycolor.co";
+    const exchange = jest
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: Number(status) }));
+    try {
+      const req = new NextRequest(
+        `https://infinitygram.co/auth/callback?grant=${"g".repeat(48)}`,
+      );
+      req.cookies.set("infinity_auth_restore_loop", "2");
+      const result = await GET(req);
+      const url = new URL(result.headers.get("location")!);
+      expect(url.searchParams.get("attempt")).toBe("2");
+      expect(url.searchParams.get("error")).toBe(reason);
+      expect(result.headers.get("cache-control")).toContain("no-store");
+      expect(exchange).toHaveBeenCalledTimes(1);
+    } finally {
+      exchange.mockRestore();
+    }
+  },
+);

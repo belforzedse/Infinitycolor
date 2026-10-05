@@ -13,8 +13,7 @@ let lastReport: { key: string; at: number } | undefined;
 export function isTransientStorefrontError(error?: Error): boolean {
   return Boolean(
     error &&
-      (error.name === "AbortError" ||
-        error.name === "NetworkError" ||
+      (error.name === "NetworkError" ||
         TRANSIENT_NETWORK_MESSAGES.has(error.message.replace(/^(?:TypeError|Error):\s*/, ""))),
   );
 }
@@ -43,7 +42,11 @@ export function retryStorefrontError(
     recovery_outcome: "retry_dispatched",
     next_error_digest: error.digest,
   });
-  retry();
+  try {
+    retry();
+  } catch {
+    reportStorefrontError(error, surface);
+  }
   return true;
 }
 
@@ -100,4 +103,14 @@ export function exhaustStorefrontRecovery(
   }
   reportStorefrontError(error, surface);
   return true;
+}
+
+/** Explicit route navigation cancels the old recovery; unknown AbortErrors still report. */
+export function cancelStorefrontRecovery(): void {
+  if (pending)
+    logDiagnostic("storefront.recovery", {
+      recovery_surface: pending.surface,
+      recovery_outcome: "cancelled",
+    });
+  pending = undefined;
 }

@@ -3,7 +3,7 @@ import { blogService } from "../blog.service";
 jest.mock("@/lib/central-auth", () => ({
   centralAuth: {
     tokenManager: {
-      getToken: jest.fn().mockResolvedValue(null),
+      getTokenOutcome: jest.fn().mockResolvedValue({ state: "unauthenticated" }),
     },
   },
 }));

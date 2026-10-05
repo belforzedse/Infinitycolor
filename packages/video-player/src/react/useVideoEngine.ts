@@ -1,11 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import type { PlaybackEngine } from "../capabilities";
 import type { VideoSource } from "../delivery";
-import { createVideoEngine, type EngineFailure, type PlayOutcome, type VideoEngine } from "../engine";
+import {
+  createVideoEngine,
+  type EngineFailure,
+  type PlayOutcome,
+  type VideoEngine,
+} from "../engine";
 
-export type InlinePhase = "idle" | "loading" | "playing" | "paused" | "buffering" | "ended" | "error";
+export type InlinePhase =
+  | "idle"
+  | "loading"
+  | "playing"
+  | "paused"
+  | "buffering"
+  | "ended"
+  | "error";
 
 export interface VideoEngineState {
   phase: InlinePhase;
@@ -52,7 +70,10 @@ export function useVideoEngine(
   const [generation, setGeneration] = useState(0);
   const engineRef = useRef<VideoEngine | null>(null);
   /** Which engine the current play intent was already issued to — exactly one play() each. */
-  const playedRef = useRef<{ engine: VideoEngine | null; playing: boolean }>({ engine: null, playing: false });
+  const playedRef = useRef<{ engine: VideoEngine | null; playing: boolean }>({
+    engine: null,
+    playing: false,
+  });
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -61,10 +82,19 @@ export function useVideoEngine(
     const video = videoRef.current;
     if (!engine || !video) return "aborted";
     const outcome = await engine.play({ mutedFallback: true });
+    if (engineRef.current !== engine) return "aborted";
     if (outcome === "autoplay-denied") {
-      setState((current) => ({ ...current, phase: "paused", failure: "autoplay-denied" }));
+      setState((current) => ({
+        ...current,
+        phase: "paused",
+        failure: "autoplay-denied",
+      }));
     } else if (outcome === "playing") {
-      setState((current) => (current.failure === "autoplay-denied" ? { ...current, failure: null } : current));
+      setState((current) =>
+        current.failure === "autoplay-denied"
+          ? { ...current, failure: null }
+          : current,
+      );
     }
     return outcome;
   }, [videoRef]);
@@ -84,17 +114,28 @@ export function useVideoEngine(
       surface: options.surface,
       allowHls: options.allowHls,
       preload: options.preload,
-      onFirstFrame: () => setState((current) => ({ ...current, hasFirstFrame: true })),
-      onFatal: (failure) => setState((current) => ({ ...current, phase: "error", failure })),
-      onEngineChange: (next) => setState((current) => ({ ...current, engine: next })),
+      onFirstFrame: () =>
+        setState((current) => ({ ...current, hasFirstFrame: true })),
+      onFatal: (failure) =>
+        setState((current) => ({ ...current, phase: "error", failure })),
+      onEngineChange: (next) =>
+        setState((current) => ({ ...current, engine: next })),
     });
     engineRef.current = engine;
     video.muted = optionsRef.current.muted;
     video.loop = Boolean(optionsRef.current.loop);
-    setState({ phase: "loading", hasFirstFrame: false, failure: null, engine: engine.engine, muted: video.muted });
+    setState({
+      phase: "loading",
+      hasFirstFrame: false,
+      failure: null,
+      engine: engine.engine,
+      muted: video.muted,
+    });
 
     const update = (phase: InlinePhase) =>
-      setState((current) => (current.phase === "error" ? current : { ...current, phase }));
+      setState((current) =>
+        current.phase === "error" ? current : { ...current, phase },
+      );
     const onPlaying = () => update("playing");
     const onPause = () => update("paused");
     const onWaiting = () => update("buffering");
@@ -102,7 +143,8 @@ export function useVideoEngine(
       update("ended");
       optionsRef.current.onEnded?.();
     };
-    const onVolume = () => setState((current) => ({ ...current, muted: video.muted }));
+    const onVolume = () =>
+      setState((current) => ({ ...current, muted: video.muted }));
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPause);
     video.addEventListener("waiting", onWaiting);
@@ -123,7 +165,18 @@ export function useVideoEngine(
     };
     // `source` is identified by its URLs; a new object with the same URLs is the same video.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.active, mp4, hls, webm, options.allowHls, options.surface, options.preload, attempt, videoRef, requestPlay]);
+  }, [
+    options.active,
+    mp4,
+    hls,
+    webm,
+    options.allowHls,
+    options.surface,
+    options.preload,
+    attempt,
+    videoRef,
+    requestPlay,
+  ]);
 
   // ── Follow the desired play/mute state ──────────────────────────────────────────────
   // Play is issued once per engine and per paused→playing change, never on every render:
@@ -142,11 +195,22 @@ export function useVideoEngine(
       }
     } else {
       playedRef.current = { engine, playing: false };
+      engine.cancelPlay("pause");
       if (!video.paused) video.pause();
     }
-  }, [options.playing, options.muted, options.loop, generation, videoRef, requestPlay]);
+  }, [
+    options.playing,
+    options.muted,
+    options.loop,
+    generation,
+    videoRef,
+    requestPlay,
+  ]);
 
-  const pause = useCallback(() => videoRef.current?.pause(), [videoRef]);
+  const pause = useCallback(() => {
+    engineRef.current?.cancelPlay("pause");
+    videoRef.current?.pause();
+  }, [videoRef]);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
 
   return { state, play: requestPlay, pause, retry };

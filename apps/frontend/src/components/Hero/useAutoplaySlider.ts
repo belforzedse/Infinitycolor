@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { recordBrowserHandler } from "@/lib/browser-failure-diagnostics";
+
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_INTERVAL_MS = 4000;
 const MIN_INTERVAL_MS = 3000;
@@ -57,6 +59,7 @@ export function useAutoplaySlider({
   );
   const [playKey, setPlayKey] = useState(0);
   const [isPageVisible, setIsPageVisible] = useState(true);
+  const visibility = useRef(true);
 
   const normalizedInterval =
     typeof autoplayInterval === "number"
@@ -85,12 +88,8 @@ export function useAutoplaySlider({
   }, [autoplayEligibility, slidesLength]);
 
   useEffect(() => {
-    if (slidesLength === 0) {
-      setIndex(0);
-      return;
-    }
-    setIndex((i) => (i >= slidesLength ? 0 : i));
-  }, [setIndex, slidesLength]);
+    if (index >= slidesLength && index !== 0) setIndex(0);
+  }, [index, setIndex, slidesLength]);
 
   useLayoutEffect(() => {
     if (slidesLength === 0) return;
@@ -109,7 +108,12 @@ export function useAutoplaySlider({
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      setIsPageVisible(document.visibilityState !== "hidden");
+      recordBrowserHandler("visibility");
+      const next = document.visibilityState !== "hidden";
+      if (visibility.current !== next) {
+        visibility.current = next;
+        setIsPageVisible(next);
+      }
     };
     handleVisibilityChange();
     document.addEventListener("visibilitychange", handleVisibilityChange);

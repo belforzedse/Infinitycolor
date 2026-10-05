@@ -1,9 +1,28 @@
 // jest.mock is hoisted above the imports, so the fns must be created inside it.
 jest.mock("@/lib/central-auth", () => ({
-  centralAuth: { tokenManager: { peek: jest.fn(), getToken: jest.fn() } },
+  centralAuth: {
+    tokenManager: {
+      peek: jest.fn(),
+      getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async () => {
+        try {
+          const token = await jest
+            .requireMock("@/lib/central-auth")
+            .centralAuth.tokenManager.getToken();
+          return token
+            ? { state: "authenticated", token }
+            : { state: "unauthenticated" };
+        } catch {
+          return { state: "unavailable", reasonCode: "network" };
+        }
+      }),
+    },
+  },
 }));
 
 import { centralAuth } from "@/lib/central-auth";
+import { currentUserAtom } from "@/lib/atoms/auth";
+import { jotaiStore } from "@/lib/jotaiStore";
 import { hasActiveSession } from "../auth";
 
 const peek = centralAuth.tokenManager.peek as jest.Mock;
@@ -18,6 +37,7 @@ const getToken = centralAuth.tokenManager.getToken as jest.Mock;
  */
 describe("hasActiveSession", () => {
   beforeEach(() => {
+    jotaiStore.set(currentUserAtom, null);
     peek.mockReset();
     getToken.mockReset();
   });
@@ -50,4 +70,12 @@ describe("hasActiveSession", () => {
 
     await expect(hasActiveSession()).resolves.toBe(false);
   });
+});
+
+it("keeps a known identity usable during temporary refresh failure without claiming an unknown session", async () => {
+  peek.mockReturnValue(null);
+  getToken.mockRejectedValue(new Error("network down"));
+  jotaiStore.set(currentUserAtom, { id: 7 } as never);
+  await expect(hasActiveSession()).resolves.toBe(true);
+  expect(jotaiStore.get(currentUserAtom)?.id).toBe(7);
 });

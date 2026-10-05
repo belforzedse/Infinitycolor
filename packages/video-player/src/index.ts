@@ -1,4 +1,10 @@
-export { readVideoDelivery, resolveVideoSource, type VideoAssetLike, type VideoDelivery, type VideoSource } from "./delivery";
+export {
+  readVideoDelivery,
+  resolveVideoSource,
+  type VideoAssetLike,
+  type VideoDelivery,
+  type VideoSource,
+} from "./delivery";
 export {
   canPlayNativeHls,
   canPlayWebm,
@@ -18,8 +24,18 @@ export {
   type VideoEngine,
   type VideoEngineOptions,
 } from "./engine";
-export { DECODE_PROBE_ATTEMPTS, DECODE_PROBE_MS, hasDecodableVideoTrack, watchFirstFrame } from "./frames";
-export { buildHlsConfig, readBandwidthEstimate, recordBandwidthEstimate, resetBandwidthEstimate } from "./hls-config";
+export {
+  DECODE_PROBE_ATTEMPTS,
+  DECODE_PROBE_MS,
+  hasDecodableVideoTrack,
+  watchFirstFrame,
+} from "./frames";
+export {
+  buildHlsConfig,
+  readBandwidthEstimate,
+  recordBandwidthEstimate,
+  resetBandwidthEstimate,
+} from "./hls-config";
 export {
   browserFamily,
   deviceClass,
@@ -30,8 +46,27 @@ export {
   type VideoPlaybackError,
   type VideoPlaybackSummary,
   type VideoTelemetryEvent,
+  type PlaybackDiagnostics,
+  type NativePlayRecord,
 } from "./telemetry";
-export { parseMasterVariants, pickWarmVariant, warmVideo, type WarmOptions } from "./warm";
-export { useVideoEngine, type InlinePhase, type UseVideoEngineOptions, type VideoEngineState } from "./react/useVideoEngine";
-export { useVisibilitySlot, type VisibilitySlot } from "./react/useVisibilitySlot";
-export { InlineVideo, type InlineVideoControls, type InlineVideoProps } from "./react/InlineVideo";
+export {
+  parseMasterVariants,
+  pickWarmVariant,
+  warmVideo,
+  type WarmOptions,
+} from "./warm";
+export {
+  useVideoEngine,
+  type InlinePhase,
+  type UseVideoEngineOptions,
+  type VideoEngineState,
+} from "./react/useVideoEngine";
+export {
+  useVisibilitySlot,
+  type VisibilitySlot,
+} from "./react/useVisibilitySlot";
+export {
+  InlineVideo,
+  type InlineVideoControls,
+  type InlineVideoProps,
+} from "./react/InlineVideo";

@@ -54,6 +54,7 @@ export interface StoryMediaIssue {
   mediaErrorCode: number | null;
   videoEngine?: "mp4" | "webm" | "native-hls" | "hls.js";
   attemptedEngines?: string[];
+  playback?: import("@repo/video-player").PlaybackDiagnostics;
 }
 
 export type StoryMediaIssueReporter = (issue: StoryMediaIssue) => void;

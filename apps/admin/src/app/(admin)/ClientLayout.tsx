@@ -6,6 +6,7 @@ import ScrollToTop from "@/components/ScrollToTop";
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import { UserService } from "@/services";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import { HTTP_STATUS } from "@/constants/api";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -14,7 +15,12 @@ import {
   getAdminLandingPath,
 } from "@/constants/roleAccess";
 import clsx from "clsx";
-import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import {
+  centralAuth,
+  centralLoginUrl,
+  readAuthStateVersion,
+  subscribeToAuthState,
+} from "@/lib/central-auth";
 import { storefrontOrigin } from "@/config/admin-env";
 
 /**
@@ -67,7 +73,8 @@ export default function ClientLayout({
   const setCurrentUser = useSetAtom(currentUserAtom);
   const setUserLoading = useSetAtom(userLoadingAtom);
   const currentUser = useAtomValue(currentUserAtom);
-  const hasRunRef = useRef(false);
+  const mounted = useRef(false);
+  const operation = useRef(0);
   const lastCheckRef = useRef<number>(0);
   const isCheckingRef = useRef(false);
 
@@ -75,118 +82,117 @@ export default function ClientLayout({
     window.location.replace(new URL("/account", storefrontOrigin()).toString());
   }, []);
 
-  // Silent background auth check - doesn't show loading state
-  const checkAuthSilently = useCallback(async () => {
-    // Prevent concurrent checks
-    if (isCheckingRef.current) return;
-
-    // Throttle: don't check more than once per 30 seconds
-    const now = Date.now();
-    if (now - lastCheckRef.current < 30000) return;
-
-    isCheckingRef.current = true;
-    lastCheckRef.current = now;
-
-    try {
-      const token = await centralAuth.tokenManager.getToken();
-      if (!token) {
-        setIsAuthorized(false);
-        window.location.replace(centralLoginUrl(pathname));
+  const checkAuthSilently = useCallback(
+    async (initial = false) => {
+      if (
+        isCheckingRef.current ||
+        (!initial && Date.now() - lastCheckRef.current < 30_000)
+      )
         return;
-      }
-
-      const me = await UserService.me(true);
-      setCurrentUser(me);
-
-      // Check if user is still admin - update isAuthorized state and redirect immediately
-      if (!me?.isAdmin) {
-        setIsAuthorized(false);
-        redirectToStorefront();
-        return;
-      }
-
-      setAuthError(false);
-      setIsAuthorized(true);
-    } catch (error: any) {
-      if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
+      isCheckingRef.current = true;
+      lastCheckRef.current = Date.now();
+      const run = ++operation.current;
+      const version = readAuthStateVersion();
+      const current = () =>
+        mounted.current &&
+        run === operation.current &&
+        version === readAuthStateVersion();
+      const sessionLost = () => {
         setCurrentUser(null);
         setIsAuthorized(false);
         window.location.replace(centralLoginUrl(pathname));
-        return;
-      }
-      if (error?.status === HTTP_STATUS.FORBIDDEN) {
-        setIsAuthorized(false);
-        redirectToStorefront();
-        return;
-      }
-      setAuthError(true);
-    } finally {
-      isCheckingRef.current = false;
-    }
-  }, [pathname, redirectToStorefront, setCurrentUser]);
-
-  // Initial mount check - with loading state
-  useEffect(() => {
-    // Prevent running multiple times
-    if (hasRunRef.current) return;
-    hasRunRef.current = true;
-
-    let isMounted = true;
-    setIsLoading(true);
-    setUserLoading(true);
-
-    const run = async () => {
-      const token = await centralAuth.tokenManager.getToken();
-      if (!token) {
-        window.location.replace(centralLoginUrl(pathname));
-        return;
-      }
-      setCurrentUser(null);
-      return UserService.me(true);
-    };
-    run()
-      .then((me) => {
-        if (!isMounted || !me) return;
-        // Update the cached user data with fresh data
+      };
+      try {
+        const outcome = await centralAuth.tokenManager.getTokenOutcome();
+        if (!current() || outcome.state === "invalidated") return;
+        if (outcome.state === "unauthenticated") {
+          sessionLost();
+          return;
+        }
+        if (outcome.state === "unavailable") {
+          setAuthError(true);
+          return;
+        }
+        const me = await UserService.me(true);
+        if (!current()) return;
         setCurrentUser(me);
-        setUserLoading(false);
-
         if (!me?.isAdmin) {
+          setIsAuthorized(false);
           redirectToStorefront();
           return;
         }
         setAuthError(false);
         setIsAuthorized(true);
-        setIsLoading(false);
-        // Update last check time for initial mount
-        lastCheckRef.current = Date.now();
-      })
-      .catch((error: any) => {
-        if (!isMounted) return;
-        setUserLoading(false);
-
-        if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
-          setCurrentUser(null);
-          window.location.replace(centralLoginUrl(pathname));
-          return;
+        logDiagnostic("auth.recovery", {
+          operation: "admin_initialize",
+          outcome: "recovered",
+        });
+      } catch (error: unknown) {
+        if (!current()) return;
+        const status = (error as { status?: number })?.status;
+        if (status === HTTP_STATUS.UNAUTHORIZED) {
+          const outcome = await centralAuth.tokenManager.getTokenOutcome({
+            forceRefresh: true,
+          });
+          if (!current()) return;
+          if (outcome.state === "unauthenticated") {
+            sessionLost();
+            return;
+          }
         }
-        if (error?.status === HTTP_STATUS.FORBIDDEN) {
+        if (status === HTTP_STATUS.FORBIDDEN) {
+          setIsAuthorized(false);
           redirectToStorefront();
           return;
         }
         setAuthError(true);
-        setIsLoading(false);
-      });
+        logDiagnostic("auth.recovery", {
+          operation: "admin_initialize",
+          outcome: "unavailable",
+          http_status: status,
+        });
+      } finally {
+        if (run === operation.current) isCheckingRef.current = false;
+        if (current()) {
+          setUserLoading(false);
+          setIsLoading(false);
+        }
+      }
+    },
+    [pathname, redirectToStorefront, setCurrentUser, setUserLoading],
+  );
 
+  useEffect(() => {
+    mounted.current = true;
+    setUserLoading(true);
+    void checkAuthSilently(true);
+    const unsubscribe = subscribeToAuthState((event) => {
+      operation.current += 1;
+      isCheckingRef.current = false;
+      if (event.type === "logout") {
+        setCurrentUser(null);
+        setIsAuthorized(false);
+        setUserLoading(false);
+        window.location.replace(centralLoginUrl(pathname));
+      } else {
+        setCurrentUser(null);
+        setIsAuthorized(false);
+        void checkAuthSilently(true);
+      }
+    });
     return () => {
-      isMounted = false;
+      mounted.current = false;
+      operation.current += 1;
+      isCheckingRef.current = false;
+      unsubscribe();
     };
+    // The silent check uses current path; initial loading runs only for this mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount - use ref to prevent re-runs
+  }, []);
 
   // Background check on window focus (when user returns to tab)
   useEffect(() => {
-    if (!isAuthorized) return; // Only check if already authorized
+    if (!isAuthorized && !authError) return;
 
     const handleFocus = () => {
       checkAuthSilently();
@@ -196,11 +202,11 @@ export default function ClientLayout({
     return () => {
       window.removeEventListener("focus", handleFocus);
     };
-  }, [isAuthorized, checkAuthSilently]);
+  }, [isAuthorized, authError, checkAuthSilently]);
 
   // Periodic background check (every 5 minutes)
   useEffect(() => {
-    if (!isAuthorized) return; // Only check if already authorized
+    if (!isAuthorized && !authError) return;
 
     const interval = setInterval(
       () => {
@@ -212,11 +218,11 @@ export default function ClientLayout({
     return () => {
       clearInterval(interval);
     };
-  }, [isAuthorized, checkAuthSilently]);
+  }, [isAuthorized, authError, checkAuthSilently]);
 
   // Background check on route changes (throttled)
   useEffect(() => {
-    if (!isAuthorized) return; // Only check if already authorized
+    if (!isAuthorized && !authError) return;
 
     // Throttle route change checks - only if last check was more than 30 seconds ago
     const now = Date.now();
@@ -253,7 +259,9 @@ export default function ClientLayout({
           <button
             type="button"
             className="mt-4 rounded-full bg-infinity-primary px-5 py-2 text-white"
-            onClick={() => window.location.reload()}
+            onClick={() => {
+              void checkAuthSilently(true);
+            }}
           >
             تلاش دوباره
           </button>

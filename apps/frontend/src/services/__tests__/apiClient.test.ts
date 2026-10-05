@@ -356,3 +356,112 @@ describe("ApiClient", () => {
     });
   });
 });
+
+describe("response ownership and total request deadline", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    jest.useFakeTimers();
+  });
+  afterEach(() => jest.useRealTimers());
+  const client = () => new ApiClient({ baseUrl: "https://api.test/api", requestTimeout: 100 });
+  it("retains the legacy transport status without claiming an HTTP response", async () => {
+    mockFetch.mockRejectedValue(new TypeError("private fetch details"));
+    const error = await client()
+      .post("/checkout/quote", {}, { retries: 3 })
+      .catch((e) => e);
+    expect(error.status).toBe(500);
+    expect(error.diagnostics).toMatchObject({ stage: "request", name: "TypeError" });
+    expect(error.diagnostics.httpStatus).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it("records a real HTTP 500 without replaying the mutation", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      headers: new Headers(),
+      json: async () => ({ message: "failed" }),
+    });
+    const error = await client()
+      .post("/checkout/finalize", {}, { retries: 3 })
+      .catch((e) => e);
+    expect(error.diagnostics).toMatchObject({ stage: "response_status", httpStatus: 500 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it("times out a stalled body even if parsing ignores the abort signal", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: () => new Promise(() => {}),
+    });
+    const pending = client()
+      .post("/checkout/quote", {})
+      .catch((e) => e);
+    await jest.advanceTimersByTimeAsync(100);
+    expect(await pending).toMatchObject({
+      status: 408,
+      diagnostics: { stage: "response_json", httpStatus: 200, cancelled: false },
+    });
+    expect(mockFetch.mock.calls[0][1].signal.aborted).toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+  it("preserves explicit cancellation through parsing and removes its timeout", async () => {
+    const controller = new AbortController();
+    let parsing!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      parsing = resolve;
+    });
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: () => {
+        parsing();
+        return new Promise(() => {});
+      },
+    });
+    const pending = client()
+      .post("/checkout/quote", {}, { signal: controller.signal })
+      .catch((e) => e);
+    await entered;
+    controller.abort();
+    expect(await pending).toMatchObject({
+      diagnostics: { stage: "response_json", httpStatus: 200, cancelled: true },
+    });
+    expect(jest.getTimerCount()).toBe(0);
+  });
+  it("does not dispatch an already cancelled request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      client().post("/checkout/quote", {}, { signal: controller.signal }),
+    ).rejects.toMatchObject({ diagnostics: { cancelled: true, httpStatus: undefined } });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+it("never retries a malformed successful response or explicit read cancellation", async () => {
+  mockFetch.mockReset();
+  const client = new ApiClient({ baseUrl: "https://api.test/api" });
+  mockFetch.mockResolvedValue({
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    text: async () => "private HTML",
+  });
+  await expect(client.post("/checkout/quote", {}, { retries: 3 })).rejects.toMatchObject({
+    status: 500,
+    diagnostics: { stage: "response_json", name: "SyntaxError", httpStatus: 200 },
+  });
+  expect(mockFetch).toHaveBeenCalledTimes(1);
+  await expect(client.get("/read", { retries: 3 })).rejects.toMatchObject({
+    diagnostics: { name: "SyntaxError" },
+  });
+  expect(mockFetch).toHaveBeenCalledTimes(2);
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    client.get("/read", { signal: controller.signal, retries: 3 }),
+  ).rejects.toMatchObject({ diagnostics: { cancelled: true } });
+  expect(mockFetch).toHaveBeenCalledTimes(2);
+});

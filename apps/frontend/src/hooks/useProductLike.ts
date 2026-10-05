@@ -1,10 +1,13 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+import { diagnosticAttributes } from "@/lib/diagnostic-log";
 import { useState, useEffect, useRef } from "react";
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
 import { atom, useAtom } from "jotai";
-import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import { centralAuth, centralLoginUrl, readAuthStateVersion } from "@/lib/central-auth";
+import { logDiagnostic } from "@/lib/diagnostic-log";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 // Global atom to store liked products
@@ -40,7 +43,8 @@ export const likedProductsOwnerAtom = atom<number | null>(null);
 const pendingLikes = new Set<string>();
 const likeRevisions = new Map<number, number>();
 
-const likedProductsRequests = new Map<number, Promise<LikedProduct[]>>();
+const likedProductsRequests = new Map<string, Promise<LikedProduct[] | null>>();
+const retryAfter = new Map<string, number>();
 
 interface UseProductLikeParams {
   productId: string;
@@ -58,18 +62,61 @@ export const redirectToAuth = () => {
   navigationUtils.setWindowLocation(centralLoginUrl(window.location.pathname));
 };
 
-const fetchLikesForUser = (userId: number): Promise<LikedProduct[]> => {
-  const existing = likedProductsRequests.get(userId);
-  if (existing) return existing;
+function reportFailure(error: unknown, operation: "wishlist_load" | "wishlist_toggle"): void {
+  const fields = error as
+    | { name?: string; diagnostics?: Record<string, unknown>; cause?: Error }
+    | undefined;
+  logDiagnostic("auth.recovery", { operation, outcome: "unavailable" });
+  if (fields?.name === "TokenAcquisitionError") return;
+  try {
+    const safe = new Error("Wishlist request failed");
+    // Shared transport causes are already sanitized. Never attach a response body or URL.
+    if (fields?.diagnostics && fields.cause instanceof Error) safe.cause = fields.cause;
+    Sentry.captureException(safe, {
+      tags: { operation },
+      extra: diagnosticAttributes({
+        failure_stage: fields?.diagnostics?.stage,
+        cause_type: fields?.diagnostics?.name,
+        cause_code: fields?.diagnostics?.code,
+        http_status: fields?.diagnostics?.httpStatus,
+        request_id: fields?.diagnostics?.requestId,
+      }),
+      fingerprint: ["wishlist", operation],
+    });
+  } catch {
+    /* Telemetry cannot affect wishlist state. */
+  }
+}
 
-  const request = apiClient
-    .get<{ data: LikedProduct[] }>(ENDPOINTS.PRODUCT_LIKES.USER_LIKES)
-    .then((response) => (Array.isArray(response.data) ? response.data : []))
+const fetchLikesForUser = (userId: number): Promise<LikedProduct[] | null> => {
+  const key = `${userId}:${readAuthStateVersion()}`;
+  const existing = likedProductsRequests.get(key);
+  if (existing) return existing;
+  if (Date.now() < (retryAfter.get(key) ?? 0)) return Promise.resolve(null);
+
+  const request = (async () => {
+    const outcome = await centralAuth.tokenManager.getTokenOutcome();
+    if (outcome.state !== "authenticated") {
+      retryAfter.set(key, Date.now() + 30_000);
+      logDiagnostic("auth.recovery", { operation: "wishlist_load", outcome: outcome.state });
+      return null;
+    }
+    const response = await apiClient.get<{ data: LikedProduct[] }>(
+      ENDPOINTS.PRODUCT_LIKES.USER_LIKES,
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  })()
+    .catch((error: unknown) => {
+      retryAfter.set(key, Date.now() + 30_000);
+      if (key === `${userId}:${readAuthStateVersion()}`) reportFailure(error, "wishlist_load");
+      return null;
+    })
     .finally(() => {
-      likedProductsRequests.delete(userId);
+      if (likedProductsRequests.get(key) === request) likedProductsRequests.delete(key);
     });
 
-  likedProductsRequests.set(userId, request);
+  while (retryAfter.size > 16) retryAfter.delete(retryAfter.keys().next().value!);
+  likedProductsRequests.set(key, request);
   return request;
 };
 
@@ -88,10 +135,13 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
   }
 
   // Ensure likedProducts is always an array
-  const safeProducts = Array.isArray(likedProducts) ? likedProducts : [];
+  const safeProducts = likesOwner === userId && Array.isArray(likedProducts) ? likedProducts : [];
 
   useEffect(() => {
     setIsMounted(true);
+    return () => {
+      identity.current.generation += 1;
+    };
   }, []);
 
   useEffect(() => {
@@ -110,33 +160,40 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
 
     if (likesOwner === userId && hasLoaded) return;
 
+    const authVersion = readAuthStateVersion();
+    let lastAttempt = -Infinity;
+    const current = () => active && authVersion === readAuthStateVersion();
     const load = async () => {
-      const token = await centralAuth.tokenManager.getToken();
-      if (!active || !token) return;
-
+      if (!current() || Date.now() - lastAttempt < 30_000) return;
+      lastAttempt = Date.now();
       try {
         setIsGlobalLoading(true);
         const revision = likeRevisions.get(userId) || 0;
         const products = await fetchLikesForUser(userId);
-        if (!active || revision !== (likeRevisions.get(userId) || 0)) return;
+        if (!current() || products === null || revision !== (likeRevisions.get(userId) || 0))
+          return;
         setLikedProducts(products);
         setLikesOwner(userId);
         setHasLoaded(true);
       } catch (error) {
-        console.error("Error fetching liked products:", error);
-        // Deliberately leaves hasLoaded false so a later render can retry; the map entry
-        // has already been evicted by then.
-        if (!active) return;
-        setLikedProducts([]);
+        console.error("Wishlist load unavailable");
+        // Preserve this identity's existing wishlist during temporary unavailability.
+        logDiagnostic("auth.recovery", { operation: "wishlist_load", outcome: "unavailable" });
       } finally {
         if (active) setIsGlobalLoading(false);
       }
     };
 
-    load();
-
+    void load();
+    const retry = () => {
+      void load();
+    };
+    window.addEventListener("focus", retry);
+    window.addEventListener("online", retry);
     return () => {
       active = false;
+      window.removeEventListener("focus", retry);
+      window.removeEventListener("online", retry);
     };
   }, [
     userId,
@@ -159,36 +216,50 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
     pendingLikes.add(key);
     setIsLoading(true);
     const generation = identity.current.generation;
+    const authVersion = readAuthStateVersion();
+    const current = () =>
+      identity.current.generation === generation && authVersion === readAuthStateVersion();
     const desired = !safeProducts.some(({ product }) => String(product?.id) === String(productId));
     try {
-      const token = await centralAuth.tokenManager.getToken();
-      if (!token) {
+      const outcome = await centralAuth.tokenManager.getTokenOutcome();
+      if (!current()) return null;
+      if (outcome.state === "unauthenticated") {
         redirectToAuth();
         return null;
       }
-      if (identity.current.generation !== generation) return null;
+      if (outcome.state !== "authenticated") {
+        logDiagnostic("auth.recovery", { operation: "wishlist_toggle", outcome: outcome.state });
+        return null;
+      }
       if (userId !== null) likeRevisions.set(userId, (likeRevisions.get(userId) || 0) + 1);
       const response = await apiClient.post<{ isFavorite: boolean }>(
         ENDPOINTS.PRODUCT_LIKES.TOGGLE,
         { productId, isFavorite: desired },
       );
-      if (identity.current.generation !== generation) return null;
+      if (!current()) return null;
       const result = response as unknown as { isFavorite?: boolean };
       if (typeof result.isFavorite !== "boolean") throw new Error("Invalid favorite response");
       setLikedProducts((current) => {
         const others = current.filter(({ product }) => String(product?.id) !== String(productId));
         return result.isFavorite
-          ? [...others, { id: Number(productId), product: { id: Number(productId) },
-              createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
+          ? [
+              ...others,
+              {
+                id: Number(productId),
+                product: { id: Number(productId) },
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              },
+            ]
           : others;
       });
       return result.isFavorite;
     } catch (error) {
-      console.error("Error toggling product like:", error);
+      if (current()) reportFailure(error, "wishlist_toggle");
       return null;
     } finally {
       pendingLikes.delete(key);
-      setIsLoading(false);
+      if (current()) setIsLoading(false);
     }
   };
 
@@ -203,3 +274,10 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
 };
 
 export default useProductLike;
+
+export const __resetUseProductLikeState = () => {
+  likedProductsRequests.clear();
+  retryAfter.clear();
+  pendingLikes.clear();
+  likeRevisions.clear();
+};

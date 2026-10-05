@@ -17,6 +17,31 @@ const CONNECTION_CODES = new Set([
   "UND_ERR_SOCKET",
 ]);
 
+export type CatalogRequestShape = {
+  request_target_bytes: number;
+  application_header_bytes: number;
+  trace_header_bytes: number;
+};
+
+/** Declared request sizes, not wire sizes: framework/SDK transport may add headers later. */
+export function catalogRequestShape(input: string, headers?: HeadersInit): CatalogRequestShape {
+  const url = new URL(input);
+  const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
+  let application = 0;
+  let trace = 0;
+  new Headers(headers).forEach((value, name) => {
+    const size = bytes(`${name}: ${value}\r\n`);
+    if (["sentry-trace", "baggage", "traceparent", "tracestate"].includes(name.toLowerCase()))
+      trace += size;
+    else application += size;
+  });
+  return {
+    request_target_bytes: bytes(url.pathname + url.search),
+    application_header_bytes: application,
+    trace_header_bytes: trace,
+  };
+}
+
 export class CatalogTransportError extends Error {
   constructor(
     public readonly failureStage: CatalogFailureStage,
@@ -25,6 +50,7 @@ export class CatalogTransportError extends Error {
     public readonly requestId?: string,
     public readonly attempts = 1,
     public readonly knownCancellation = false,
+    public readonly requestShape?: CatalogRequestShape,
   ) {
     super("Catalog transport failed", { cause: redactCatalogCause(cause, failureStage) });
     this.name = "CatalogTransportError";
@@ -54,9 +80,16 @@ export async function fetchCatalogJson<T>(
   init: RequestInit = {},
   operation = "catalog",
   budget?: { deadlineAt: number },
-): Promise<{ response: Response; data: T; requestId?: string; attempts: number }> {
+): Promise<{
+  response: Response;
+  data: T;
+  requestId?: string;
+  attempts: number;
+  requestShape: CatalogRequestShape;
+}> {
   if (init.method && init.method.toUpperCase() !== "GET")
     throw new Error("Catalog transport only supports GET");
+  const requestShape = catalogRequestShape(input, init.headers);
   const started = Date.now();
   const deadline = Math.min(started + 15_000, budget?.deadlineAt ?? Infinity);
   if (started >= deadline)
@@ -97,17 +130,20 @@ export async function fetchCatalogJson<T>(
     controller.signal.addEventListener("abort", onAbort, { once: true });
     if (controller.signal.aborted) onAbort();
     try {
+      if (controller.signal.aborted) {
+        await interrupted;
+      }
       const work = async () => {
         response = await fetch(input, { ...init, method: "GET", signal: controller.signal });
         const candidate = response.headers?.get("x-request-id");
         if (candidate && /^[a-zA-Z0-9_.:-]{1,100}$/.test(candidate)) requestId = candidate;
         if (!response.ok) {
           await response.body?.cancel().catch(() => undefined);
-          return { response, data: undefined as T, requestId, attempts: attempt };
+          return { response, data: undefined as T, requestId, attempts: attempt, requestShape };
         }
         stage = "response_json";
         const data = (await response.json()) as T;
-        return { response, data, requestId, attempts: attempt };
+        return { response, data, requestId, attempts: attempt, requestShape };
       };
       const result = await Promise.race([work(), interrupted]);
       if (
@@ -119,6 +155,7 @@ export async function fetchCatalogJson<T>(
         continue;
       if (attempt > 1 || !result.response.ok)
         logDiagnostic("catalog.recovery", {
+          ...requestShape,
           operation,
           outcome: result.response.ok ? "recovered" : "failed",
           http_status: result.response.status,
@@ -138,8 +175,10 @@ export async function fetchCatalogJson<T>(
         requestId,
         attempt,
         cancelled,
+        requestShape,
       );
       logDiagnostic("catalog.recovery", {
+        ...requestShape,
         operation,
         outcome: cancelled ? "cancelled" : "exhausted",
         failure_stage: stage,

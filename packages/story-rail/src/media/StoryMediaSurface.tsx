@@ -256,6 +256,7 @@ function StoryMedia({
               mediaPath: engineRef.current.diagnostics.path,
               videoEngine: engineRef.current.diagnostics.engine,
               attemptedEngines: engineRef.current.diagnostics.attemptedEngines,
+              playback: engineRef.current.diagnostics,
             }
           : {}),
         failure,
@@ -354,47 +355,57 @@ function StoryMedia({
 
     const attemptPlay = () => {
       if (disposed || held()) return;
-      engine.markPlayRequested();
+      const attempt = engine.markPlayRequested();
       const playPromise = video.play();
       if (!playPromise || typeof playPromise.catch !== "function") return;
-      playPromise.catch((error: unknown) => {
-        // Guarded by generation as well as `disposed`: a play() promise can settle after
-        // the viewer has already moved on, and must not touch the new story's state.
-        if (disposed || stateRef.current.generation !== generation) return;
-        const name = (error as DOMException)?.name;
-        if (name === "AbortError" && held()) {
-          // pause()/remove during navigation — a lifecycle event, not a broken video.
-          return;
-        }
-        if (name === "NotAllowedError") {
-          if (!video.muted && !retriedMuted) {
-            // Audible autoplay is refused until this tab has seen a gesture. Drop to
-            // muted once; the mute control stays available for the user to opt back in.
-            retriedMuted = true;
-            video.muted = true;
-            store?.audio.set(false);
-            attemptPlay();
+      void playPromise.then(
+        () => {
+          engine.settleNativePlay(attempt);
+        },
+        (error: unknown) => {
+          // Guarded by generation as well as `disposed`: a play() promise can settle after
+          // the viewer has already moved on, and must not touch the new story's state.
+          if (
+            disposed ||
+            stateRef.current.generation !== generation ||
+            !engine.settleNativePlay(attempt, error)
+          )
+            return;
+          const name = (error as DOMException)?.name;
+          if (name === "AbortError" && held()) {
+            // pause()/remove during navigation — a lifecycle event, not a broken video.
             return;
           }
-          // Genuinely blocked (Low Power Mode, data saver). Stay out of `playing` — the UI
-          // must not pretend otherwise — and let the viewer start it with a tap.
-          setAutoplayBlocked(true);
-          reportOnce("autoplay-denied", null);
-          return;
-        }
-        if (name === "NotSupportedError") {
-          if (engine.recoverDecodeFailure()) return;
-          dispatch({
-            type: "failed",
-            generation,
-            failure: "decode-unsupported",
-          });
-          reportOnce("decode-unsupported", video.error?.code ?? null);
-          return;
-        }
-        dispatch({ type: "failed", generation, failure: "unknown" });
-        reportOnce("unknown", video.error?.code ?? null);
-      });
+          if (name === "NotAllowedError") {
+            if (!video.muted && !retriedMuted) {
+              // Audible autoplay is refused until this tab has seen a gesture. Drop to
+              // muted once; the mute control stays available for the user to opt back in.
+              retriedMuted = true;
+              video.muted = true;
+              store?.audio.set(false);
+              attemptPlay();
+              return;
+            }
+            // Genuinely blocked (Low Power Mode, data saver). Stay out of `playing` — the UI
+            // must not pretend otherwise — and let the viewer start it with a tap.
+            setAutoplayBlocked(true);
+            reportOnce("autoplay-denied", null);
+            return;
+          }
+          if (name === "NotSupportedError") {
+            if (engine.recoverDecodeFailure()) return;
+            dispatch({
+              type: "failed",
+              generation,
+              failure: "decode-unsupported",
+            });
+            reportOnce("decode-unsupported", video.error?.code ?? null);
+            return;
+          }
+          dispatch({ type: "failed", generation, failure: "unknown" });
+          reportOnce("unknown", video.error?.code ?? null);
+        },
+      );
     };
 
     const onLoadedMetadata = () => {
@@ -519,6 +530,7 @@ function StoryMedia({
     const video = videoRef.current;
     if (!video || !showingVideoElement) return;
     if (held) {
+      engineRef.current?.cancelPlay("hold");
       video.pause();
       return;
     }
@@ -527,13 +539,12 @@ function StoryMedia({
       state.phase === "buffering" ||
       state.phase === "playing"
     ) {
-      const playPromise = video.play();
-      if (playPromise && typeof playPromise.catch === "function") {
-        playPromise.catch(() => {
-          // Resume failures are handled by the element's own error/autoplay paths; a
-          // rejected resume must not be reported twice or flip the UI into "playing".
+      const engine = engineRef.current;
+      if (engine)
+        void engine.play({ mutedFallback: false }).then((outcome) => {
+          if (engineRef.current !== engine) return;
+          if (outcome === "autoplay-denied") setAutoplayBlocked(true);
         });
-      }
     }
   }, [held, showingVideoElement, state.phase]);
 
@@ -651,13 +662,12 @@ function StoryMedia({
       if (!video) return;
       video.muted = !enabled;
       if (enabled) {
-        const playPromise = video.play();
-        if (playPromise && typeof playPromise.catch === "function") {
-          playPromise.catch(() => {
-            // Unmuting is a user gesture, so this should not be refused; if it is, the
-            // element stays where it was rather than claiming to play.
+        const engine = engineRef.current;
+        if (engine)
+          void engine.play({ mutedFallback: false }).then((outcome) => {
+            if (engineRef.current === engine && outcome === "autoplay-denied")
+              setAutoplayBlocked(true);
           });
-        }
       }
     },
     [store],
@@ -806,10 +816,15 @@ function StoryMedia({
             if (!video) return;
             // Inside the tap, so the browser treats it as user-initiated.
             setAutoplayBlocked(false);
-            const playPromise = video.play();
-            if (playPromise && typeof playPromise.catch === "function") {
-              playPromise.catch(() => setAutoplayBlocked(true));
-            }
+            const engine = engineRef.current;
+            if (engine)
+              void engine.play({ mutedFallback: false }).then((outcome) => {
+                if (
+                  engineRef.current === engine &&
+                  outcome === "autoplay-denied"
+                )
+                  setAutoplayBlocked(true);
+              });
           }}
           onPointerDown={stopTap}
           onPointerUp={stopTap}

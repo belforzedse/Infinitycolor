@@ -6,9 +6,14 @@ import { jotaiStore } from "@/lib/jotaiStore";
 import type { MeResponse } from "@/types/user-me";
 
 jest.mock("@/lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async () => {
+        try { const token = await jest.requireMock("@/lib/central-auth").centralAuth.tokenManager.getToken(); return token ? { state: "authenticated", token } : { state: "unauthenticated" }; }
+        catch { return { state: "unavailable", reasonCode: "network" }; }
+      }),
       expire: jest.fn(),
       clearForLogout: jest.fn(),
       peek: jest.fn(),
@@ -110,4 +115,11 @@ describe("Infinitygram authentication flows", () => {
     expect(jotaiStore.get(currentUserAtom)).toEqual(user);
     expect(window.location.pathname).toBe("/profile");
   });
+});
+
+it("preserves social identity when API 401 recovery is temporarily unavailable", async () => {
+  const user = customerUser(); jotaiStore.set(currentUserAtom, user);
+  mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValue(new Error("network unavailable"));
+  await handleAuthErrors({ status: 401, message: "Unauthorized" });
+  expect(jotaiStore.get(currentUserAtom)).toBe(user);
 });
