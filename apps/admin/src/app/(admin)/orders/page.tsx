@@ -35,6 +35,7 @@ import ShippingMethodFilters from "./ShippingMethodFilters";
 import { useOrderStatusCounts } from "@/hooks/useOrderStatusCounts";
 import { faNum } from "@/utils/faNum";
 import Link from "next/link";
+import { reserveParcelGrouping } from "./ReserveParcelHeader";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
@@ -62,13 +63,16 @@ const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
   { status: "Shipment", label: "ارسال شده" },
 ];
 
-// The «نمایش سفارش‌های رزروی» checkbox is a one-click form of the advanced
-// «سفارش رزروی» filter: same server-side condition (the reserve group relation
-// is present), sent alongside the operator's own advanced filters rather than
-// stored with them, so it never shows up as a removable filter chip.
+// The checkbox switches between regular orders and reserve parcels using the
+// live shipment relation. Apply the same condition to rows and tab counts.
 const RESERVE_ONLY_FILTER: AdvancedFilterItem = {
   field: "[reserve_shipment][id]",
   operator: "$notNull",
+  value: "true",
+};
+const REGULAR_ONLY_FILTER: AdvancedFilterItem = {
+  field: "[reserve_shipment][id]",
+  operator: "$null",
   value: "true",
 };
 
@@ -129,7 +133,7 @@ export default function OrdersPage() {
   // Tab badges must count the same population the table shows, so the reserve
   // toggle is folded into the counts request exactly as it is into the list.
   const countFilters = useMemo(
-    () => (reserveOnly ? [...advancedFilters, RESERVE_ONLY_FILTER] : advancedFilters),
+    () => [...advancedFilters, reserveOnly ? RESERVE_ONLY_FILTER : REGULAR_ONLY_FILTER],
     [advancedFilters, reserveOnly],
   );
   const {
@@ -389,7 +393,7 @@ export default function OrdersPage() {
       listAdminOrders({
         page,
         pageSize,
-        filters: reserveOnly ? [...filters, RESERVE_ONLY_FILTER] : filters,
+        filters: [...filters, reserveOnly ? RESERVE_ONLY_FILTER : REGULAR_ONLY_FILTER],
         signal,
         tab: activeTab,
         sort,
@@ -579,6 +583,7 @@ export default function OrdersPage() {
       />
       <SuperAdminTable
         columns={columns}
+        rowGrouping={reserveParcelGrouping}
         enableSelection={bulkOptions.length > 0}
         bulkOptions={bulkOptions}
         onBulkAction={handleBulkAction}
