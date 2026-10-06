@@ -20,6 +20,9 @@ export type AnipoLabelProps = {
 
 export default function AnipoBarcodeLabel(props: AnipoLabelProps) {
   const barcode = props.barcodeNumber?.trim() || "";
+  const postalCode = props.postalCode?.trim();
+  const printablePostalCode =
+    postalCode && !/^[0۰٠]+$/.test(postalCode) ? postalCode : undefined;
   const encoded = encodeFactorchiCode128B(barcode);
   if (!encoded || encoded.value !== barcode)
     return <div className="anipo-loading">کد رهگیری معتبر نیست</div>;
@@ -48,10 +51,10 @@ export default function AnipoBarcodeLabel(props: AnipoLabelProps) {
             {props.recipientAddress}
           </div>
         )}
-        {props.postalCode && (
+        {printablePostalCode && (
           <div>
             <strong>کدپستی: </strong>
-            <span dir="ltr">{props.postalCode}</span>
+            <span dir="ltr">{printablePostalCode}</span>
           </div>
         )}
       </section>

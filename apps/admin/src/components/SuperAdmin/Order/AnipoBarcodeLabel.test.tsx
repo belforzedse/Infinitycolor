@@ -27,3 +27,16 @@ it("rejects a tracking value the encoder would silently alter", () => {
   expect(screen.getByText("کد رهگیری معتبر نیست")).toBeVisible();
   expect(screen.queryByRole("img")).not.toBeInTheDocument();
 });
+
+it.each(["0000000000", "۰۰۰۰۰۰۰۰۰۰", "٠٠٠٠٠٠٠٠٠٠"])(
+  "omits an unknown postal-code placeholder (%s)",
+  (postalCode) => {
+    render(
+      <AnipoBarcodeLabel
+        barcodeNumber="123456789012345678901234"
+        postalCode={postalCode}
+      />,
+    );
+    expect(screen.queryByText("کدپستی:")).not.toBeInTheDocument();
+  },
+);

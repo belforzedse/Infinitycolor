@@ -84,13 +84,13 @@ function paidMembers(parcel: Parcel) {
 
 /** Database-only legacy adoption. Ambiguous consignments are never overwritten. */
 export function effectiveParcelState(group: any, members: any[]) {
-  if (group.AnipoOrderCode || group.AnipoBarcodeState) return { ...group };
   const registered = members.filter(
     (member) => member.AnipoSubmittedAt || member.AnipoRegistrationAttemptedAt,
   );
   const barcodes = new Set<string>(
     [
       group.ShippingBarcode,
+      ...(group.AnipoBarcodeData?.barcodes || []),
       ...members.flatMap((member) => [
         member.ShippingBarcode,
         ...(member.AnipoBarcodeData?.barcodes || []),
@@ -99,9 +99,18 @@ export function effectiveParcelState(group: any, members: any[]) {
       .filter((value) => typeof value === "string" && value.trim())
       .map((value: string) => value.trim()),
   );
-  if (registered.length > 1 || barcodes.size > 1) {
-    return { ...group, AnipoBarcodeState: "NeedsAttention", AnipoLastError: CONFLICT };
+  const conflictingRegistration = group.AnipoOrderCode
+    ? registered.some((member) => String(member.id) !== String(group.AnipoOrderCode))
+    : registered.length > 1;
+  if (conflictingRegistration || barcodes.size > 1) {
+    return {
+      ...group,
+      AnipoBarcodeState: "NeedsAttention",
+      AnipoLastError: CONFLICT,
+      AnipoLastMessage: "ثبت این بسته در آنیپو نیاز به بررسی دارد",
+    };
   }
+  if (group.AnipoOrderCode || group.AnipoBarcodeState) return { ...group };
   const legacy = registered[0];
   const adopted: any = { ...group };
   if (legacy) {

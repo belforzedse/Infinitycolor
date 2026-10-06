@@ -365,6 +365,23 @@ describe("shared reserve Anipo parcel", () => {
     });
   });
 
+  it("detects legacy registrations that arrive after the parcel reference has been claimed", async () => {
+    const f = fixture(
+      [member(11, 250, 2), { ...member(12, 300, 3), AnipoSubmittedAt: new Date() }],
+      {
+        AnipoOrderCode: "11",
+        AnipoSubmittedAt: new Date(),
+        AnipoBarcodeState: "Pending",
+      },
+    );
+    await expect(submitReserveParcel(f.strapi, 9)).rejects.toMatchObject({
+      code: "ANIPO_GROUP_CONFLICT",
+    });
+    expect(f.record.AnipoOrderCode).toBe("11");
+    expect(f.provider.createOrUpdateOrder).not.toHaveBeenCalled();
+    expect(f.provider.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "preserves an address edit during registration, including uncertain outcomes (%s)",
     async (unknown) => {
