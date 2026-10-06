@@ -206,9 +206,9 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
     const now = new Date();
     const queued: Array<{ orderId: number; revision: number }> = [];
     const parcelSync = Boolean(reserveGroupId &&
-      (hasActiveAnipoRegistration(group) || memberOrders.some(hasActiveAnipoRegistration)) &&
+      (hasActiveAnipoRegistration(group) || group?.AnipoRegistrationAttemptedAt || memberOrders.some(hasActiveAnipoRegistration)) &&
       !["Stopped", "Voided"].includes(String(group?.AnipoBarcodeState || "")));
-    const parcelRevision = Number(group?.AnipoRecipientRevision || 0) + (parcelSync ? 1 : 0);
+    const parcelRevision = Number(group?.AnipoRecipientRevision || 0) + 1;
     for (const member of memberOrders) {
       const activeAnipo = !reserveGroupId && hasActiveAnipoRegistration(member);
       const revision = Number(member.AnipoRecipientRevision || 0) + (activeAnipo ? 1 : 0);
@@ -246,7 +246,7 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
     if (reserveGroupId) {
       await strapi.db.query("api::reserve-group.reserve-group").update({
         where: { id: reserveGroupId },
-        data: { delivery_address: snapshot.id, lastActivityAt: now,
+        data: { delivery_address: snapshot.id, lastActivityAt: now, AnipoRecipientRevision: parcelRevision,
           ...(parcelSync ? { AnipoRecipientRevision: parcelRevision, AnipoRecipientSyncState: "Pending",
             AnipoRecipientSyncAttempts: 0, AnipoRecipientSyncLastAttemptAt: null, AnipoRecipientSyncLastError: null } : {}),
         },

@@ -329,4 +329,66 @@ describe("shared reserve Anipo parcel", () => {
     );
     expect(f.record.AnipoRecipientSyncedRevision).toBe(1);
   });
+
+  it("persists incomplete recipient failures on the parcel without calling Anipo", async () => {
+    const f = fixture();
+    f.record.delivery_address.shipping_city = null;
+    await expect(submitReserveParcel(f.strapi, 9)).rejects.toMatchObject({
+      code: "ANIPO_MISSING_RECIPIENT",
+    });
+    expect(f.record).toMatchObject({
+      AnipoOrderCode: "11",
+      AnipoBarcodeState: "NeedsAttention",
+      AnipoLastError: "ANIPO_MISSING_RECIPIENT",
+    });
+    expect(f.provider.createOrUpdateOrder).not.toHaveBeenCalled();
+  });
+
+  it("preserves pending recipient edits when adopting a legacy member registration", async () => {
+    const legacy = {
+      ...member(12, 300, 3),
+      AnipoSubmittedAt: new Date(),
+      AnipoBarcodeState: "Pending",
+      AnipoRecipientRevision: 0,
+      AnipoRecipientSyncedRevision: 0,
+      AnipoRecipientSyncState: "Synced",
+    };
+    const f = fixture([member(11, 250, 2), legacy], {
+      AnipoRecipientRevision: 1,
+      AnipoRecipientSyncState: "Pending",
+    });
+    await submitReserveParcel(f.strapi, 9);
+    expect(f.record).toMatchObject({
+      AnipoOrderCode: "12",
+      AnipoRecipientRevision: 1,
+      AnipoRecipientSyncState: "Pending",
+    });
+  });
+
+  it.each([false, true])(
+    "preserves an address edit during registration, including uncertain outcomes (%s)",
+    async (unknown) => {
+      const f = fixture();
+      f.provider.createOrUpdateOrder.mockImplementationOnce(async () => {
+        f.record.AnipoRecipientRevision = 1;
+        f.record.delivery_address.FullName = "گیرنده تازه";
+        if (unknown) throw new Error("timeout");
+        return { ok: true, data: { issued: false } };
+      });
+      if (unknown) {
+        await expect(submitReserveParcel(f.strapi, 9)).rejects.toMatchObject({
+          code: "ANIPO_REGISTER_ERROR",
+        });
+        await refreshReserveParcel(f.strapi, 9);
+      } else await submitReserveParcel(f.strapi, 9);
+      expect(f.record.AnipoRecipientSnapshotRevision).toBe(0);
+      expect(f.record.AnipoRecipientSyncState).toBe("Pending");
+      await syncReserveParcelRecipient(f.strapi, 9);
+      expect(f.provider.createOrUpdateOrder).toHaveBeenLastCalledWith(
+        expect.objectContaining({ order_code: "11", receiver_name: "گیرنده تازه" }),
+      );
+      expect(f.record.AnipoRecipientSyncedRevision).toBe(1);
+      expect(f.record.AnipoRecipientSyncState).toBe("Synced");
+    },
+  );
 });

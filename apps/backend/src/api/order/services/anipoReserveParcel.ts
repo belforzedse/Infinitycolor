@@ -40,6 +40,7 @@ const SHARED_FIELDS = [
   "AnipoLastMessage",
   "AnipoLastError",
   "AnipoRecipientRevision",
+  "AnipoRecipientSnapshotRevision",
   "AnipoRecipientSyncedRevision",
   "AnipoRecipientSyncState",
   "AnipoRecipientSyncAttempts",
@@ -106,6 +107,16 @@ export function effectiveParcelState(group: any, members: any[]) {
   if (legacy) {
     for (const field of SHARED_FIELDS) if (legacy[field] != null) adopted[field] = legacy[field];
     adopted.AnipoOrderCode = String(legacy.id);
+    adopted.AnipoRecipientSnapshotRevision = Number(legacy.AnipoRecipientSyncedRevision || 0);
+    adopted.AnipoRecipientRevision = Math.max(
+      Number(group.AnipoRecipientRevision || 0),
+      Number(legacy.AnipoRecipientRevision || 0),
+    );
+    if (
+      group.AnipoRecipientSyncState === "Pending" ||
+      Number(group.AnipoRecipientRevision || 0) > Number(legacy.AnipoRecipientSyncedRevision || 0)
+    )
+      adopted.AnipoRecipientSyncState = "Pending";
   }
   if (barcodes.size === 1) {
     adopted.ShippingBarcode = [...barcodes][0];
@@ -462,6 +473,29 @@ async function persistProvider(
   return response(parcel);
 }
 
+async function confirmRecipientSnapshot(strapi: Strapi, parcel: Parcel, lease: Lease) {
+  const revision = Number(parcel.group.AnipoRecipientSnapshotRevision || 0);
+  const synchronized = {
+    AnipoRecipientSyncState: "Synced",
+    AnipoRecipientSyncedRevision: revision,
+    AnipoRecipientSyncedAt: new Date(),
+    AnipoRecipientSyncLastError: null,
+  };
+  try {
+    await save(strapi, lease, synchronized, revision);
+    Object.assign(parcel.group, synchronized);
+  } catch (error) {
+    if (!(error instanceof AnipoWorkflowError) || error.code !== "ANIPO_PARCEL_CHANGED")
+      throw error;
+    // An address edit committed while the provider used the earlier snapshot.
+    await save(strapi, lease, {
+      AnipoRecipientSyncState: "Pending",
+      AnipoRecipientSyncLastAttemptAt: null,
+    });
+    parcel.group.AnipoRecipientSyncState = "Pending";
+  }
+}
+
 async function checkUnderLease(
   strapi: Strapi,
   parcel: Parcel,
@@ -503,6 +537,7 @@ async function checkUnderLease(
       AnipoSubmittedAt: parcel.group.AnipoRegistrationAttemptedAt || new Date(),
     });
     parcel.group.AnipoSubmittedAt = parcel.group.AnipoRegistrationAttemptedAt || new Date();
+    await confirmRecipientSnapshot(strapi, parcel, lease);
   }
   return persistProvider(strapi, parcel, lease, provider.data, actor);
 }
@@ -528,7 +563,21 @@ export async function submitReserveParcel(
       return checkUnderLease(strapi, parcel, lease, options.actor);
     const code = parcel.group.AnipoOrderCode || String(paidMembers(parcel)[0].id);
     parcel.group.AnipoOrderCode = code;
-    const { payload, pack } = providerPayload(parcel, options);
+    let registration: ReturnType<typeof providerPayload>;
+    try {
+      registration = providerPayload(parcel, options);
+    } catch (error) {
+      if (error instanceof AnipoWorkflowError)
+        await save(strapi, lease, {
+          AnipoOrderCode: code,
+          AnipoBarcodeState: "NeedsAttention",
+          AnipoLastError: error.code,
+          AnipoLastMessage: error.message,
+          AnipoLastCheckedAt: new Date(),
+        });
+      throw error;
+    }
+    const { payload, pack } = registration;
     const now = new Date();
     // Persist the reference BEFORE crossing the provider boundary. An uncertain
     // outcome is checked by that reference rather than automatically POSTed again.
@@ -540,6 +589,7 @@ export async function submitReserveParcel(
       AnipoPollingDeadlineAt: new Date(now.getTime() + POLLING_MS),
       ShippingWeight: pack.weight,
       ShippingBoxSizeId: pack.boxSizeId,
+      AnipoRecipientSnapshotRevision: Number(parcel.group.AnipoRecipientRevision || 0),
       AnipoLastError: null,
     });
     Object.assign(parcel.group, {
@@ -547,6 +597,7 @@ export async function submitReserveParcel(
       AnipoRegistrationAttemptedAt: now,
       ShippingWeight: pack.weight,
       ShippingBoxSizeId: pack.boxSizeId,
+      AnipoRecipientSnapshotRevision: Number(parcel.group.AnipoRecipientRevision || 0),
     });
     let result: any;
     try {
@@ -577,6 +628,7 @@ export async function submitReserveParcel(
     }
     await save(strapi, lease, { AnipoSubmittedAt: now });
     parcel.group.AnipoSubmittedAt = now;
+    await confirmRecipientSnapshot(strapi, parcel, lease);
     return persistProvider(
       strapi,
       parcel,
@@ -634,6 +686,7 @@ export async function syncReserveParcelRecipient(strapi: Strapi, key: string | n
       lease,
       {
         AnipoRecipientSyncedRevision: revision,
+        AnipoRecipientSnapshotRevision: revision,
         AnipoRecipientSyncState: "Synced",
         AnipoRecipientSyncLastAttemptAt: new Date(),
         AnipoRecipientSyncedAt: new Date(),
@@ -659,7 +712,7 @@ export async function reconcileReserveParcelCancellation(strapi: Strapi, key: st
       return { status: "needs_review" };
     if (paidMembers(parcel).length) {
       if (
-        parcel.group.AnipoSubmittedAt &&
+        (parcel.group.AnipoSubmittedAt || parcel.group.AnipoRegistrationAttemptedAt) &&
         !["Stopped", "Voided"].includes(parcel.group.AnipoBarcodeState)
       )
         await save(strapi, lease, {
@@ -707,15 +760,38 @@ export async function reconcileReserveParcelCancellation(strapi: Strapi, key: st
 
 /** The existing maintenance scheduler also recovers group work once per parcel. */
 export async function runReserveParcelReconciliation(strapi: Strapi) {
+  const recipientRetryAt = new Date(Date.now() - 6 * 60 * 60_000);
   const groups = await strapi.db.query(GROUP_UID).findMany({
     where: {
-      $or: [
-        { AnipoBarcodeState: "Pending" },
-        { AnipoCancellationPending: true },
-        { AnipoRecipientSyncState: { $in: ["Pending", "NeedsAttention"] } },
+      $and: [
         {
-          AnipoBarcodeState: { $null: true },
-          orders: { Status: "Shipment", ShippingMethodCode: "post", AnipoBarcodeState: "Pending" },
+          $or: [
+            { AnipoCancellationPending: true },
+            { State: { $notIn: [...HELD_RESERVE_STATES] } },
+          ],
+        },
+        {
+          $or: [
+            { AnipoBarcodeState: "Pending" },
+            { AnipoCancellationPending: true },
+            { AnipoSubmittedAt: { $notNull: true }, AnipoRecipientSyncState: "Pending" },
+            {
+              AnipoSubmittedAt: { $notNull: true },
+              AnipoRecipientSyncState: "NeedsAttention",
+              $or: [
+                { AnipoRecipientSyncLastAttemptAt: { $null: true } },
+                { AnipoRecipientSyncLastAttemptAt: { $lte: recipientRetryAt } },
+              ],
+            },
+            {
+              AnipoBarcodeState: { $null: true },
+              orders: {
+                Status: "Shipment",
+                ShippingMethodCode: "post",
+                AnipoBarcodeState: "Pending",
+              },
+            },
+          ],
         },
       ],
     },
@@ -733,7 +809,9 @@ export async function runReserveParcelReconciliation(strapi: Strapi) {
         state.AnipoLastError === "ANIPO_PARCEL_MULTIPLE_BARCODES"
       ) {
         // Persist legacy ambiguity so it no longer occupies the legacy queue.
-        await withLease(strapi, Number(group.id), async () => undefined);
+        await withLease(strapi, Number(group.id), async (_parcel, lease) =>
+          save(strapi, lease, { AnipoCancellationPending: false }),
+        );
         continue;
       }
       if (state.AnipoCancellationPending || !paidMembers(parcel).length) {

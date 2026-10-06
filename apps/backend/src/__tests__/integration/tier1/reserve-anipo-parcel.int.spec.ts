@@ -7,6 +7,8 @@ import {
   refreshReserveParcel,
   reconcileReserveParcelCancellation,
   loadParcelSummaries,
+  syncReserveParcelRecipient,
+  runReserveParcelReconciliation,
 } from "../../../api/order/services/anipoReserveParcel";
 
 let strapi: any;
@@ -146,6 +148,8 @@ it("uses real PostgreSQL claims to register one complete parcel under concurrent
     state: "Pending",
     weight: 550,
   });
+  expect(await runReserveParcelReconciliation(strapi)).toMatchObject({ scanned: 1, processed: 1 });
+  expect(provider.getOrder).toHaveBeenCalledWith(String(f.rows[0].id));
 });
 
 it("retains the shared reference after root cancellation and stamps only eligible members", async () => {
@@ -185,4 +189,41 @@ it("rejects a stale lease holder and allows recovery after an expired claim", as
     .query("api::reserve-group.reserve-group")
     .findOne({ where: { id: f.group.id } });
   expect(saved.AnipoOrderCode).toBe(String(f.rows[0].id));
+});
+
+it("keeps a recipient edit committed during registration pending until the same parcel is synchronized", async () => {
+  const f = await parcel();
+  const newAddress = await factories.createAddress({
+    fullName: "JEST_TEST__new parcel recipient",
+    phone: "09123456789",
+    postalCode: "1234567890",
+  });
+  provider.createOrUpdateOrder.mockImplementationOnce(async () => {
+    await strapi.db.query("api::reserve-group.reserve-group").update({
+      where: { id: f.group.id },
+      data: {
+        delivery_address: newAddress.id,
+        AnipoRecipientRevision: 1,
+      },
+    });
+    return { ok: true, data: { issued: false } };
+  });
+  await submitReserveParcel(strapi, f.group.id);
+  let saved = await strapi.db
+    .query("api::reserve-group.reserve-group")
+    .findOne({ where: { id: f.group.id } });
+  expect(saved.AnipoRecipientSyncState).toBe("Pending");
+  expect(saved.AnipoRecipientSnapshotRevision).toBe(0);
+  await syncReserveParcelRecipient(strapi, f.group.id);
+  expect(provider.createOrUpdateOrder).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      order_code: String(f.rows[0].id),
+      receiver_name: "JEST_TEST__new parcel recipient",
+    }),
+  );
+  saved = await strapi.db
+    .query("api::reserve-group.reserve-group")
+    .findOne({ where: { id: f.group.id } });
+  expect(saved.AnipoRecipientSyncState).toBe("Synced");
+  expect(saved.AnipoRecipientSyncedRevision).toBe(1);
 });

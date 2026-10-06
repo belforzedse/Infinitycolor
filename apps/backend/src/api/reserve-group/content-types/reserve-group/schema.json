@@ -228,6 +228,10 @@
       "type": "boolean",
       "default": false,
       "private": true
+    },
+    "AnipoRecipientSnapshotRevision": {
+      "type": "integer",
+      "default": 0
     }
   }
 }
