@@ -52,6 +52,24 @@ export async function notifyAnipoParcelCancelled(
   orderId: number,
   snapshot: AnipoCancelSnapshot,
 ): Promise<void> {
+  let member: any;
+  try {
+    member = await strapi.db.query("api::order.order").findOne({
+      where: { id: orderId }, populate: { reserve_shipment: { select: ["id"] } },
+    });
+  } catch {
+    strapi.log.error("Anipo cancel membership lookup failed", { orderId });
+    return;
+  }
+  if (member?.reserve_shipment?.id) {
+    try {
+      const { reconcileReserveParcelCancellation } = await import("../../services/anipoReserveParcel");
+      await reconcileReserveParcelCancellation(strapi, Number(member.reserve_shipment.id));
+    } catch (error) {
+      strapi.log.error("Shared Anipo parcel cancel needs reconciliation", { groupId: member.reserve_shipment.id });
+    }
+    return;
+  }
   if (!shouldNotifyAnipoParcelCancelled(snapshot)) return;
 
   const cancelledLabel = mapOrderStatusToAnipo("Cancelled");

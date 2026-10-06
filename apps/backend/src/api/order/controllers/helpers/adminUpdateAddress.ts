@@ -205,8 +205,12 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
 
     const now = new Date();
     const queued: Array<{ orderId: number; revision: number }> = [];
+    const parcelSync = Boolean(reserveGroupId &&
+      (hasActiveAnipoRegistration(group) || memberOrders.some(hasActiveAnipoRegistration)) &&
+      !["Stopped", "Voided"].includes(String(group?.AnipoBarcodeState || "")));
+    const parcelRevision = Number(group?.AnipoRecipientRevision || 0) + (parcelSync ? 1 : 0);
     for (const member of memberOrders) {
-      const activeAnipo = hasActiveAnipoRegistration(member);
+      const activeAnipo = !reserveGroupId && hasActiveAnipoRegistration(member);
       const revision = Number(member.AnipoRecipientRevision || 0) + (activeAnipo ? 1 : 0);
       await strapi.db.query("api::order.order").update({
         where: { id: member.id },
@@ -242,7 +246,10 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
     if (reserveGroupId) {
       await strapi.db.query("api::reserve-group.reserve-group").update({
         where: { id: reserveGroupId },
-        data: { delivery_address: snapshot.id, lastActivityAt: now },
+        data: { delivery_address: snapshot.id, lastActivityAt: now,
+          ...(parcelSync ? { AnipoRecipientRevision: parcelRevision, AnipoRecipientSyncState: "Pending",
+            AnipoRecipientSyncAttempts: 0, AnipoRecipientSyncLastAttemptAt: null, AnipoRecipientSyncLastError: null } : {}),
+        },
         transacting: trx,
       } as any);
     }
@@ -258,11 +265,20 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
       })),
       reserveGroupId,
       queued,
+      parcelSync,
+      parcelRevision,
       affectedOrderIds,
     };
   });
 
   if ("notFound" in result) return ctx.notFound("سفارش پیدا نشد");
+  if ("parcelSync" in result && result.parcelSync && result.orders[0]) {
+    try {
+      await enqueueAnipoRecipientSync(Number(result.orders[0].id), result.parcelRevision);
+    } catch (error) {
+      strapi.log.error("Failed to enqueue parcel recipient synchronization", { groupId: result.reserveGroupId });
+    }
+  }
   for (const pending of result.queued || []) {
     try {
       await enqueueAnipoRecipientSync(pending.orderId, pending.revision);
@@ -297,7 +313,8 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
           },
         },
       },
-      carrierSync: syncStatus(result.orders),
+      carrierSync: "parcelSync" in result && result.parcelSync
+        ? { required: true, status: "pending" } : syncStatus(result.orders),
     },
   };
   return ctx.body;

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Clock, MapPin, Package, Printer, Truck } from "lucide-react";
+import { AlertTriangle, Clock, MapPin, Package, Truck } from "lucide-react";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import {
   AdminSection,
@@ -18,7 +18,7 @@ import {
   formatFaRelativeDateTime,
 } from "@/utils/formatFaRelativeDateTime";
 import { getOrderStatusMeta } from "@/utils/statusTranslations";
-import { useCan } from "@/hooks/useCan";
+import ReserveParcelActions from "@/components/SuperAdmin/Order/ReserveParcelActions";
 import {
   getAdminReserveGroup,
   type AdminReserveGroupDetail,
@@ -40,7 +40,6 @@ import {
 export default function ReserveGroupDetailPage() {
   const params = useParams();
   const groupKey = typeof params?.groupId === "string" ? params.groupId : null;
-  const canPrint = useCan("order.print");
   const [group, setGroup] = useState<AdminReserveGroupDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -105,18 +104,7 @@ export default function ReserveGroupDetailPage() {
           title={customer.label}
           identifier={<CopyableId value={group.groupKey} label="کپی شناسه بسته رزروی" />}
           badge={<StatusBadge label={statusMeta.label} tone={statusMeta.tone} />}
-          primaryAction={canPrint && members.length > 0 ? (
-            <a
-              href={`/orders/print/reserve/${encodeURIComponent(group.groupKey)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-3 text-sm text-white hover:bg-blue-700"
-              data-testid="print-reserve-group"
-            >
-              <Printer className="h-4 w-4" aria-hidden="true" />
-              چاپ فاکتور کل بسته
-            </a>
-          ) : undefined}
+          primaryAction={<ReserveParcelActions groupKey={group.groupKey} parcel={group.anipo} onChanged={load} />}
           summary={[
             {
               label: "سفارش‌های بسته",

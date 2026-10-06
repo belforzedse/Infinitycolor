@@ -297,7 +297,7 @@ describe("Anipo barcode workflow", () => {
         barcodes: code === "1" ? ["POST-1"] : [],
       })) })),
     };
-    const strapi = { db: { query: jest.fn(() => orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
+    const strapi = { db: { query: jest.fn((uid: string) => uid.includes("reserve-group") ? { findMany: jest.fn().mockResolvedValue([]) } : orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
     const originalSize = process.env.ANIPO_BARCODE_RECONCILE_BATCH_SIZE;
     process.env.ANIPO_BARCODE_RECONCILE_BATCH_SIZE = "500";
     try {
@@ -329,7 +329,7 @@ describe("Anipo barcode workflow", () => {
       update: jest.fn().mockResolvedValue({ id: 77 }),
     };
     const anipo = { getOrderBarcodes: jest.fn() };
-    const strapi = { db: { query: jest.fn(() => orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
+    const strapi = { db: { query: jest.fn((uid: string) => uid.includes("reserve-group") ? { findMany: jest.fn().mockResolvedValue([]) } : orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
     await runAnipoBarcodeReconciliation(strapi);
     expect(orderQuery.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 77, AnipoBarcodeState: "Pending" }, data: expect.objectContaining({ AnipoBarcodeState: "NeedsAttention" }) }));
     expect(orderQuery.findMany.mock.calls[1][0].where).toMatchObject({
@@ -352,7 +352,7 @@ describe("Anipo barcode workflow", () => {
       { orderCode: "1", found: false, issued: false },
       { orderCode: "2", found: true, issued: false },
     ] })) };
-    const strapi = { db: { query: jest.fn(() => orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
+    const strapi = { db: { query: jest.fn((uid: string) => uid.includes("reserve-group") ? { findMany: jest.fn().mockResolvedValue([]) } : orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
     const result = await runAnipoBarcodeReconciliation(strapi);
     expect(result).toMatchObject({ stats: { processed: 2, needsAttention: 1 } });
     expect(orderQuery.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 1, AnipoBarcodeState: "Pending" }, data: expect.objectContaining({ AnipoBarcodeState: "NeedsAttention", AnipoLastError: "ANIPO_REMOTE_ORDER_NOT_FOUND" }) }));
@@ -363,7 +363,7 @@ describe("Anipo barcode workflow", () => {
     const orderQuery = {
       findMany: jest.fn().mockResolvedValueOnce([{ id: 44 }]).mockResolvedValueOnce([]).mockResolvedValueOnce([]),
     };
-    const strapi = { db: { query: jest.fn(() => orderQuery) }, log: { info: jest.fn(), error: jest.fn() } } as any;
+    const strapi = { db: { query: jest.fn((uid: string) => uid.includes("reserve-group") ? { findMany: jest.fn().mockResolvedValue([]) } : orderQuery) }, log: { info: jest.fn(), error: jest.fn() } } as any;
     mockEnqueueAnipoRegistration.mockClear();
     await runAnipoBarcodeReconciliation(strapi);
     expect(mockEnqueueAnipoRegistration).toHaveBeenCalledWith(44);
@@ -379,7 +379,7 @@ describe("Anipo barcode workflow", () => {
       }),
     };
     const anipo = { getOrderBarcodes: jest.fn(async () => ({ ok: true, data: rows.map((row) => ({ orderCode: String(row.id), found: true, issued: false })) })) };
-    const strapi = { db: { query: jest.fn(() => orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
+    const strapi = { db: { query: jest.fn((uid: string) => uid.includes("reserve-group") ? { findMany: jest.fn().mockResolvedValue([]) } : orderQuery) }, service: jest.fn(() => anipo), log: { info: jest.fn(), error: jest.fn() } } as any;
     const result = await runAnipoBarcodeReconciliation(strapi);
     expect(result).toMatchObject({ stats: { processed: 1, failed: 1 } });
     expect(orderQuery.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 2, AnipoBarcodeState: "Pending" } }));

@@ -270,7 +270,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "order.shipping.manage": {
     "api::order": {
-      order: ["generateAnipoBarcode", "checkAnipoBarcode", "adminVoidBarcode"],
+      order: ["generateAnipoBarcode", "checkAnipoBarcode", "generateReserveParcelBarcode", "checkReserveParcelBarcode", "adminVoidBarcode"],
     },
   },
   "report.product.read": { "api::report": { report: PRODUCT_REPORT_ACTIONS } },

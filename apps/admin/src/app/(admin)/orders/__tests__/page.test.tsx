@@ -67,7 +67,7 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/orders",
   useSearchParams: () => new URLSearchParams(),
 }));
-jest.mock("jotai", () => ({ useAtom: () => [false, jest.fn()] }));
+jest.mock("jotai", () => ({ atom: () => ({}), useAtom: () => [false, jest.fn()], useSetAtom: () => jest.fn() }));
 // Stable across renders like the real hook: a new function each render would
 // re-run the page's search effect, and its setPage, on every render.
 jest.mock("use-debounce", () => {

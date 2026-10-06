@@ -62,13 +62,23 @@ describe("bounded admin orders list", () => {
     ["inprogress", { Status: { $in: ["Started"] } }],
     ["completed", { Status: { $in: ["Done"] } }],
     ["shipped", { Status: { $in: ["Shipment"] } }],
-    ["anipo_attention", { AnipoBarcodeState: { $eq: "NeedsAttention" } }],
   ])("keeps the %s status tab in its own server-side bucket", async (tab, expected) => {
     const { findMany } = installStrapi();
 
     await controller.query(createContext({ tab }));
 
     expect(findMany.mock.calls[0][0].where.$and).toContainEqual(expected);
+  });
+
+  it("includes authoritative parcel workflow and recipient failures in the review tab", async () => {
+    const { findMany } = installStrapi();
+    await controller.query(createContext({ tab: "anipo_attention" }));
+    expect(findMany.mock.calls[0][0].where.$and).toContainEqual(expect.objectContaining({
+      $or: expect.arrayContaining([expect.objectContaining({
+        Status: { $in: ["Started", "Done", "Shipment"] },
+        reserve_shipment: { $or: [{ AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" }] },
+      })]),
+    }));
   });
 
   it("counts every tab from the same current filters and keeps active reserves separate", async () => {
@@ -135,7 +145,11 @@ describe("bounded admin orders list", () => {
       Status: { $in: ["Returned", "Cancelled"] },
     });
     expect(count.mock.calls[6][0].where.$and).toContainEqual({ Type: { $eq: "Manual" } });
-    expect(count.mock.calls[7][0].where.$and).toContainEqual({ AnipoBarcodeState: { $eq: "NeedsAttention" } });
+    expect(count.mock.calls[7][0].where.$and).toContainEqual(expect.objectContaining({
+      $or: expect.arrayContaining([expect.objectContaining({ reserve_shipment: {
+        $or: [{ AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" }],
+      } })]),
+    }));
     expect(count.mock.calls[3][0].where.$and).not.toContainEqual({
       Type: { $ne: "Manual" },
     });

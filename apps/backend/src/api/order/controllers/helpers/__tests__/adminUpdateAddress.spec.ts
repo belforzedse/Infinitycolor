@@ -169,7 +169,11 @@ describe("adminUpdateAddressHandler", () => {
       data: expect.objectContaining({ delivery_address: 50 }),
     }));
     expect(context.body.data.affectedOrderIds).toEqual([10, 11]);
-    expect(enqueueAnipoRecipientSync).toHaveBeenCalledWith(10, 2);
+    expect(groupQuery.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ AnipoRecipientRevision: 1, AnipoRecipientSyncState: "Pending" }),
+    }));
+    expect(enqueueAnipoRecipientSync).toHaveBeenCalledTimes(1);
+    expect(enqueueAnipoRecipientSync).toHaveBeenCalledWith(10, 1);
   });
 
   it("does not queue provider work when the transactional audit fails", async () => {

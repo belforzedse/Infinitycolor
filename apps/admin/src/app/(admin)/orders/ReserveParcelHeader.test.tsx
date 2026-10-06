@@ -19,6 +19,10 @@ const row = {
   },
 } as Order;
 
+beforeAll(() => {
+  global.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as typeof ResizeObserver;
+});
+
 describe("reserve parcel header", () => {
   beforeEach(() => {
     mockCanPrint = true;
@@ -34,20 +38,21 @@ describe("reserve parcel header", () => {
         onToggle={onToggle}
       />,
     );
-    expect(screen.getByText("۱ سفارش در این صفحه")).toBeVisible();
-    expect(screen.getByText("بسته رزروی · سارا احمدی")).toBeVisible();
+    expect(screen.getByText("۱ سفارش")).toBeVisible();
+    expect(screen.getByText("سارا احمدی")).toBeVisible();
     expect(
       screen.getByRole("link", { name: "چاپ فاکتور کل بسته" }),
     ).toHaveAttribute("href", "/orders/print/reserve/reserve%2Fparcel%201");
     expect(
       screen.getByRole("link", { name: "چاپ فاکتور کل بسته" }),
     ).toHaveAttribute("target", "_blank");
-    expect(screen.getByRole("link", { name: "جزئیات بسته" })).toHaveAttribute(
+    fireEvent.click(screen.getByRole("button", { name: "نمایش سفارش‌های بسته سارا احمدی" }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "عملیات بسته" }));
+    expect(screen.getByRole("menuitem", { name: "جزئیات بسته" })).toHaveAttribute(
       "href",
       "/orders/reserve/reserve%2Fparcel%201",
     );
-    fireEvent.click(screen.getByRole("button", { expanded: false }));
-    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
   it("uses the existing parcel print permission", () => {
@@ -63,7 +68,7 @@ describe("reserve parcel header", () => {
     expect(
       screen.queryByRole("link", { name: "چاپ فاکتور کل بسته" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { expanded: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: "بستن سفارش‌های بسته سارا احمدی" })).toBeVisible();
   });
 
   it("uses the projected parcel key and leaves regular orders ungrouped", () => {

@@ -7,6 +7,7 @@ import { factories } from "@strapi/strapi";
 import { Strapi } from "@strapi/strapi";
 import { generateAnipoBarcodeHandler } from "./helpers/generateBarcode";
 import { checkAnipoBarcodeHandler } from "./helpers/checkAnipoBarcode";
+import { reserveParcelAnipoHandler } from "./helpers/anipoReserveParcel";
 import { verifyPaymentHandler } from "./helpers/payment";
 import { snappayCallbackHandler } from "./helpers/snappayCallback";
 import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
@@ -296,6 +297,14 @@ export default factories.createCoreController(
             : null,
         };
 
+        if (order.reserve_shipment?.id) {
+          const { getReserveParcelSummary } = await import("../services/anipoReserveParcel");
+          const parcel = await getReserveParcelSummary(strapi, Number(order.reserve_shipment.id));
+          if (["Started", "Done", "Shipment"].includes(order.Status)) {
+            Object.assign(transformedOrder, parcel.workflow);
+            if (parcel.barcode) transformedOrder.ShippingBarcode = parcel.barcode;
+          }
+        }
         ctx.body = { data: transformedOrder };
       } catch (error) {
         ctx.badRequest("Error fetching order", {
@@ -401,6 +410,12 @@ export default factories.createCoreController(
 
     async checkAnipoBarcode(ctx) {
       return checkAnipoBarcodeHandler(strapi as any, ctx);
+    },
+    async generateReserveParcelBarcode(ctx) {
+      return reserveParcelAnipoHandler(strapi, ctx);
+    },
+    async checkReserveParcelBarcode(ctx) {
+      return reserveParcelAnipoHandler(strapi, ctx, true);
     },
 
     async verifyPayment(ctx) {

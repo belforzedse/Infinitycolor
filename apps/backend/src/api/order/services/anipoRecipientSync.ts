@@ -98,6 +98,10 @@ export async function processAnipoRecipientSync(
 ) {
   const order = await loadOrder(strapi, orderId);
   if (!order) return { status: "missing" as const };
+  if (order.reserve_shipment?.id) {
+    const { syncReserveParcelRecipient } = await import("./anipoReserveParcel");
+    return syncReserveParcelRecipient(strapi, Number(order.reserve_shipment.id));
+  }
   if (Number(order.AnipoRecipientRevision || 0) !== Number(expectedRevision)) {
     return { status: "stale" as const };
   }
@@ -157,6 +161,7 @@ export async function runAnipoRecipientSyncReconciliation(strapi: Strapi) {
   const now = Date.now();
   const rows = (await strapi.db.query("api::order.order").findMany({
     where: {
+      reserve_shipment: { id: { $null: true } },
       AnipoSubmittedAt: { $notNull: true },
       AnipoRecipientSyncState: { $in: ["Pending", "NeedsAttention"] },
     },

@@ -836,7 +836,7 @@ export function SuperAdminTable<TData, TValue>({
                       }
                     >
                       {section.groupKey && (
-                        <tr className="border-y border-infinity-primary/20 bg-infinity-primary/5">
+                        <tr className="border-b border-slate-200 bg-white">
                           <td colSpan={columns.length}>
                             {renderGroupHeader(section.groupKey, section.rows)}
                           </td>
@@ -866,8 +866,6 @@ export function SuperAdminTable<TData, TValue>({
                               className={twMerge(
                                 // IMPORTANT: avoid `transition-all` (conflicts with Framer transforms)
                                 "border-b border-gray-200 transition-colors hover:bg-gray-50/50",
-                                section.groupKey &&
-                                  "border-x border-infinity-primary/20 bg-infinity-primary/[0.02]",
                                 // IMPORTANT: outline doesn't affect layout height
                                 dragOverRow?.id === row.id &&
                                   "outline outline-2 -outline-offset-2 outline-blue-500",
@@ -945,11 +943,11 @@ export function SuperAdminTable<TData, TValue>({
               section.groupKey ? (
                 <section
                   key={`group:${section.groupKey}`}
-                  className="overflow-hidden rounded-2xl border border-infinity-primary/20 bg-infinity-primary/5"
+                  className="min-w-0 border-t border-slate-200"
                 >
                   {renderGroupHeader(section.groupKey, section.rows)}
                   {isGroupExpanded(section.groupKey) && (
-                    <div className="border-t border-infinity-primary/20 px-2 pb-2">
+                    <div className="min-w-0">
                       {mobileTable(
                         section.rows.map((row) => row.original),
                         mobileSelectionProps,

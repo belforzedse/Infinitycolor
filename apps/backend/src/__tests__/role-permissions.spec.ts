@@ -290,6 +290,8 @@ function createActionTree() {
           adminVoidBarcode: action(),
           generateAnipoBarcode: action(),
           checkAnipoBarcode: action(),
+          generateReserveParcelBarcode: action(),
+          checkReserveParcelBarcode: action(),
           decrementStockManual: action(),
         },
       },
@@ -788,6 +790,8 @@ describe("role permission templates", () => {
     expect(seller2["api::admin-order-list"].controllers["admin-order-list"].counts.enabled).toBe(true);
     expect(seller2["api::order"].controllers.order.generateAnipoBarcode.enabled).toBe(true);
     expect(seller2["api::order"].controllers.order.checkAnipoBarcode.enabled).toBe(true);
+    expect(seller2["api::order"].controllers.order.generateReserveParcelBarcode.enabled).toBe(true);
+    expect(seller2["api::order"].controllers.order.checkReserveParcelBarcode.enabled).toBe(true);
   });
 
   it("wires capability-gated handlers for every staff role that holds the capability", () => {
@@ -910,6 +914,8 @@ describe("role permission templates", () => {
         actions: [
           "api::order.order.generateAnipoBarcode",
           "api::order.order.checkAnipoBarcode",
+          "api::order.order.generateReserveParcelBarcode",
+          "api::order.order.checkReserveParcelBarcode",
           "api::order.order.adminVoidBarcode",
         ],
       },
@@ -1433,8 +1439,10 @@ describe("role permission templates", () => {
       "adminVoidBarcode",
       "checkAnipoBarcode",
       "checkPaymentStatus",
+      "checkReserveParcelBarcode",
       "findOne",
       "generateAnipoBarcode",
+      "generateReserveParcelBarcode",
       "getActiveReserve",
       "getMyOrderDetail",
       "getMyOrders",

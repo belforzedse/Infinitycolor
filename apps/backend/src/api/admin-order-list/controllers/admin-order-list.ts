@@ -600,6 +600,18 @@ export default {
     // The select/populate above plus projectOrder() already bound the payload.
     const sanitizedRows = await sanitize.contentAPI.output(rows, schema);
     const data = (sanitizedRows as any[]).map(projectOrder);
+    const { loadParcelSummaries } = await import("../../order/services/anipoReserveParcel");
+    const parcels = await loadParcelSummaries(strapi, (rows as any[]).map((row) => Number(row.reserve_shipment?.id || 0)));
+    for (let index = 0; index < data.length; index += 1) {
+      const parcel = parcels.get(Number((rows as any[])[index]?.reserve_shipment?.id));
+      if (!parcel) continue;
+      const { recipient, workflow, ...summary } = parcel;
+      Object.assign(data[index].attributes, { reserveParcel: summary });
+      if (["Started", "Done", "Shipment"].includes(data[index].attributes.Status)) {
+        Object.assign(data[index].attributes, workflow);
+        if (parcel.barcode) data[index].attributes.ShippingBarcode = parcel.barcode;
+      }
+    }
 
     ctx.set("Cache-Control", "private, no-store");
     ctx.body = {
@@ -798,6 +810,7 @@ export default {
     ctx.body = {
       data: {
         ...(await projectReserveGroup(strapi, group, now)),
+        anipo: await (await import("../../order/services/anipoReserveParcel")).getReserveParcelSummary(strapi, groupKey),
         orders: (orders as any[]).map((order) => ({
           id: order.id,
           status: order.Status ?? null,

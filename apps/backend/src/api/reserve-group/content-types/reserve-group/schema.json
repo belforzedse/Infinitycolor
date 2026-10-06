@@ -14,16 +14,31 @@
   "indexes": [
     {
       "name": "uq_reserve_groups_group_key",
-      "columns": ["group_key"],
+      "columns": [
+        "group_key"
+      ],
       "type": "unique"
     },
     {
       "name": "idx_reserve_groups_state_expires",
-      "columns": ["state", "expires_at"]
+      "columns": [
+        "state",
+        "expires_at"
+      ]
     },
     {
       "name": "idx_reserve_groups_last_activity",
-      "columns": ["last_activity_at", "id"]
+      "columns": [
+        "last_activity_at",
+        "id"
+      ]
+    },
+    {
+      "name": "idx_reserve_groups_anipo_workflow",
+      "columns": [
+        "anipo_barcode_state",
+        "anipo_last_checked_at"
+      ]
     }
   ],
   "attributes": {
@@ -52,7 +67,12 @@
     },
     "ClosureReason": {
       "type": "enumeration",
-      "enum": ["Expired", "ReleasedEarly", "ReleasedByAdmin", "RootAbandoned"]
+      "enum": [
+        "Expired",
+        "ReleasedEarly",
+        "ReleasedByAdmin",
+        "RootAbandoned"
+      ]
     },
     "activatedAt": {
       "type": "datetime"
@@ -103,6 +123,111 @@
     },
     "ShippingBarcode": {
       "type": "string"
+    },
+    "ShippingWeight": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "ShippingBoxSizeId": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoBarcodeState": {
+      "type": "enumeration",
+      "enum": [
+        "Pending",
+        "Issued",
+        "NeedsAttention",
+        "Stopped",
+        "Voided"
+      ]
+    },
+    "AnipoBarcodeData": {
+      "type": "json"
+    },
+    "AnipoSubmittedAt": {
+      "type": "datetime"
+    },
+    "AnipoLastCheckedAt": {
+      "type": "datetime"
+    },
+    "AnipoPollingDeadlineAt": {
+      "type": "datetime"
+    },
+    "AnipoIssuedAt": {
+      "type": "datetime"
+    },
+    "AnipoCheckCount": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoReadyToIssue": {
+      "type": "boolean"
+    },
+    "AnipoProviderStatus": {
+      "type": "string"
+    },
+    "AnipoLastMessage": {
+      "type": "text"
+    },
+    "AnipoLastError": {
+      "type": "text"
+    },
+    "AnipoRecipientRevision": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoRecipientSyncedRevision": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoRecipientSyncState": {
+      "type": "enumeration",
+      "enum": [
+        "Pending",
+        "Synced",
+        "NeedsAttention"
+      ]
+    },
+    "AnipoRecipientSyncAttempts": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoRecipientSyncLastAttemptAt": {
+      "type": "datetime"
+    },
+    "AnipoRecipientSyncLastError": {
+      "type": "text"
+    },
+    "AnipoRecipientSyncedAt": {
+      "type": "datetime"
+    },
+    "AnipoOrderCode": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "AnipoLeaseToken": {
+      "type": "string",
+      "maxLength": 64,
+      "private": true
+    },
+    "AnipoLeaseExpiresAt": {
+      "type": "datetime",
+      "private": true
+    },
+    "AnipoRegistrationAttemptedAt": {
+      "type": "datetime"
+    },
+    "AnipoCancellationPending": {
+      "type": "boolean",
+      "default": false,
+      "private": true
     }
   }
 }
