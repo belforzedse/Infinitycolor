@@ -176,6 +176,7 @@ export default function ReserveParcelActions({
       {dialogOpen && parcel && (
         <AnipoBarcodeDialog
           isOpen
+          title="ثبت بسته در آنیپو"
           onClose={() => setDialogOpen(false)}
           onGenerate={(weight, box) => run(false, weight, box)}
           loading={busy}

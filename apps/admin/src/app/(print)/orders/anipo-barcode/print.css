@@ -1,18 +1,79 @@
-.anipo-label { max-width: 110mm; margin: 1rem auto; padding: 1rem; background: #fff; color: #000; direction: rtl; font-family: var(--font-peyda-fanum), sans-serif; }
-.anipo-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: .75rem; border-bottom: 2px solid #000; }
-.anipo-loading { padding: 1.5rem; text-align: center; }
-.anipo-recipient-info { padding: 1rem 0; line-height: 1.8; overflow-wrap: anywhere; }
-.anipo-content { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; border-top: 1px solid #000; padding-top: .75rem; }
-.anipo-content > div { display: flex; gap: .5rem; font-size: .875rem; }
-.anipo-content dt { font-weight: bold; }
-.anipo-content dd { margin: 0; }
-.anipo-barcode-section { margin-top: 1.25rem; text-align: center; }
+.anipo-label {
+  max-width: 110mm;
+  margin: 1rem auto;
+  padding: 1rem;
+  background: #fff;
+  color: #000;
+  direction: rtl;
+  font-family: var(--font-peyda-fanum), sans-serif;
+}
+.anipo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #000;
+}
+.anipo-loading {
+  padding: 1.5rem;
+  text-align: center;
+}
+.anipo-recipient-info {
+  padding: 1rem 0;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.anipo-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  border-top: 1px solid #000;
+  padding-top: 0.75rem;
+}
+.anipo-content > div {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+.anipo-content dt {
+  font-weight: bold;
+}
+.anipo-content dd {
+  margin: 0;
+}
+.anipo-barcode-section {
+  margin-top: 1.25rem;
+  text-align: center;
+}
 /* Keep a quiet zone around the actual SVG; never stretch individual bars. */
-.anipo-barcode-svg { background: #fff; padding: 0 1.5rem; }
-.anipo-barcode-svg svg { display: block; width: 100%; height: auto; min-height: 48px; }
-.anipo-barcode-number { margin-top: .5rem; font: 16px monospace; overflow-wrap: anywhere; }
+.anipo-barcode-svg {
+  background: #fff;
+  padding: 0 1.5rem;
+}
+.anipo-barcode-svg svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 48px;
+}
+.anipo-barcode-number {
+  margin-top: 0.5rem;
+  font: 16px monospace;
+  overflow-wrap: anywhere;
+}
 @media print {
-  @page { size: A5; margin: 8mm; }
-  body { margin: 0; padding: 0; background: #fff; }
-  .anipo-label { margin: 0 auto; padding: .5rem; break-inside: avoid; }
+  @page {
+    size: A5;
+    margin: 8mm;
+  }
+  body {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+  }
+  .anipo-label {
+    margin: 0 auto;
+    padding: 0.5rem;
+    break-inside: avoid;
+  }
 }

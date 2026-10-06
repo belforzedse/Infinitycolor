@@ -84,7 +84,10 @@ export default function AnipoBarcodePrintPage() {
         const normalized = unwrapEntity((res as any).data);
         setOrder(
           normalized
-            ? ({ id: String(normalized.id ?? id), attributes: normalized } as unknown as Order)
+            ? ({
+                id: String(normalized.id ?? id),
+                attributes: normalized,
+              } as unknown as Order)
             : null,
         );
       } finally {
@@ -96,7 +99,12 @@ export default function AnipoBarcodePrintPage() {
   }, [id]);
 
   useEffect(() => {
-    if (canPrint && order && order.attributes.ShippingBarcode && !hasPrinted.current) {
+    if (
+      canPrint &&
+      order &&
+      order.attributes.ShippingBarcode &&
+      !hasPrinted.current
+    ) {
       hasPrinted.current = true;
       const timeout = setTimeout(() => window.print(), 600);
       return () => clearTimeout(timeout);
@@ -137,16 +145,24 @@ export default function AnipoBarcodePrintPage() {
   const date = issuedAt ? new Date(issuedAt) : null;
   const labelProps = {
     packageNumber: String(id),
-    packageSize: order.attributes.AnipoSubmittedAt && order.attributes.ShippingBoxSizeId
-      ? `سایز ${order.attributes.ShippingBoxSizeId.toLocaleString("fa-IR")}` : undefined,
+    packageSize:
+      order.attributes.AnipoSubmittedAt && order.attributes.ShippingBoxSizeId
+        ? `سایز ${order.attributes.ShippingBoxSizeId.toLocaleString("fa-IR")}`
+        : undefined,
     destination: [province, city].filter(Boolean).join("، "),
-    weight: order.attributes.AnipoSubmittedAt && order.attributes.ShippingWeight
-      ? `${order.attributes.ShippingWeight.toLocaleString("fa-IR")} گرم` : undefined,
+    weight:
+      order.attributes.AnipoSubmittedAt && order.attributes.ShippingWeight
+        ? `${order.attributes.ShippingWeight.toLocaleString("fa-IR")} گرم`
+        : undefined,
     date: date?.toLocaleDateString("fa-IR"),
-    time: date?.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" }),
+    time: date?.toLocaleTimeString("fa-IR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
     barcodeNumber: order.attributes.ShippingBarcode,
     recipientName: fullName,
-    recipientPhone: addressData?.Phone || userInfo?.Phone || userInfo?.phone || "",
+    recipientPhone:
+      addressData?.Phone || userInfo?.Phone || userInfo?.phone || "",
     recipientAddress: addressData?.FullAddress || "",
     postalCode: addressData?.PostalCode || undefined,
   };

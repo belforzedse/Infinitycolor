@@ -274,14 +274,6 @@ export async function getReserveParcelSummary(strapi: Strapi, key: string | numb
   return parcelSummary(await loadParcel(strapi, key));
 }
 
-export function projectParcelWorkflow(order: any, group: any) {
-  if (!ELIGIBLE.has(String(order.Status))) return order;
-  const source = { ...order };
-  for (const field of SHARED_FIELDS) source[field] = group[field] ?? null;
-  if (group.ShippingBarcode) source.ShippingBarcode = group.ShippingBarcode;
-  return source;
-}
-
 async function save(
   strapi: Strapi,
   lease: Lease,
