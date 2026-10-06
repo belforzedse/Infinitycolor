@@ -26,7 +26,7 @@ export function ReserveParcelHeader({
       : `${faNum(total)} سفارش`;
   return (
     <div
-      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-2 py-2.5 md:px-3 lg:px-4"
+      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-white px-2 py-2.5 md:px-3 lg:px-4"
       data-testid="admin-reserve-parcel"
       data-group-id={groupKey}
     >

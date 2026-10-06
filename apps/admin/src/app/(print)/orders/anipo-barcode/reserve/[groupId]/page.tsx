@@ -7,12 +7,10 @@ import {
   getAdminReserveGroup,
   type AnipoParcelSummary,
 } from "@/services/super-admin/orders/reserveGroups";
-import { useCan } from "@/hooks/useCan";
 
 export default function ReserveParcelLabelPage() {
   const params = useParams();
   const key = typeof params.groupId === "string" ? params.groupId : "";
-  const canPrint = useCan("order.print");
   const [parcel, setParcel] = useState<AnipoParcelSummary | null>(null);
   const [error, setError] = useState("");
   const printed = useRef(false);
@@ -33,7 +31,7 @@ export default function ReserveParcelLabelPage() {
     return () => controller.abort();
   }, [key]);
   useEffect(() => {
-    if (!canPrint || !parcel?.canPrintLabel || printed.current) return;
+    if (!parcel?.canPrintLabel || printed.current) return;
     let cancelled = false;
     void document.fonts?.ready.then(() => {
       if (cancelled) return;
@@ -43,8 +41,7 @@ export default function ReserveParcelLabelPage() {
     return () => {
       cancelled = true;
     };
-  }, [canPrint, parcel]);
-  if (!canPrint) return <div className="anipo-loading">دسترسی چاپ ندارید</div>;
+  }, [parcel]);
   if (error) return <div className="anipo-loading">{error}</div>;
   if (!parcel) return <div className="anipo-loading">در حال بارگذاری…</div>;
   if (!parcel.canPrintLabel || !parcel.barcode)

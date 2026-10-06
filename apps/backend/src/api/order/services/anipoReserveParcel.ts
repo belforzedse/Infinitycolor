@@ -441,7 +441,9 @@ async function persistProvider(
     AnipoLastError: conflict ? "ANIPO_PARCEL_MULTIPLE_BARCODES" : null,
     AnipoReadyToIssue: provider.readyToIssue ?? null,
     AnipoProviderStatus: provider.status || null,
-    AnipoLastMessage: provider.message || null,
+    AnipoLastMessage: conflict
+      ? "ثبت این بسته در آنیپو نیاز به بررسی دارد"
+      : provider.message || null,
   };
   if (issued)
     Object.assign(data, { ShippingBarcode: codes[0], AnipoIssuedAt: provider.issuedAt || now });

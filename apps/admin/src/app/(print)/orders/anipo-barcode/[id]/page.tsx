@@ -5,7 +5,6 @@ import { useParams } from "next/navigation";
 import { apiClient } from "@/services";
 import AnipoBarcodeLabel from "@/components/SuperAdmin/Order/AnipoBarcodeLabel";
 import { unwrapEntity } from "@/utils/strapi";
-import { useCan } from "@/hooks/useCan";
 
 type Order = {
   id: string;
@@ -68,7 +67,6 @@ type Order = {
 
 export default function AnipoBarcodePrintPage() {
   const { id } = useParams();
-  const canPrint = useCan("order.print");
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const hasPrinted = useRef(false);
@@ -99,17 +97,12 @@ export default function AnipoBarcodePrintPage() {
   }, [id]);
 
   useEffect(() => {
-    if (
-      canPrint &&
-      order &&
-      order.attributes.ShippingBarcode &&
-      !hasPrinted.current
-    ) {
+    if (order && order.attributes.ShippingBarcode && !hasPrinted.current) {
       hasPrinted.current = true;
       const timeout = setTimeout(() => window.print(), 600);
       return () => clearTimeout(timeout);
     }
-  }, [order, canPrint]);
+  }, [order]);
 
   useEffect(() => {
     const afterPrint = () => {
@@ -140,7 +133,6 @@ export default function AnipoBarcodePrintPage() {
   const city = cityData?.Title || "";
   const province = provinceData?.Title || "";
 
-  if (!canPrint) return <div className="anipo-loading">دسترسی چاپ ندارید</div>;
   const issuedAt = order.attributes.AnipoIssuedAt;
   const date = issuedAt ? new Date(issuedAt) : null;
   const labelProps = {
