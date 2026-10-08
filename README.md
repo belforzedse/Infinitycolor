@@ -1,4 +1,6 @@
 <p align="center">
+
+[راهنمای شروع فارسی](docs/development.fa.md) · [English quick start](docs/development.md) · [روش کار تیم](https://git.alpagency.net/alp/team/-/blob/main/docs/workflow.fa.md)
   <img src="docs/branding/logo.png" alt="Infinitycolor" width="220">
 </p>
 

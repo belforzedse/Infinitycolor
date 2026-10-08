@@ -1,5 +1,7 @@
 # Local development on Linux and Windows
 
+[فارسی](development.fa.md)
+
 ## Tools
 
 Install Node.js 20.19 or later within 20.x (the backend engine range), Git, and Docker Compose. On Windows use PowerShell and Docker
