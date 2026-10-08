@@ -1,124 +1,72 @@
-# Infinity Store
+<p align="center">
+  <img src="docs/branding/logo.png" alt="Infinitycolor" width="220">
+</p>
 
-Infinity Store is a full-stack e-commerce platform built for the Iranian market with a Strapi backend and a Next.js frontend. This repository contains everything required to run, test, and deploy the platform in a consistent and secure manner.
+# Infinitycolor
 
-## Project Structure
+Infinitycolor is a commerce platform for the Iranian market. The Persian storefront uses Next.js and React; Strapi owns the commerce API,
+catalog, orders, and payment integrations.
 
-```
-infinity/
-├── apps/
-│   ├── apps/backend/      # Strapi 4.25 API (TypeScript, PostgreSQL, Redis)
-│   └── apps/frontend/     # Next.js 16 App Router (TypeScript, Tailwind, Jotai)
-├── packages/         # Future shared workspace packages
-├── package.json      # pnpm workspace scripts
-├── pnpm-workspace.yaml
-├── turbo.json
-└── .github/          # CI/CD workflows and CODEOWNERS
-```
+![Infinitycolor brand artwork](docs/branding/cover.jpg)
 
-## Technology Stack
+## Workspaces
 
-### Backend
-- **Framework**: Strapi 4.25.21 (Headless CMS)
-- **Database**: PostgreSQL 16
-- **Cache**: Redis 7
-- **Language**: TypeScript
-- **Payment**: Beh Pardakht Mellat, SnappPay
-- **Authentication**: Strapi users-permissions plugin
+- `apps/frontend` — customer storefront
+- `apps/admin` — custom administration
+- `apps/auth` — central session runtime
+- `apps/social` — social content application
+- `apps/backend` — Strapi commerce API and jobs
+- `apps/e2e` — Playwright coverage
+- `packages/*` — shared authentication, UI, types, and utilities
 
-### Frontend
-- **Framework**: Next.js 16.0.3 (App Router)
-- **React**: 19.2.0
-- **Language**: TypeScript 5 (strict mode)
-- **Styling**: Tailwind CSS 3.4.1 + shadcn/ui
-- **State**: Jotai 2.11.1
-- **UI**: RTL-first design for Persian/Farsi
+## Local setup
 
-## Key Capabilities
-
-- Comprehensive shopping journey with intelligent discounting and wallet support
-- Secure checkout across Mellat, SnappPay, and in-platform wallet gateways
-- Operational tooling for orders, fulfillment, and shipping with Anipo
-- Rich user accounts with wallets, histories, and saved preferences
-- RTL-first responsive UI optimized for Persian shoppers
-- Administrative dashboards for monitoring catalog health and KPIs
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 20+
-- PostgreSQL 16
-- Redis 7
-- pnpm 10+ via Corepack
-
-### Install
+Use Node.js 20, pnpm 10.28.2 through Corepack, PostgreSQL 16, and Redis 7.
+Dependency versions and commands are recorded in the root and app manifests.
 
 ```bash
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
-### Backend
+Configure this project's environment files before starting the apps. The
+[backend guide](apps/backend/README.md) and [storefront guide](apps/frontend/README.md)
+describe their configuration.
 
 ```bash
-pnpm turbo run develop --filter=@repo/backend
+pnpm --filter @repo/backend dev
+pnpm --filter @repo/frontend dev
 ```
 
-Starts Strapi on http://localhost:1337.
+The backend listens on `http://localhost:1337`; the storefront uses
+`http://localhost:2888`. Each app has its own environment and service origins.
 
-### Frontend
+Authentication ownership and local service setup are documented in the
+[architecture](docs/auth/architecture.md) and [operations guide](docs/auth/operations.md).
+
+## Checks
 
 ```bash
-pnpm turbo run dev --filter=@repo/frontend
+pnpm lint
+pnpm check-types
+pnpm test
+pnpm build
 ```
 
-Starts Next.js on http://localhost:2888.
+## Documentation and releases
 
-See the backend and frontend app directories for additional environment configuration details.
-
-## Documentation
-
-- **Backend Guide**: [`apps/backend/CLAUDE.md`](apps/backend/CLAUDE.md)
-- **Frontend Guide**: [`apps/frontend/CLAUDE.md`](apps/frontend/CLAUDE.md)
-- **Development Rules**: `.cursor/rules/*.mdc`
-- **Troubleshooting**: [`apps/backend/TROUBLESHOOTING-SLUGS.md`](apps/backend/TROUBLESHOOTING-SLUGS.md), [`apps/backend/DOCKER_DEV.md`](apps/backend/DOCKER_DEV.md)
-
-## Deployment
-
-| Branch        | Environment   | Notes                                  |
-| ------------- | ------------- | -------------------------------------- |
-| `main`        | Production    | Protected, release-ready only          |
-| `dev`         | Staging       | Integration branch for feature work    |
-| `experimental`| Experimental  | Safe space for spikes and prototypes   |
-
-Each branch has associated CI workflows defined under `.github/workflows`. Refer to the apps/backend/frontend app READMEs for deployment details.
-
-## Contributing
-
-We welcome thoughtful contributions and expect all contributors to follow the established workflows.
-
-- **[Contributing Guide](CONTRIBUTING.md)** — Development workflow and review expectations
-- **[Code of Conduct](CODE_OF_CONDUCT.md)** — Community standards
-- **[Collaborator Roles](.github/COLLABORATORS.md)** — Access levels and responsibilities
-
-All changes targeting `main` or `dev` must go through a pull request and pass automated checks.
-
-## Support
-
-- **[Support Guide](.github/SUPPORT.md)** — Issue triage and troubleshooting resources
-- **[Security Policy](SECURITY.md)** — Private vulnerability disclosure process
-- **[GitHub Issues](../../issues)** — Bug reports and feature requests
-- **[GitHub Discussions](../../discussions)** — General questions and community topics
-
-## Project Management
-
-- **[Changelog](CHANGELOG.md)** — Release history
-- **[Code Owners](.github/CODEOWNERS)** — Default reviewer coverage
-- **[Issue Templates](.github/ISSUE_TEMPLATE/)** — Standardized issue creation
+- [GitLab CI](.gitlab-ci.yml)
+- [Production release guide](deploy/production/README.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Issues](https://git.alpagency.net/bel4/infinity/-/issues)
+- [Merge requests](https://git.alpagency.net/bel4/infinity/-/merge_requests)
 
 ## License
 
-Infinity Store is released under the MIT License. See the [LICENSE](LICENSE) file for the full text.
+[MIT](LICENSE).
 
+## Team setup
 
+- [Linux and Windows development guide](docs/development.md)
+- [GitLab workflow and collaboration templates](docs/gitlab-workflow.md)
