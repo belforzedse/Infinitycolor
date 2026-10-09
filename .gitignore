@@ -200,3 +200,7 @@ __pycache__/
 
 # Serialized local environment setup
 /.dev-env-setup.lock/
+
+# Local synthetic demo account (generated; never publish credentials)
+.local-demo-credentials.json
+.local-demo.lock/

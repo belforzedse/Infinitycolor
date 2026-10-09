@@ -52,8 +52,7 @@ Terminal 1 at the repository root:
 corepack pnpm --filter @repo/backend dev
 ```
 
-Create the local Strapi technical admin at http://localhost:1337/admin after the
-backend starts. In terminal 2 at the root:
+For the repeatable demo, stop this backend and run the fixture below before creating a technical admin manually; then restart it. The generated technical admin signs in at http://localhost:1337/admin. In terminal 2 at the root:
 
 ```bash
 corepack pnpm --filter @repo/frontend dev
@@ -101,48 +100,9 @@ to Strapi; Auth provides linked identities and sessions. See
 
 ## First use and local fixtures
 
-A technical-admin account lets you inspect the local Content Manager. It is not
-a storefront customer or business-admin login. Fresh startup provisions business
-roles and Public read permissions in [backend bootstrap](../apps/backend/src/index.ts),
-but does not provide a complete catalog or login fixture.
+Follow “Repeatable local demo” below for synthetic catalog/account fixtures. Stop the backend before seeding and keep local storage running.
 
-Before sample data arrives, check these concrete results:
-
-1. Strapi admin opens and Product/Variation/Stock collections are available.
-2. `http://localhost:1337/api/products` returns JSON; an empty catalog is valid.
-   A 403 needs investigation of startup/permission errors, not a blanket grant.
-3. The storefront renders and the unit test below can exercise reserved versus available stock calculations
-   without an external provider or seeded database.
-
-```bash
-corepack pnpm --filter @repo/backend test:unit --runInBand src/api/cart/services/lib/__tests__/stock-available.spec.ts
-```
-
-There is no maintained general-purpose demo seed. `seed:e2e` is a test-only
-fixture with teardown/target guards; it is not the everyday onboarding seed.
-The legacy `seed:admin` asks for a Master API token and assumes local-user role
-ID 2; it does not establish a current custom-admin account. Do not run either
-against your working database to guess your way into a login.
-
-Request a **local-only fixture** from the maintainer containing:
-
-- One category, one `Active` product with a unique slug and image, one linked
-  variation with unique SKU and price, and linked stock with `Count > 0` and
-  `reservedCount = 0`. Include the product URL/slug so you can find it.
-- The local settings/navigation relations needed to display that product. Verify
-  that Public product/category read permissions match bootstrap.
-- For cart/checkout work, a synthetic customer, address, province/city and local
-  shipping data; any payment/SMS test configuration must be stated separately.
-
-Once supplied, open the product, select its variation, add it to the cart, and
-confirm the displayed price and available stock match the fixture.
-
-For account/admin tasks the maintainer must additionally provide a synthetic,
-verified and active Strapi Users & Permissions customer and a separate staff
-user in the specific role required by the task, with password-login credentials
-and working identity links through local Auth. Start Auth before testing the
-storefront login or custom admin at port 2891. SMS and gateway journeys need
-explicit development provider configuration; none is supplied by setup.
+The Strapi technical-admin login is separate from the storefront login. Legacy `seed:admin` and WooCommerce importers are not onboarding commands. Start with the helper’s synthetic products; payment and SMS require separately reviewed development-provider setup.
 
 ## Source map and affected checks
 
@@ -201,3 +161,44 @@ the app terminals. Restart apps after editing environment settings. Do not use
   failures, check Node/pnpm versions before changing the committed lockfile.
 
 Use the [GitLab guide](gitlab-workflow.md) for branches and merge requests.
+
+## Local doctor
+
+From the repo root, before starting services:
+
+```bash
+node scripts/dev-doctor.mjs --before-start
+```
+
+After starting the services described in this guide:
+
+```bash
+node scripts/dev-doctor.mjs --running
+```
+
+The doctor reads the explicit local env files, validates local targets and tools, and checks ports. Before startup, required ports should be free. Running checks require the documented storage/API/web processes; optional apps are not included. Exit codes: `0` passed, `2` tools or configuration need attention, `3` a port or service does not match the selected state. It prints key names and versions, never secret values, and does not install packages, change configuration, start/stop services, follow redirects, or call providers. Follow the reported failed check, then rerun.
+
+## Repeatable local demo
+
+Keep local storage running and **stop the backend** before this step. From the repo root:
+
+```bash
+node scripts/seed-local-demo.mjs
+node scripts/seed-local-demo.mjs --apply
+```
+
+The first command validates the local target and prints a plan. `--apply` starts this repo’s backend on its own exact loopback port with only validated local settings, seeds through authenticated CMS interfaces, then stops that owned process. It refuses an occupied normal backend port, remote/production database URLs, unsafe SQLite paths and ambient database overrides. It does not connect to an already-running API or use an importer.
+
+On an empty CMS, it registers `local-demo-infinity@example.test` as the first **local technical admin** with a generated password. The actual email/password stay in ignored `.local-demo-credentials.json`; open that file locally to sign in at `/admin`, never paste it into an issue/MR or commit it. If a local admin already exists, create that reserved synthetic account through Strapi’s admin Users page and put its email/password in that same private file. The helper never resets passwords, changes existing roles or reactivates accounts.
+
+The fixture contains category `local-demo-catalog`, product slug `local-demo-product`, SKU `LOCAL-DEMO-001`, price `250000` and stock `12`, with a tracked synthetic image. Restart the normal backend/storefront and open the product. Reruns reuse stable entries, stock and image without overwriting local edits; a reserved-key collision stops with an explanation. This is catalog/cart browsing data, not a live order/payment fixture.
+
+The same helper creates one reserved synthetic storefront customer in the existing `customer` role. Open the private file’s `customer` object for its phone/password and use the storefront’s normal password-login form. The helper checks the stored password hash, linked profile and real login; reruns preserve the existing password and role. It does not send OTP/SMS or exercise payments.
+
+Central Auth login needs backend local `BETTER_AUTH_BRIDGE_ENABLED=true` and `LEGACY_AUTH_JWT_ISSUANCE_ENABLED=false`. New examples use these values; reconcile these two flags in existing local files, then restart the backend.
+
+On the first empty business-user database only, the helper creates a separate reserved `Superadmin` anchor before the customer. Its phone/password are in `businessAdmin`; use the custom admin’s normal password login. This source-required anchor keeps later backend startup valid. An existing unowned business store or identity collision stops the helper. Reruns verify the actual admin role and preserve any role/password changes; they never restore access or change role permissions. The central Auth frontend still needs its documented local Auth service.
+
+The fixture requires the documented local PostgreSQL user `infinity`, `public` schema and matching explicit database fields/URL credentials. These are local target checks; they do not attest a separately running production stack.
+
+The guarded CMS demo helper applies changes only on Linux or WSL2, where it proves the listening and accepted socket belongs to its own backend process group. On Windows, run this demo step inside WSL2 with Node and dependencies installed there. Normal Windows startup commands above stay available. The helper refuses native Windows/macOS before spawning or creating credentials; native Windows listener ownership has not been runtime-tested.

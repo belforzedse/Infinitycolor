@@ -1,0 +1,56 @@
+{
+  "name": "infinity",
+  "kind": "commerce",
+  "env": "apps/backend/.env",
+  "rules": {
+    "required": [
+      "APP_KEYS",
+      "API_TOKEN_SALT",
+      "ADMIN_JWT_SECRET",
+      "TRANSFER_TOKEN_SALT",
+      "JWT_SECRET",
+      "DATABASE_CLIENT",
+      "DATABASE_HOST",
+      "DATABASE_PORT",
+      "DATABASE_NAME",
+      "DATABASE_USERNAME",
+      "DATABASE_PASSWORD"
+    ],
+    "localUrls": [
+      "REDIS_URL",
+      "QUEUE_REDIS_URL",
+      "ZARINPAL_CALLBACK_URL",
+      "NEXTJS_REVALIDATION_URL",
+      "BETTER_AUTH_JWKS_URL",
+      "BETTER_AUTH_JWT_ISSUER",
+      "BETTER_AUTH_JWT_AUDIENCE"
+    ],
+    "exact": {
+      "DISABLE_BACKGROUND_JOBS": "true",
+      "SMS_ENABLED": "false",
+      "BETTER_AUTH_BRIDGE_ENABLED": "true",
+      "LEGACY_AUTH_JWT_ISSUANCE_ENABLED": "false"
+    },
+    "database": "infinity_local",
+    "empty": [
+      "IP_PANEL_API_KEY"
+    ],
+    "secrets": [
+      "API_TOKEN_SALT",
+      "ADMIN_JWT_SECRET",
+      "TRANSFER_TOKEN_SALT",
+      "JWT_SECRET"
+    ]
+  },
+  "productTitle": "محصول نمونهٔ محلی infinity",
+  "sqlite": false,
+  "backend": "apps/backend",
+  "customerPhone": "+989000000033",
+  "backendArgs": [
+    "develop",
+    "--ignore-prompts"
+  ],
+  "strapiMajor": 4,
+  "businessAdminPhone": "+989000000041",
+  "databaseUsername": "infinity"
+}
