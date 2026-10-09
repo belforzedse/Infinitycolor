@@ -144,10 +144,12 @@ export async function startOwnedBackend(root, config, env, { onCancel = async ()
   const uploadRoot = await realpath(path.join(publicPath, 'uploads'));
   if (!uploadRoot.startsWith(backendRoot + path.sep)) throw new Error('Local uploads resolve outside the owned backend');
   const child = spawn(process.execPath, [path.join(cwd, 'node_modules/@strapi/strapi/bin/strapi.js'), ...(config.backendArgs ?? ['develop'])], { cwd, env: childEnvironment(env, port), stdio: 'ignore', detached: true });
-  let exited = false; let cancelled = false; let identity; let stopping;
+  let exited = false; let cancelled = false; let stopRequested = false; let identity; let stopping;
   child.once('exit', () => { exited = true; }); child.once('error', () => { exited = true; });
-  const alive = () => !cancelled && !exited && child.exitCode === null;
+  const alive = () => !stopRequested && !cancelled && !exited && child.exitCode === null;
   const stop = () => {
+    // Invalidate the request lifecycle before OS teardown or Node exit delivery.
+    stopRequested = true;
     if (stopping) return stopping;
     stopping = (async () => {
       const group = identity ?? { pid: child.pid, group: child.pid };
@@ -175,13 +177,13 @@ export async function startOwnedBackend(root, config, env, { onCancel = async ()
   const terminate = () => { void cancel('SIGTERM'); };
   process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
   const assertListener = async () => {
-    if (!alive()) throw new Error('Owned backend exited or was cancelled; no further fixture requests allowed');
+    if (!alive()) throw new Error('Owned backend is stopping, stopped, exited or cancelled; no further fixture requests allowed');
     if (!await verifyOwnedListener(identity, port)) throw new Error('Owned backend listener disappeared; no HTTP request was sent');
   };
   const request = async (route, options = {}) => {
-    if (!alive()) throw new Error('Owned backend exited or was cancelled; no HTTP request was sent');
+    if (!alive()) throw new Error('Owned backend is stopping, stopped, exited or cancelled; no HTTP request was sent');
     const socket = await openOwnedConnection(identity, port);
-    if (!alive()) { socket.destroy(); throw new Error('Owned backend exited before the verified HTTP request'); }
+    if (!alive()) { socket.destroy(); throw new Error('Owned backend became unavailable before the verified HTTP request'); }
     const response = await requestLocal(port, route, { ...options, verifiedSocket: socket });
     await assertListener();
     return response;

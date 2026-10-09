@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, readFile, symlink, readdir } from 'node:
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { verifySqlitePath, ownedGroupAlive } from './local-demo-process.mjs';
@@ -183,4 +183,48 @@ test('unsupported ownership platform refuses before creating files or spawning',
     await assert.rejects(startOwnedBackend(root, { backend: 'backend' }, new Map([['PORT', '1337']])), /Linux.*WSL/);
     assert.deepEqual(await readdir(root), []);
   } finally { Object.defineProperty(process, 'platform', original); await rm(root, { recursive: true, force: true }); }
+});
+
+test('stop stays unavailable before a delayed Node exit notification', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'local-demo-exit-order-'));
+  const bin = path.join(root, 'backend/node_modules/@strapi/strapi/bin'); await mkdir(bin, { recursive: true });
+  await writeFile(path.join(bin, 'strapi.js'), "require('node:fs').writeFileSync('child-pid',String(process.pid));require('node:http').createServer((req,res)=>res.end(JSON.stringify({data:{hasAdmin:false}}))).listen(Number(process.env.PORT),process.env.HOST);\n");
+  const reservation = createServer();
+  await new Promise((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const normalPort = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
+  let owned; let releaseExit; let observedChild;
+  try {
+    owned = await startOwnedBackend(root, { backend: 'backend' }, new Map([['PORT', String(normalPort)]]));
+    const pid = Number(await readFile(path.join(root, 'backend/child-pid'), 'utf8'));
+    const emit = ChildProcess.prototype.emit;
+    t.mock.method(ChildProcess.prototype, 'emit', function (event, ...args) {
+      if (this.pid === pid && event === 'exit') {
+        observedChild = this;
+        // Keep the real SIGTERM/process-group teardown, but postpone its Node notification.
+        releaseExit = () => emit.call(this, event, ...args);
+        return true;
+      }
+      return emit.call(this, event, ...args);
+    });
+    const stopping = owned.stop();
+    const availableWhenStopStarted = owned.alive();
+    await stopping;
+    for (let tries = 0; tries < 100 && !releaseExit; tries++) await delay(10);
+    assert.ok(releaseExit, 'the real child exit notification was captured');
+    assert.equal(observedChild.signalCode, 'SIGTERM');
+    assert.equal(observedChild.exitCode, null);
+    assert.equal(await ownedGroupAlive({ group: pid }), false);
+    assert.equal(owned.alive(), false, 'stopped lifecycle is unavailable even before Node observes exit');
+    assert.equal(availableWhenStopStarted, false, 'stop invalidates requests before asynchronous teardown');
+    assert.equal(owned.stop(), stopping, 'repeated stop reuses the full-group teardown promise');
+    await assert.rejects(owned.assertListener(), /stopping|stopped/);
+    await assert.rejects(owned.request('/mutation', { method: 'POST', body: {} }), /stopping|stopped/);
+    t.mock.restoreAll(); releaseExit(); releaseExit = undefined;
+    assert.equal(owned.alive(), false);
+  } finally {
+    if (owned) await owned.stop();
+    t.mock.restoreAll(); if (releaseExit) releaseExit();
+    await rm(root, { recursive: true, force: true });
+  }
 });
