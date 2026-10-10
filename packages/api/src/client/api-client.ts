@@ -348,9 +348,10 @@ export class ApiClient {
 
     const cache = this.apiCache;
     const cacheKey = cache ? cache.generateKey(method, urlString, data) : "";
+    const deduplicate = isGet && options?.deduplicate !== false;
 
     // In-flight dedupe only for GET: mutating requests must not share one promise by URL/body.
-    if (cache && isGet) {
+    if (cache && deduplicate) {
       const pendingRequest = cache.getPending<{
         data: ApiResponse<T>;
         headers: Headers;
@@ -412,7 +413,7 @@ export class ApiClient {
       retries,
     );
 
-    if (cache && isGet) {
+    if (cache && deduplicate) {
       cache.setPending(cacheKey, requestPromise);
     }
 

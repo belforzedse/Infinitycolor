@@ -100,7 +100,8 @@ function reportFailure(error: unknown, operation: "wishlist_load" | "wishlist_to
   }
 }
 const fetchLikesForUser = (userId: number): Promise<LikedProduct[] | null> => {
-  const key = `${userId}:${readAuthStateVersion()}`;
+  const authVersion = readAuthStateVersion();
+  const key = `${userId}:${authVersion}`;
 
   const existing = likedProductsRequests.get(key);
   if (existing) return existing;
@@ -127,9 +128,14 @@ const fetchLikesForUser = (userId: number): Promise<LikedProduct[] | null> => {
     let page = 1;
 
     while (true) {
+      if (authVersion !== readAuthStateVersion()) return null;
       const response = await apiClient.get<LikesPageResponse>(
         `${ENDPOINTS.PRODUCT_LIKES.USER_LIKES}?page=${page}&pageSize=${LIKES_PAGE_SIZE}`,
+        // This loader already coalesces by identity. URL-only transport sharing
+        // could otherwise join a previous account's still-pending page.
+        { deduplicate: false },
       );
+      if (authVersion !== readAuthStateVersion()) return null;
 
       const pageProducts = Array.isArray(response.data) ? response.data : [];
 

@@ -2,6 +2,8 @@ import * as Sentry from "@sentry/nextjs";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Provider, createStore } from "jotai";
+import { ApiClient } from "@repo/api/client";
+import { ApiCache } from "@repo/api/cache";
 import { apiClient } from "@/services";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import useProductLike, {
@@ -397,13 +399,88 @@ describe("useProductLike", () => {
 
     expect(apiClient.get).toHaveBeenCalledTimes(2);
 
-    expect(apiClient.get).toHaveBeenNthCalledWith(1, expect.stringContaining("page=1&pageSize=25"));
+    expect(apiClient.get).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("page=1&pageSize=25"),
+      { deduplicate: false },
+    );
 
-    expect(apiClient.get).toHaveBeenNthCalledWith(2, expect.stringContaining("page=2&pageSize=25"));
+    expect(apiClient.get).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("page=2&pageSize=25"),
+      { deduplicate: false },
+    );
 
     expect(store.get(likedProductsAtom)).toHaveLength(37);
     expect(store.get(likedProductsOwnerAtom)).toBe(1);
     expect(hook.result.current.isLiked).toBe(true);
+  });
+
+  it("keeps later pages isolated when accounts switch with a real transport request pending", async () => {
+    const originalFetch = global.fetch;
+    const authVersion = jest.requireMock("@/lib/central-auth").readAuthStateVersion;
+    authVersion.mockReturnValue(0);
+    let token = "account-a";
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockImplementation(async () => token);
+    const client = new ApiClient({
+      baseUrl: "https://api.example.test/api",
+      apiCache: new ApiCache({ buildVersion: "test", cacheConfigs: [], noCachePatterns: [] }),
+      getAuthToken: () => token,
+      retryConfig: { maxRetries: 0, baseDelay: 1, maxDelay: 1, retryableStatusCodes: [] },
+    });
+    (apiClient.get as jest.Mock).mockImplementation((url, options) => client.get(url, options));
+    const pageResponse = (offset: number, page: number) => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          data: Array.from({ length: page === 1 ? 25 : 12 }, (_, index) =>
+            like(offset + (page === 1 ? 1 : 26) + index),
+          ),
+          meta: { pagination: { page, pageSize: 25, pageCount: 2, total: 37 } },
+        }),
+    });
+    let releaseAccountA: ((response: ReturnType<typeof pageResponse>) => void) | undefined;
+    global.fetch = jest.fn((url, options) => {
+      const page = Number(new URL(String(url)).searchParams.get("page"));
+      const accountA = new Headers(options?.headers).get("Authorization") === "Bearer account-a";
+      if (accountA && page === 2) {
+        return new Promise((resolve) => {
+          releaseAccountA = resolve;
+        });
+      }
+      return Promise.resolve(pageResponse(accountA ? 0 : 100, page));
+    }) as jest.Mock;
+    const store = createStore();
+    store.set(currentUserAtom, asUser(1));
+    let hook: Awaited<ReturnType<typeof renderUseProductLike>>["hook"] | undefined;
+    try {
+      ({ hook } = await renderUseProductLike(store, "137"));
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        token = "account-b";
+        authVersion.mockReturnValue(1);
+        store.set(currentUserAtom, asUser(2));
+      });
+      // Both hooks attempted page 2. Without isolation, B joins A's deferred GET.
+      await waitFor(() => expect(apiClient.get).toHaveBeenCalledTimes(4));
+      await act(async () => {
+        releaseAccountA!(pageResponse(0, 2));
+      });
+      await waitFor(() => expect(store.get(likedProductsLoadedAtom)).toBe(true));
+      expect(store.get(likedProductsOwnerAtom)).toBe(2);
+      expect(store.get(likedProductsAtom).map((entry) => entry.product.id)).toEqual(
+        Array.from({ length: 37 }, (_, index) => index + 101),
+      );
+      expect(global.fetch).toHaveBeenCalledTimes(4);
+      expect(hook.result.current.isLiked).toBe(true);
+    } finally {
+      hook?.unmount();
+      releaseAccountA?.(pageResponse(0, 2));
+      global.fetch = originalFetch;
+      authVersion.mockReturnValue(0);
+    }
   });
 
   it("does not mark a partially fetched likes cache as complete", async () => {
