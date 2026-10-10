@@ -19,7 +19,19 @@ type LikedProduct = {
   };
   updatedAt: string;
 };
+type LikesPageResponse = {
+  data: LikedProduct[];
+  meta?: {
+    pagination?: {
+      page?: number;
+      pageSize?: number;
+      pageCount?: number;
+      total?: number;
+    };
+  };
+};
 
+const LIKES_PAGE_SIZE = 25;
 export const likedProductsAtom = atom<LikedProduct[]>([]);
 const likedProductsLoadingAtom = atom<boolean>(false);
 export const likedProductsLoadedAtom = atom<boolean>(false);
@@ -87,36 +99,93 @@ function reportFailure(error: unknown, operation: "wishlist_load" | "wishlist_to
     /* Telemetry cannot affect wishlist state. */
   }
 }
-
 const fetchLikesForUser = (userId: number): Promise<LikedProduct[] | null> => {
   const key = `${userId}:${readAuthStateVersion()}`;
+
   const existing = likedProductsRequests.get(key);
   if (existing) return existing;
-  if (Date.now() < (retryAfter.get(key) ?? 0)) return Promise.resolve(null);
+
+  if (Date.now() < (retryAfter.get(key) ?? 0)) {
+    return Promise.resolve(null);
+  }
 
   const request = (async () => {
     const outcome = await centralAuth.tokenManager.getTokenOutcome();
+
     if (outcome.state !== "authenticated") {
       retryAfter.set(key, Date.now() + 30_000);
-      logDiagnostic("auth.recovery", { operation: "wishlist_load", outcome: outcome.state });
+
+      logDiagnostic("auth.recovery", {
+        operation: "wishlist_load",
+        outcome: outcome.state,
+      });
+
       return null;
     }
-    const response = await apiClient.get<{ data: LikedProduct[] }>(
-      ENDPOINTS.PRODUCT_LIKES.USER_LIKES,
-    );
-    return Array.isArray(response.data) ? response.data : [];
+
+    const allLikedProducts: LikedProduct[] = [];
+    let page = 1;
+
+    while (true) {
+      const response = await apiClient.get<LikesPageResponse>(
+        `${ENDPOINTS.PRODUCT_LIKES.USER_LIKES}?page=${page}&pageSize=${LIKES_PAGE_SIZE}`,
+      );
+
+      const pageProducts = Array.isArray(response.data) ? response.data : [];
+
+      allLikedProducts.push(...pageProducts);
+
+      const pagination = response.meta?.pagination;
+      const pageCount = pagination?.pageCount;
+
+      if (typeof pageCount === "number" && Number.isFinite(pageCount) && pageCount > 0) {
+        if (page >= pageCount) {
+          break;
+        }
+      } else if (pageProducts.length < LIKES_PAGE_SIZE) {
+        break;
+      }
+
+      if (pageProducts.length === 0) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    const uniqueProducts = new Map<number, LikedProduct>();
+
+    for (const likedProduct of allLikedProducts) {
+      const likedProductId = likedProduct.product?.id;
+
+      if (typeof likedProductId === "number") {
+        uniqueProducts.set(likedProductId, likedProduct);
+      }
+    }
+
+    return Array.from(uniqueProducts.values());
   })()
     .catch((error: unknown) => {
       retryAfter.set(key, Date.now() + 30_000);
-      if (key === `${userId}:${readAuthStateVersion()}`) reportFailure(error, "wishlist_load");
+
+      if (key === `${userId}:${readAuthStateVersion()}`) {
+        reportFailure(error, "wishlist_load");
+      }
+
       return null;
     })
     .finally(() => {
-      if (likedProductsRequests.get(key) === request) likedProductsRequests.delete(key);
+      if (likedProductsRequests.get(key) === request) {
+        likedProductsRequests.delete(key);
+      }
     });
 
-  while (retryAfter.size > 16) retryAfter.delete(retryAfter.keys().next().value!);
+  while (retryAfter.size > 16) {
+    retryAfter.delete(retryAfter.keys().next().value!);
+  }
+
   likedProductsRequests.set(key, request);
+
   return request;
 };
 

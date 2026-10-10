@@ -6,6 +6,7 @@ import { apiClient } from "@/services";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import useProductLike, {
   likedProductsAtom,
+  likedProductsLoadedAtom,
   likedProductsOwnerAtom,
   __resetUseProductLikeState,
 } from "../useProductLike";
@@ -346,6 +347,105 @@ describe("useProductLike", () => {
     });
     expect(store.get(likedProductsAtom)).toEqual([]);
     expect(store.get(likedProductsOwnerAtom)).toBe(2);
+  });
+  it("loads all paginated likes beyond the first 25 before marking the cache complete", async () => {
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
+
+    const firstPage = Array.from({ length: 25 }, (_, index) => like(index + 1));
+    const secondPage = Array.from({ length: 12 }, (_, index) => like(index + 26));
+
+    (apiClient.get as jest.Mock).mockImplementation((url: string) => {
+      if (url.includes("page=1&pageSize=25")) {
+        return Promise.resolve({
+          data: firstPage,
+          meta: {
+            pagination: {
+              page: 1,
+              pageSize: 25,
+              pageCount: 2,
+              total: 37,
+            },
+          },
+        });
+      }
+
+      if (url.includes("page=2&pageSize=25")) {
+        return Promise.resolve({
+          data: secondPage,
+          meta: {
+            pagination: {
+              page: 2,
+              pageSize: 25,
+              pageCount: 2,
+              total: 37,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, asUser(1));
+
+    const { hook } = await renderUseProductLike(store, "37");
+
+    await waitFor(() => {
+      expect(store.get(likedProductsLoadedAtom)).toBe(true);
+    });
+
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+
+    expect(apiClient.get).toHaveBeenNthCalledWith(1, expect.stringContaining("page=1&pageSize=25"));
+
+    expect(apiClient.get).toHaveBeenNthCalledWith(2, expect.stringContaining("page=2&pageSize=25"));
+
+    expect(store.get(likedProductsAtom)).toHaveLength(37);
+    expect(store.get(likedProductsOwnerAtom)).toBe(1);
+    expect(hook.result.current.isLiked).toBe(true);
+  });
+
+  it("does not mark a partially fetched likes cache as complete", async () => {
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
+
+    const firstPage = Array.from({ length: 25 }, (_, index) => like(index + 1));
+
+    (apiClient.get as jest.Mock).mockImplementation((url: string) => {
+      if (url.includes("page=1&pageSize=25")) {
+        return Promise.resolve({
+          data: firstPage,
+          meta: {
+            pagination: {
+              page: 1,
+              pageSize: 25,
+              pageCount: 2,
+              total: 37,
+            },
+          },
+        });
+      }
+
+      if (url.includes("page=2&pageSize=25")) {
+        return Promise.reject(new Error("Second page failed"));
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, asUser(1));
+
+    await renderUseProductLike(store, "1");
+
+    await waitFor(() => {
+      expect(Sentry.captureException).toHaveBeenCalled();
+    });
+
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    expect(store.get(likedProductsLoadedAtom)).toBe(false);
+    expect(store.get(likedProductsOwnerAtom)).toBeNull();
+    expect(store.get(likedProductsAtom)).toEqual([]);
   });
 });
 
