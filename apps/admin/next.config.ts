@@ -154,12 +154,26 @@ const nextConfig: NextConfig = {
   compress: false,
 };
 
+const sentryRelease =
+  process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || "development";
+
 export default withSentryConfig(nextConfig, {
   silent: !process.env.CI,
   sourcemaps: { disable: false, deleteSourcemapsAfterUpload: true },
   widenClientFileUpload: true,
   release: {
-    name:
-      process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || "development",
+    name: sentryRelease,
+    // Attach the release's commits so Sentry can show suspect commits and
+    // resolve issues from "Fixes <SHORT-ID>" commit messages. Failures here are
+    // logged by the plugin and never fail the build.
+    setCommits: /^[0-9a-f]{40}$/.test(sentryRelease)
+      ? {
+          // How Sentry's GitLab integration lists bel4/infinity.
+          repo: process.env.SENTRY_REPO || "Yazdan / Infinity",
+          commit: sentryRelease,
+          ignoreMissing: true,
+          ignoreEmpty: true,
+        }
+      : undefined,
   },
 });
