@@ -1,3 +1,4 @@
+import { captureOrderDeliverySnapshot } from "../../../utils/orderDeliverySnapshot";
 import { createHash } from "node:crypto";
 import { getTrustedWordPressMigrationSourceTimestamps } from "../../../utils/migration-context";
 import {
@@ -568,6 +569,8 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     const order = existing
       ? await orderQuery.update({ where: { id: existing.id }, data: orderData, transacting: trx } as any)
       : await orderQuery.create({ data: orderData, transacting: trx } as any);
+
+    if (!existing) await captureOrderDeliverySnapshot(strapiInstance, Number(order.id), address.id || undefined, trx, "woocommerce");
 
     const contractQuery = strapiInstance.db.query(CONTRACT_UID);
     const contracts = await findMany(

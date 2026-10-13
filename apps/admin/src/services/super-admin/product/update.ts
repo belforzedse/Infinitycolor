@@ -1,7 +1,6 @@
 import { apiClient } from "@/services";
-import { ENDPOINTS } from "@/constants/api";
 import type { EditProductData, ProductData } from "@/types/super-admin/products";
-import { syncSimpleProductVariation } from "./simple-variation";
+import type { ProductEditorClient, ProductEditSnapshot } from "./editor-session";
 
 interface TransformedProductData
   extends Omit<
@@ -27,13 +26,14 @@ interface TransformedProductData
   Files?: number[];
 }
 
-function transformProductDataForApi(data: EditProductData): TransformedProductData {
+export function transformProductDataForApi(data: EditProductData): TransformedProductData {
   // Create a new object without the CoverImage field. Simple* fields live on the
   // synthetic variation (synced separately), so they are stripped here too.
   const {
     CoverImage,
     SimpleVariationId,
     SimpleStockId,
+    SimpleStockRevision,
     SimpleSKU,
     SimplePrice,
     SimpleDiscountPrice,
@@ -75,24 +75,33 @@ function transformProductDataForApi(data: EditProductData): TransformedProductDa
   return transformedData;
 }
 
-export const updateProduct = async (id: string, body: EditProductData) => {
-  try {
-    const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/${id}`;
-    const transformedBody = transformProductDataForApi(body);
+export type SizeGuidePayload = { id?: number; Helper: unknown };
 
-    const response = await apiClient.put(endpoint, {
-      data: transformedBody,
-    });
+export function buildProductEditorPayload(body: EditProductData, base: EditProductData, sizeGuide?: SizeGuidePayload) {
+  const isSimple = body.ProductType === "Simple" || body.IsSimpleProduct;
+  const isNewVariation = !body.SimpleVariationId;
+  const simpleFields = {
+    ...(isNewVariation || body.SimpleSKU !== base.SimpleSKU ? { SKU: body.SimpleSKU?.trim() || undefined } : {}),
+    ...(isNewVariation || body.SimplePrice !== base.SimplePrice ? { Price: Number(body.SimplePrice || 0) } : {}),
+    ...(isNewVariation || (body.SimpleDiscountPrice ?? null) !== (base.SimpleDiscountPrice ?? null) ? { DiscountPrice: body.SimpleDiscountPrice ?? null } : {}),
+    ...(isNewVariation || body.SimpleIsPublished !== base.SimpleIsPublished ? { IsPublished: body.SimpleIsPublished !== false } : {}),
+    // Stock is volatile. A title/image-only save must never write a loaded count.
+    ...(isNewVariation || body.SimpleStock !== base.SimpleStock ? {
+      stock: {
+        ...(body.SimpleStockId ? { id: body.SimpleStockId, expectedStockRevision: base.SimpleStockRevision } : {}),
+        Count: Number(body.SimpleStock || 0),
+      },
+    } : {}),
+  };
+  const simpleVariation = isSimple && Object.keys(simpleFields).length ? {
+    ...(body.SimpleVariationId ? { id: body.SimpleVariationId } : {}), ...simpleFields,
+  } : undefined;
+  return {
+    data: transformProductDataForApi(body),
+    ...(simpleVariation ? { simpleVariation } : {}),
+    ...(sizeGuide ? { sizeGuide } : {}),
+  };
+}
 
-    await syncSimpleProductVariation(Number(id), body);
-
-    return { success: true, data: response.data };
-  } catch (error: any) {
-    // Return error without showing toast - let the caller handle it
-    return {
-      success: false,
-      error,
-      errorMessage: error.response?.data?.error?.message || "ویرایش محصول با خطا مواجه شد"
-    };
-  }
-};
+export const updateProduct = async (id: string, body: EditProductData, base: EditProductData, client: ProductEditorClient = apiClient, sizeGuide?: SizeGuidePayload) =>
+  client.put<ProductEditSnapshot>(`/products/${id}/editor`, buildProductEditorPayload(body, base, sizeGuide), { retries: 0 });

@@ -54,6 +54,7 @@ export interface ProductVariable {
         id: number;
         attributes: {
           Count: number;
+          StockRevision?: number;
         };
       };
     };
@@ -79,6 +80,7 @@ export interface ProductVariableDisplay {
   discountPrice?: number;
   stock: number;
   stockId?: number;
+  stockRevision?: number;
   variable: string;
   isPublished: boolean;
   colorId?: number;

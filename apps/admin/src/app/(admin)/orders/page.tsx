@@ -1,5 +1,8 @@
 "use client";
 
+import DeliverySearchFilters from "./DeliverySearchFilters";
+import { useOrderDeliverySearch } from "@/hooks/useOrderDeliverySearch";
+
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { MobileTable, columns, bulkPrintOrders, Order } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
@@ -77,6 +80,7 @@ const REGULAR_ONLY_FILTER: AdvancedFilterItem = {
 };
 
 export default function OrdersPage() {
+  const deliverySearch = useOrderDeliverySearch();
   const canCreateManualOrder = useCan("order.manual.create");
   // Bulk actions call the exact same per-order operations, so they must use
   // the same capabilities instead of requiring a second, unrelated bulk flag.
@@ -143,6 +147,7 @@ export default function OrdersPage() {
     error: countsError,
     refresh: refreshOrderCounts,
   } = useOrderStatusCounts({
+    deliverySearch: deliverySearch.searchFilters,
     filters: countFilters,
     search: debouncedSearchQuery,
     shippingMethodCodes: selectedShippingMethodCodes,
@@ -391,6 +396,7 @@ export default function OrdersPage() {
       signal: AbortSignal;
     }) =>
       listAdminOrders({
+        ...deliverySearch.searchFilters,
         page,
         pageSize,
         filters: [...filters, reserveOnly ? RESERVE_ONLY_FILTER : REGULAR_ONLY_FILTER],
@@ -400,7 +406,7 @@ export default function OrdersPage() {
         search: debouncedSearchQuery,
         shippingMethodCodes: selectedShippingMethodCodes,
       }),
-    [activeTab, debouncedSearchQuery, reserveOnly, selectedShippingMethodCodes, sort],
+    [activeTab, debouncedSearchQuery, deliverySearch.searchFilters, reserveOnly, selectedShippingMethodCodes, sort],
   );
 
   const handleReserveOnlyChange = useCallback(
@@ -563,6 +569,7 @@ export default function OrdersPage() {
           <span>نمایش سفارش‌های رزروی</span>
         </label>
       </div>
+      <DeliverySearchFilters {...deliverySearch} />
       <ShippingMethodFilters
         methods={shippingMethods}
         selectedCodes={selectedShippingMethodCodes}
@@ -590,6 +597,7 @@ export default function OrdersPage() {
         filters={advancedFilters}
         dataLoader={loadOrders}
         dataLoaderKey={JSON.stringify({
+          deliverySearch: deliverySearch.searchFilters,
           tab: activeTab,
           sort,
           search: debouncedSearchQuery,
@@ -598,12 +606,15 @@ export default function OrdersPage() {
         })}
         refreshOnVisibility={false}
         isFiltered={
+          deliverySearch.active ||
           Boolean(debouncedSearchQuery) ||
           advancedFilters.length > 0 ||
           selectedShippingMethodCodes.length > 0 ||
           reserveOnly
         }
         onClearFilters={() => {
+          deliverySearch.clear();
+          debouncedSearch.cancel();
           setSearchQuery("");
           setDebouncedSearchQuery("");
           setSelectedShippingMethodCodes([]);

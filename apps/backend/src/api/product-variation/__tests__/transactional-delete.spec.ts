@@ -144,7 +144,8 @@ describe("product variation transactional deletion", () => {
       id: 11,
       product_stock: { id: 22, reservedCount: 0 },
     });
-    const trx = { id: "trx" };
+    const lockedStock = { where: jest.fn().mockReturnThis(), forUpdate: jest.fn().mockReturnThis(), first: jest.fn().mockResolvedValue({ reserved_count: 0 }) };
+    const trx = jest.fn(() => lockedStock);
     mockStrapi.db = {
       transaction: jest.fn(async (callback: any) => callback({ trx })),
       query: jest.fn((uid: string) =>
@@ -179,7 +180,7 @@ describe("product variation transactional deletion", () => {
       product_stock: { id: 22, reservedCount: 2 },
     });
     mockStrapi.db = {
-      transaction: jest.fn(async (callback: any) => callback({ trx: { id: "trx" } })),
+      transaction: jest.fn(async (callback: any) => callback({ trx: jest.fn(() => ({ where: jest.fn().mockReturnThis(), forUpdate: jest.fn().mockReturnThis(), first: jest.fn().mockResolvedValue({ reserved_count: 2 }) })) })),
       query: jest.fn((uid: string) =>
         uid === "api::product-stock.product-stock"
           ? { delete: stockDelete }

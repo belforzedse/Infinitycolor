@@ -15,7 +15,7 @@ export default {
         // controller performs the capability/credential decision after the
         // normal content-API authentication strategy succeeds.
         policies: [],
-        middlewares: [],
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
       },
     },
     {
@@ -25,7 +25,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.variation.manage")],
-        middlewares: [],
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
       },
     },
     // Re-points one product's variations from a wrongly chosen colour to another,
@@ -38,7 +38,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.variation.manage")],
-        middlewares: [],
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
       },
     },
     // Product lifecycle (services/product-lifecycle.ts). Move to Trash, restore
@@ -52,7 +52,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.softDelete")],
-        middlewares: [],
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
       },
     },
     {
@@ -62,7 +62,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.restore")],
-        middlewares: [],
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
       },
     },
     {
@@ -72,7 +72,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.delete")],
-        middlewares: [],
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
       },
     },
     {
@@ -105,7 +105,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.schedule")],
-        middlewares: [],
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
       },
     },
     {

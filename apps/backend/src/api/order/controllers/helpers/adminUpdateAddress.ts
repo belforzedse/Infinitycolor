@@ -1,3 +1,4 @@
+import { effectiveOrderDeliveryAddress, updateExistingOrderDeliverySnapshot } from "../../../../utils/orderDeliverySnapshot";
 import type { Strapi } from "@strapi/strapi";
 import { canonicalIranPhone } from "@repo/auth-core";
 import { requireCapability } from "../../../../utils/adminAuthorization";
@@ -169,17 +170,20 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
           transacting: trx,
         } as any)
       : null;
-    const fields = changedFields(comparable(order.delivery_address), input);
+    const effectiveAddress = await effectiveOrderDeliveryAddress(strapi, orderId, order.delivery_address, trx);
+    const fields = changedFields(comparable(effectiveAddress), input);
+    const effectiveMembers = await Promise.all(memberOrders.map((member: any) =>
+      effectiveOrderDeliveryAddress(strapi, Number(member.id), member.delivery_address, trx)));
     const allAlreadyMatch =
       fields.length === 0 &&
-      memberOrders.every(
-        (member: any) => changedFields(comparable(member.delivery_address), input).length === 0,
+      effectiveMembers.every(
+        (address: any) => changedFields(comparable(address), input).length === 0,
       ) &&
       (!group || changedFields(comparable(group.delivery_address), input).length === 0);
     if (allAlreadyMatch) {
       return {
         noChange: true as const,
-        address: order.delivery_address,
+        address: effectiveAddress,
         orders: memberOrders,
         reserveGroupId,
       };
@@ -228,6 +232,7 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
         },
         transacting: trx,
       } as any);
+      await updateExistingOrderDeliverySnapshot(strapi, Number(member.id), { ...snapshot, shipping_city: city }, trx);
       if (activeAnipo) queued.push({ orderId: Number(member.id), revision });
       await logAdminOrderAddressUpdate(
         strapi,

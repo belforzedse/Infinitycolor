@@ -1,6 +1,7 @@
 "use client";
 
 import UpsertPageContentWrapper from "@/components/SuperAdmin/UpsertPage/ContentWrapper/index";
+import DeliveryAddressCard from "@/components/SuperAdmin/Order/DeliveryAddressCard";
 import Footer from "@/components/SuperAdmin/Order/SummaryFooter";
 import GatewayLogs from "@/components/SuperAdmin/Order/GatewayLogs";
 import AdjustItemsPanel from "@/components/SuperAdmin/Order/AdjustItemsPanel";
@@ -348,9 +349,6 @@ export default function EditOrderPage() {
         const addr = unwrapEntity((normalizedOrder as any).delivery_address);
         const city = unwrapEntity(addr?.shipping_city);
         const province = unwrapEntity(city?.shipping_province);
-        const fullAddress = [addr?.FullAddress, city?.Title, province?.Title]
-          .filter(Boolean)
-          .join(" - ");
 
         const shippingEntity = unwrapEntity((normalizedOrder as any).shipping);
         const shippingMethod =
@@ -415,7 +413,7 @@ export default function EditOrderPage() {
             (user as any)?.phone ??
             (normalizedOrder as any)?.phone ??
             (normalizedOrder as any)?.Phone,
-          address: fullAddress || addr?.Description || undefined,
+          address: addr?.FullAddress || addr?.Description || undefined,
           addressLine: addr?.FullAddress || "",
           deliveryAddressId: Number(addr?.id || 0) || undefined,
           shippingCityId: Number(city?.id || 0) || undefined,
@@ -608,27 +606,14 @@ export default function EditOrderPage() {
         fields: section.fields
           .filter(
             (field) =>
-              canReadFinancials ||
-              !("name" in field && ["paymentGateway", "transactionId"].includes(String(field.name))),
+              !("name" in field && ["address", "postalCode", "recipientName", "recipientPhone"].includes(String(field.name))) &&
+              (canReadFinancials ||
+                !("name" in field && ["paymentGateway", "transactionId"].includes(String(field.name)))),
           )
           .map((field) => {
             if (!("name" in field)) return field;
             if (field.name === "userName" && !canManageUsers) {
               return { ...field, labelAction: undefined };
-            }
-            if (field.name === "address" && canEditAddress) {
-              return {
-                ...field,
-                labelAction: () => (
-                  <button
-                    type="button"
-                    className="text-sm font-medium text-actions-link"
-                    onClick={() => setAddressEditorOpen(true)}
-                  >
-                    ویرایش اطلاعات گیرنده
-                  </button>
-                ),
-              };
             }
             if (["description", "note"].includes(String(field.name)) && !canEditNotes) {
               return { ...field, readOnly: true };
@@ -695,6 +680,8 @@ export default function EditOrderPage() {
             : undefined
         }
       />
+
+      {data && <DeliveryAddressCard order={data} canEdit={canEditAddress} onEdit={() => setAddressEditorOpen(true)} />}
 
       {data && canReadFinancials ? (
         <section className="mt-6 rounded-xl border border-neutral-200 bg-white p-4" dir="rtl">

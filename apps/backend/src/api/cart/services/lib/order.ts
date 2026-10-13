@@ -1,3 +1,4 @@
+import { captureOrderDeliverySnapshot } from "../../../../utils/orderDeliverySnapshot";
 import type { Strapi } from "@strapi/strapi";
 import { productUnavailableReason } from "../../../../utils/productVisibility";
 import { chargeableVariationPrice } from "../../../../utils/productAvailability";
@@ -191,6 +192,8 @@ export const createOrderAndItems = async (
     data: orderData,
     ...(trx ? { transacting: trx } : {}),
   });
+
+  await captureOrderDeliverySnapshot(strapi, Number(order.id), deliveryAddressId, trx);
 
   let subtotal = 0;
   const createdItems = [];

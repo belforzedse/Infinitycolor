@@ -9,6 +9,7 @@ import { useCan } from "@/hooks/useCan";
 import { editProductDataAtom, productDataAtom } from "@/atoms/super-admin/products";
 import MediaLibraryModal from "@/components/MediaLibrary/MediaLibraryModal";
 import { faNum } from "@/utils/faNum";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 
 interface PhotoUploaderProps {
   initialImages?: string[];
@@ -22,6 +23,7 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
   initialImages = [],
   isEditMode = false,
 }) => {
+  const { canEdit } = useProductEditor();
   const {
     images,
     uploadingState,
@@ -50,7 +52,7 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
             <button
               type="button"
               data-testid="gallery-library-open"
-              disabled={uploadingState.image}
+              disabled={uploadingState.image || !canEdit}
               onClick={() => setLibraryOpen(true)}
               className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-infinity-primary transition-colors hover:border-infinity-primary-lighter hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -70,7 +72,7 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
 
       {canPickFromLibrary ? (
         <MediaLibraryModal
-          isOpen={libraryOpen}
+          isOpen={libraryOpen && canEdit}
           onClose={() => setLibraryOpen(false)}
           title="افزودن تصویر از کتابخانه"
           selection="multiple"
@@ -83,6 +85,7 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
             count > 0 ? `افزودن ${faNum(count)} تصویر به گالری` : "افزودن به گالری"
           }
           onConfirm={(picked) => {
+            if (!canEdit) return;
             const { added, skipped } = addExistingMedia(picked);
             setLibraryOpen(false);
             if (added > 0) {

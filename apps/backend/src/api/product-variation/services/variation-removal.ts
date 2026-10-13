@@ -17,6 +17,11 @@ export async function deleteVariationWithStock(strapi: any, variationId: number,
   if (!variation) return null;
 
   const stock = variation.product_stock;
+  if (stock?.id) {
+    const locked = await trx("product_stocks").where({ id: stock.id }).forUpdate().first();
+    if (!locked) return null;
+    stock.reservedCount = locked.reserved_count;
+  }
   if (Number(stock?.reservedCount || 0) > 0) {
     const error: any = new Error("Reserved inventory prevents variation deletion");
     error.status = 409;

@@ -292,6 +292,11 @@
       "relation": "oneToMany",
       "target": "api::product-slug-alias.product-slug-alias",
       "mappedBy": "product"
+    },
+    "EditRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
     }
   }
 }

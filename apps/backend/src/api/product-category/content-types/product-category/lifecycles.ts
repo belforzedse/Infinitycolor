@@ -1,5 +1,6 @@
 import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
 import { triggerFrontendRevalidation } from "../../../../utils/revalidate";
+import { afterCatalogCommit } from "../../../../utils/catalogEdit";
 
 const extractParentId = (parent: any): number | null | undefined => {
   if (parent === null) return null;
@@ -61,7 +62,7 @@ const enforceMainCategoryRules = (
 
 async function revalidateStorefrontCategories() {
   if (isTrustedWordPressMigrationRequest()) return;
-  await triggerFrontendRevalidation({ tag: "product-categories" }, "Product Category Lifecycle");
+  await afterCatalogCommit(strapi, () => triggerFrontendRevalidation({ tag: "product-categories" }, "Product Category Lifecycle"));
 }
 
 export default {

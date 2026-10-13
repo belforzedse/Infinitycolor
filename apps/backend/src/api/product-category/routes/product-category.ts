@@ -8,5 +8,8 @@ import { publicProductVisibilityRoutes } from "../../../utils/publicProductVisib
 // Public readers cannot populate or filter by the product relation, which would
 // otherwise list drafts, scheduled and trashed products; staff are unaffected.
 export default factories.createCoreRouter("api::product-category.product-category", {
-  config: publicProductVisibilityRoutes({ mode: "strip", uid: "api::product-category.product-category", relations: ["products", "product_others"] }),
+  config: {
+    ...publicProductVisibilityRoutes({ mode: "strip", uid: "api::product-category.product-category", relations: ["products", "product_others"] }),
+    delete: { middlewares: [{ name: "global::catalog-edit", config: { resource: "category-associations" } }] },
+  },
 });

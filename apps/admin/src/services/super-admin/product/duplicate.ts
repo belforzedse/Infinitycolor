@@ -1,6 +1,7 @@
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
 import { toast } from "react-hot-toast";
+import { ProductEditorSession, type ProductEditorClient } from "./editor-session";
 import { getProduct } from "./get";
 
 // --- Generic Strapi response wrappers ---
@@ -41,6 +42,10 @@ export const duplicateProduct = async (productId: string) => {
   // Variations are copied one at a time and a failure does not abort the run,
   // so track how many did not make it across.
   let failedVariationCount = 0;
+  let followupFailed = false;
+  let createdProductId: number | null = null;
+  let newSession: ProductEditorSession | null = null;
+  let writer: ProductEditorClient = apiClient;
   try {
     // Get the original product with all relations
     const originalProduct = await getProduct(productId, {
@@ -85,9 +90,15 @@ export const duplicateProduct = async (productId: string) => {
     const response = await apiClient.post<StrapiItem<ProductAttributes>>(
       ENDPOINTS.PRODUCT.PRODUCT,
       { data: duplicateData },
+      { retries: 0 },
     );
 
     const newProductId = response.data.id;
+    createdProductId = newProductId;
+    newSession = new ProductEditorSession(newProductId, () => undefined);
+    await newSession.open(true);
+    if (newSession.state.phase !== "editing") throw new Error("Could not start duplicate product editing");
+    writer = newSession.client;
 
     // Clone the generic attribute configuration before variations so product-scoped
     // terms can be remapped to their new owner. Global definitions remain shared.
@@ -107,7 +118,7 @@ export const duplicateProduct = async (productId: string) => {
         const assignedTermIds: number[] = [];
 
         if (definitionData?.Scope === "Product") {
-          const createdDefinitionResponse = await apiClient.post<any>(
+          const createdDefinitionResponse = await writer.post<any>(
             "/product-attributes",
             {
               data: {
@@ -127,7 +138,7 @@ export const duplicateProduct = async (productId: string) => {
 
           for (const originalTerm of originalTerms) {
             const termData = originalTerm.attributes || originalTerm;
-            const createdTermResponse = await apiClient.post<any>(
+            const createdTermResponse = await writer.post<any>(
               "/product-attribute-terms",
               {
                 data: {
@@ -154,7 +165,7 @@ export const duplicateProduct = async (productId: string) => {
         }
 
         if (definitionId && assignedTermIds.length > 0) {
-          await apiClient.post<any>("/product-attribute-assignments", {
+          await writer.post<any>("/product-attribute-assignments", {
             data: {
               product: newProductId,
               product_attribute: definitionId,
@@ -167,6 +178,7 @@ export const duplicateProduct = async (productId: string) => {
         }
       }
     } catch (attributeError) {
+      followupFailed = true;
       console.warn(
         "Failed to duplicate generic product attributes:",
         attributeError,
@@ -234,7 +246,7 @@ export const duplicateProduct = async (productId: string) => {
             newVariationData.product_variation_model = productVariationModel;
           }
 
-          const newVariationResponse = await apiClient.post<any>(
+          const newVariationResponse = await writer.post<any>(
             `/product-variations`,
             { data: newVariationData },
           );
@@ -251,7 +263,7 @@ export const duplicateProduct = async (productId: string) => {
 
           // Duplicate stock with 0 count
           if (variationData.product_stock?.data) {
-            await apiClient.post<any>(`/product-stocks`, {
+            await writer.post<any>(`/product-stocks`, {
               data: {
                 Count: 0,
                 product_variation: newVariationId,
@@ -295,7 +307,7 @@ export const duplicateProduct = async (productId: string) => {
         const sizeHelperData = sizeHelperItem.attributes || sizeHelperItem;
 
         if (sizeHelperData?.Helper) {
-          await apiClient.post<any>(`/product-size-helpers`, {
+          await writer.post<any>(`/product-size-helpers`, {
             data: {
               product: newProductId,
               Helper: sizeHelperData.Helper,
@@ -303,6 +315,7 @@ export const duplicateProduct = async (productId: string) => {
           });
         }
       } catch (sizeHelperError: any) {
+        followupFailed = true;
         // Log error but don't fail the entire operation
         console.warn("Failed to duplicate size guide:", sizeHelperError);
       }
@@ -312,6 +325,8 @@ export const duplicateProduct = async (productId: string) => {
       toast.error(
         `محصول کپی شد اما ${failedVariationCount} تنوع منتقل نشد. پیش از انتشار، تنوع‌های محصول جدید را بررسی کنید.`,
       );
+    } else if (followupFailed) {
+      toast.error("نسخه محصول ساخته شد؛ ویژگی‌ها و راهنمای سایز آن را بررسی کنید");
     } else {
       toast.success("محصول با موفقیت کپی شد");
     }
@@ -320,12 +335,17 @@ export const duplicateProduct = async (productId: string) => {
       data: response.data,
       newProductId,
       failedVariationCount,
+      followupFailed,
     };
   } catch (error: any) {
+    if (createdProductId) {
+      toast.error("نسخه محصول ساخته شد؛ تکمیل اطلاعات آن انجام نشد");
+      return { success: true, newProductId: createdProductId, followupFailed: true, failedVariationCount };
+    }
     console.error("Product duplication error:", error);
     const errorMessage =
       error.response?.data?.error?.message || "خطا در کپی کردن محصول";
     toast.error(errorMessage);
     return { success: false, error };
-  }
+  } finally { if (newSession) { await newSession.release(); newSession.dispose(); } }
 };

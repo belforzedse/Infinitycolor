@@ -1,4 +1,4 @@
-import { apiClient } from "@/services";
+import { ProductEditorSession, type ProductEditorClient } from "./editor-session";
 
 /**
  * Simple products are modeled as a product with a single, attribute-less
@@ -18,15 +18,13 @@ type SimpleProductInput = {
   IsSimpleProduct?: boolean;
   SimpleVariationId?: number;
   SimpleStockId?: number;
+  SimpleStockRevision?: number;
   SimpleSKU?: string;
   SimplePrice?: number;
   SimpleDiscountPrice?: number | null;
   SimpleStock?: number;
   SimpleIsPublished?: boolean;
 };
-
-const readResponseId = (response: any): number | undefined =>
-  response?.data?.id ?? response?.id ?? response?.data?.data?.id;
 
 const normalizeStock = (value: unknown): number => {
   const parsed = Number(value ?? 0);
@@ -47,67 +45,26 @@ const buildSimpleSku = (productId: number, sku?: string): string => {
 export const syncSimpleProductVariation = async (
   productId: number,
   product: SimpleProductInput,
+  client?: ProductEditorClient,
 ) => {
-  if (product.ProductType !== "Simple" && product.IsSimpleProduct !== true)
-    return;
-
-  const variationPayload = {
-    SKU: buildSimpleSku(productId, product.SimpleSKU),
-    Price: normalizePrice(product.SimplePrice),
-    DiscountPrice:
-      product.SimpleDiscountPrice === undefined ||
-      product.SimpleDiscountPrice === null
-        ? null
-        : normalizePrice(product.SimpleDiscountPrice),
-    IsPublished: product.SimpleIsPublished !== false,
-  };
-
-  let variationId = product.SimpleVariationId;
-
-  if (variationId) {
-    await apiClient.put(`/product-variations/${variationId}`, {
-      data: variationPayload,
-    });
-  } else {
-    const variationResponse = await apiClient.post("/product-variations", {
-      data: { ...variationPayload, product: productId },
-    });
-    variationId = readResponseId(variationResponse);
-  }
-
-  if (!variationId) {
-    throw new Error("Could not resolve simple product variation id");
-  }
-
-  const stockPayload = {
-    Count: normalizeStock(product.SimpleStock),
-  };
-
-  if (product.SimpleStockId) {
-    await apiClient.put(`/product-stocks/${product.SimpleStockId}`, {
-      data: stockPayload,
-    });
-  } else {
-    await apiClient.post("/product-stocks", {
-      data: { ...stockPayload, product_variation: variationId },
-    });
-  }
-
-  const variationsResponse = await apiClient.get<any>(
-    `/product-variations?filters[product][id][$eq]=${productId}&pagination[pageSize]=1000`,
-    { cache: "no-store" },
-  );
-  const variations = Array.isArray(variationsResponse?.data)
-    ? variationsResponse.data
-    : [];
-
-  await Promise.all(
-    variations
-      .filter((variation: any) => variation.id !== variationId)
-      .map((variation: any) =>
-        apiClient.put(`/product-variations/${variation.id}`, {
-          data: { IsPublished: false },
-        }),
-      ),
-  );
+  if (product.ProductType !== "Simple" && product.IsSimpleProduct !== true) return;
+  const session = client ? null : new ProductEditorSession(productId, () => undefined);
+  try {
+    if (session) {
+      await session.open(true);
+      if (session.state.phase !== "editing") throw new Error("Could not start product editing");
+    }
+    const writer = client ?? session!.client;
+    await writer.put(`/products/${productId}/editor`, {
+      data: {},
+      simpleVariation: {
+        ...(product.SimpleVariationId ? { id: product.SimpleVariationId } : {}),
+        SKU: buildSimpleSku(productId, product.SimpleSKU),
+        Price: normalizePrice(product.SimplePrice),
+        DiscountPrice: product.SimpleDiscountPrice == null ? null : normalizePrice(product.SimpleDiscountPrice),
+        IsPublished: product.SimpleIsPublished !== false,
+        stock: { ...(product.SimpleStockId ? { id: product.SimpleStockId, expectedStockRevision: product.SimpleStockRevision } : {}), Count: normalizeStock(product.SimpleStock) },
+      },
+    }, { retries: 0 });
+  } finally { if (session) { await session.release(); session.dispose(); } }
 };

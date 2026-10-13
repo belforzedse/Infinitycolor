@@ -1,3 +1,4 @@
+import { effectiveOrderDeliveryAddress, effectiveOrderDeliveryAddresses } from "../../../utils/orderDeliverySnapshot";
 import { randomUUID } from "node:crypto";
 import type { Strapi } from "@strapi/strapi";
 import {
@@ -51,6 +52,7 @@ const SHARED_FIELDS = [
   "ShippingBoxSizeId",
 ] as const;
 const groupPopulate = {
+  rootOrder: { select: ["id"] },
   owner: { populate: { user_info: true } },
   shipping: true,
   delivery_address: { populate: { shipping_city: { populate: { shipping_province: true } } } },
@@ -178,6 +180,8 @@ async function loadParcel(strapi: Strapi, key: string | number): Promise<Parcel>
     populate: memberPopulate,
     orderBy: { id: "asc" },
   });
+  const rootOrderId = Number(group.rootOrder?.id || 0);
+  if (rootOrderId) group.delivery_address = await effectiveOrderDeliveryAddress(strapi, rootOrderId, group.delivery_address);
   return { group, members };
 }
 
@@ -194,7 +198,12 @@ export async function loadParcelSummaries(strapi: Strapi, groupIds: number[]) {
       orderBy: { id: "asc" },
     }),
   ]);
-  for (const group of groups)
+  const addresses = await effectiveOrderDeliveryAddresses(strapi, groups.filter((group: any) => group.rootOrder?.id).map((group: any) => ({
+    id: Number(group.rootOrder.id), delivery_address: group.delivery_address,
+  })));
+  for (const group of groups) {
+    const rootOrderId = Number(group.rootOrder?.id || 0);
+    if (rootOrderId) group.delivery_address = addresses.get(rootOrderId);
     summaries.set(
       Number(group.id),
       parcelSummary({
@@ -204,6 +213,7 @@ export async function loadParcelSummaries(strapi: Strapi, groupIds: number[]) {
         ),
       }),
     );
+  }
   return summaries;
 }
 

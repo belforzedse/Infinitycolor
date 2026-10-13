@@ -17,10 +17,8 @@ import type {
 } from "@/components/SuperAdmin/Table/bulkActions";
 import { useCan } from "@/hooks/useCan";
 import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
-import { apiClient } from "@/services";
-import { runBulkAction } from "@/lib/bulkActions";
+import { updateBulkProductStock } from "@/services/super-admin/product/bulk-stock";
 import { faNum } from "@/utils/faNum";
-import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { listAdminProducts } from "@/services/super-admin/product/list";
 import PermanentDeleteDialog from "./PermanentDeleteDialog";
 import ProductListToolbar from "./ProductListToolbar";
@@ -288,32 +286,28 @@ export default function ProductsLifecycleView() {
           variation,
         })),
       );
-      const result = await runBulkAction(variations, {
-        skip: ({ variation }) =>
-          variation.attributes.product_stock?.data?.id
-            ? null
-            : "این تنوع رکورد موجودی ندارد",
-        execute: ({ variation }) =>
-          apiClient.put(
-            `/product-stocks/${variation.attributes.product_stock!.data!.id}`,
-            {
-              data: { Count: count },
-            },
-          ),
-        describeError: (error) =>
-          getUserFacingErrorMessage(error, "دلیل نامشخص"),
-        messages: {
-          progress: (total) =>
-            `در حال به‌روزرسانی موجودی ${faNum(total)} تنوع...`,
-          success: (ok) => `موجودی ${faNum(ok)} تنوع به‌روزرسانی شد`,
-          failure: (failed, reasons) =>
-            `موجودی ${faNum(failed)} تنوع تغییر نکرد. ${reasons.join("؛ ")}`,
-          skipped: (skipped) => `${faNum(skipped)} تنوع رکورد موجودی نداشت.`,
-          allSkipped: () =>
-            "هیچ‌کدام از تنوع‌های انتخاب‌شده رکورد موجودی ندارند.",
-        },
+      const items = variations.flatMap(({ variation }) => {
+        const stock = variation.attributes.product_stock?.data;
+        return stock && Number.isSafeInteger(stock.attributes.StockRevision)
+          ? [{ stockId: stock.id, Count: count, expectedStockRevision: stock.attributes.StockRevision! }]
+          : [];
       });
-      if (result.succeeded.length > 0) refreshAll();
+      if (!items.length) { toast.error("اطلاعات موجودی دریافت نشد؛ فهرست را دوباره بارگذاری کنید"); return; }
+      const progress = toast.loading("در حال ذخیره موجودی...");
+      try {
+        const results = await updateBulkProductStock(items);
+        const succeeded = results.filter((item) => item.success).length;
+        const failed = results.filter((item) => !item.success);
+        if (succeeded) { toast.success(`موجودی ${faNum(succeeded)} تنوع ذخیره شد`); refreshAll(); }
+        if (failed.length) {
+          const busy = failed.some((item) => item.errorCode === "EDIT_LEASE_CONFLICT");
+          toast.error(busy ? "موجودی بعضی محصولات تغییر نکرد؛ محصول در حال ویرایش است" : "موجودی بعضی تنوع‌ها تغییر کرده است؛ فهرست را دوباره بارگذاری کنید");
+        }
+        if (items.length < variations.length) toast.error("اطلاعات موجودی بعضی تنوع‌ها دریافت نشده است");
+      } catch {
+        toast.error("نتیجه ذخیره موجودی تأیید نشد؛ فهرست را دوباره بارگذاری کنید");
+      } finally { toast.dismiss(progress); }
+
     },
     [refreshAll],
   );

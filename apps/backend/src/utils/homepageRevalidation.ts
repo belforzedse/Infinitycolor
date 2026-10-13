@@ -1,3 +1,4 @@
+import { afterCatalogCommit } from "./catalogEdit";
 import { triggerFrontendRevalidation } from "./revalidate";
 
 type RevalidationMetadata = Record<string, unknown>;
@@ -48,5 +49,8 @@ export function scheduleHomeProductsRevalidation(
     return;
   }
 
-  run();
+  const runtime = (globalThis as any).strapi;
+  if (runtime) {
+    void afterCatalogCommit(runtime, async () => { run(); }).catch((error) => runtime.log?.error("Homepage commit effect failed", { name: error.name }));
+  } else run();
 }

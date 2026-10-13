@@ -1,3 +1,5 @@
+import { loadOrderSnapshotRecipientNames } from "../../../utils/orderDeliverySnapshot";
+import { parseDeliverySearch, deliverySearchCondition } from "../lib/delivery-search";
 import { sanitize } from "@strapi/utils";
 import {
   adminPagination,
@@ -113,7 +115,11 @@ async function parseOrderListCriteria(
   const shippingMethodCodes = parseShippingMethodCodes(ctx, body.shippingMethodCodes);
   if (!shippingMethodCodes) return null;
 
+  const delivery = parseDeliverySearch(ctx, body);
+  if (!delivery) return null;
   const conditions: Record<string, unknown>[] = [...filters];
+  const deliveryCondition = deliverySearchCondition(Object.keys(delivery).length ? strapi.db.connection : null, delivery);
+  if (deliveryCondition) conditions.push(deliveryCondition);
   if (shippingMethodCodes.length > 0) {
     conditions.push({
       $or: [
@@ -145,7 +151,7 @@ function recipientNameFromAddress(
   return name || null;
 }
 
-function projectOrder(order: any) {
+function projectOrder(order: any, snapshotRecipient?: string | null) {
   const user = order.user;
   const userInfo = user?.user_info;
   const contract = order.contract;
@@ -159,7 +165,7 @@ function projectOrder(order: any) {
       ShippingMethodCode: order.ShippingMethodCode ?? null,
       ShippingBarcode: order.ShippingBarcode ?? null,
       // Fulfilment identity: the name on the parcel, not the account profile.
-      recipientName: recipientNameFromAddress(order.delivery_address),
+      recipientName: snapshotRecipient === undefined ? recipientNameFromAddress(order.delivery_address) : snapshotRecipient,
       ShippingWeight: order.ShippingWeight ?? null,
       ShippingBoxSizeId: order.ShippingBoxSizeId ?? null,
       AnipoBarcodeState: order.AnipoBarcodeState ?? null,
@@ -599,7 +605,8 @@ export default {
     // those relations and the list rendered orders without names or amounts.
     // The select/populate above plus projectOrder() already bound the payload.
     const sanitizedRows = await sanitize.contentAPI.output(rows, schema);
-    const data = (sanitizedRows as any[]).map(projectOrder);
+    const recipientNames = await loadOrderSnapshotRecipientNames(strapi, (rows as any[]).map((row) => Number(row.id)));
+    const data = (sanitizedRows as any[]).map((row) => projectOrder(row, recipientNames.get(Number(row.id))));
     const { loadParcelSummaries } = await import("../../order/services/anipoReserveParcel");
     const parcels = await loadParcelSummaries(strapi, (rows as any[]).map((row) => Number(row.reserve_shipment?.id || 0)));
     for (let index = 0; index < data.length; index += 1) {

@@ -184,6 +184,7 @@ export type SuperAdminSettings = {
   homeHeroSliderDraft: HeroSliderPayload;
   homeHeroSliderPublished: HeroSliderPayload;
   homeHeroSliderMeta: HeroSliderMeta | null;
+  HomepageProductsRevision: number;
   homeNewestProductIds: number[];
   homeFavoriteProductIds: number[];
   homeDiscountedProductIds: number[];
@@ -278,6 +279,7 @@ export const defaultSettings = (): SuperAdminSettings => ({
   homeHeroSliderDraft: createDefaultHeroSliderPayload(),
   homeHeroSliderPublished: createDefaultHeroSliderPayload(),
   homeHeroSliderMeta: null,
+  HomepageProductsRevision: 0,
   homeNewestProductIds: [],
   homeFavoriteProductIds: [],
   homeDiscountedProductIds: [],
@@ -392,6 +394,7 @@ export const normalizeSuperAdminSettings = (
   homeHeroSliderDraft: normalizeHeroSliderPayload(data?.homeHeroSliderDraft),
   homeHeroSliderPublished: normalizeHeroSliderPayload(data?.homeHeroSliderPublished),
   homeHeroSliderMeta: normalizeHeroSliderMeta(data?.homeHeroSliderMeta),
+  HomepageProductsRevision: normalizeNumber(data?.HomepageProductsRevision, 0),
   homeNewestProductIds: normalizeHomepageProductIds(data?.homeNewestProductIds),
   homeFavoriteProductIds: normalizeHomepageProductIds(data?.homeFavoriteProductIds),
   homeDiscountedProductIds: normalizeHomepageProductIds(data?.homeDiscountedProductIds),

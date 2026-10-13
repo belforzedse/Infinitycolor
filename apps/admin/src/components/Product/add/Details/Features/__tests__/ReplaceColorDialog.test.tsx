@@ -70,7 +70,7 @@ describe("ReplaceColorDialog", () => {
     expect(applyButton()).toBeDisabled();
     await pickBlue();
 
-    expect(mockReplaceProductColor).toHaveBeenNthCalledWith(1, 5, 1, { toColorId: 2 }, { dryRun: true });
+    expect(mockReplaceProductColor).toHaveBeenNthCalledWith(1, 5, 1, { toColorId: 2 }, { dryRun: true }, expect.anything());
     expect(await screen.findByText(/2 تنوع به رنگ «آبی» منتقل می‌شود/)).toBeInTheDocument();
 
     await userEvent.click(applyButton());
@@ -78,7 +78,7 @@ describe("ReplaceColorDialog", () => {
     await waitFor(() =>
       expect(mockReplaceProductColor).toHaveBeenNthCalledWith(2, 5, 1, { toColorId: 2 }, {
         removeEmptyDrafts: false,
-      }),
+      }, expect.anything()),
     );
     expect(onReplaced).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
@@ -98,7 +98,7 @@ describe("ReplaceColorDialog", () => {
     await waitFor(() =>
       expect(mockReplaceProductColor).toHaveBeenLastCalledWith(5, 1, { toColorId: 2 }, {
         removeEmptyDrafts: true,
-      }),
+      }, expect.anything()),
     );
   });
 
@@ -148,6 +148,7 @@ describe("ReplaceColorDialog", () => {
         1,
         { newColor: { title: "قرمز", colorCode: "#e0115f" } },
         { dryRun: true },
+        expect.anything(),
       ),
     );
     expect(await screen.findByText("رنگ «قرمز» به فهرست رنگ‌ها افزوده می‌شود.")).toBeInTheDocument();

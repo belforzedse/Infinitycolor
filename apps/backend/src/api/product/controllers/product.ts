@@ -4,6 +4,9 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { validateProductOwnedRelations } from "../../../utils/catalogOwnership";
+import { productEditorActions, saveProductEditor } from "./product-editor";
+import { afterCatalogCommit } from "../../../utils/catalogEdit";
 import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import {
   buildCacheKey,
@@ -92,6 +95,7 @@ const OPERATIONAL_PRODUCT_FIELDS = [
 
 const PUBLICATION_CONTROL_FIELDS = new Set([
   "Status",
+  "EditRevision",
   "scheduledPublishAt",
   "scheduledPublishTimezone",
   "scheduledPublishRequireMedia",
@@ -712,6 +716,14 @@ async function runSingleLifecycleCommand(
 }
 
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
+  ...productEditorActions(strapi),
+  async editor(ctx) {
+    await validateProductOwnedRelations(strapi, Number(ctx.params.id), ctx.request?.body?.data || {});
+    if (rejectPublicationFields(ctx) || rejectLifecycleFields(ctx)) return;
+    if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
+    if (await rejectInvalidManualSlug(ctx, strapi)) return;
+    return saveProductEditor(ctx, strapi, () => super.update(ctx));
+  },
   async create(ctx) {
     discardLegacyDraftStatusOnCreate(ctx);
     if (rejectPublicationFields(ctx)) return;
@@ -720,10 +732,16 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     if (await rejectInvalidManualSlug(ctx, strapi)) return;
     ctx.request.body = ctx.request.body || {};
     ctx.request.body.data = { ...(ctx.request.body.data || {}), Status: "InActive" };
-    return super.create(ctx);
+    // Keep attachment locks through creation so deletion/replacement cannot
+    // race with the new product's media associations.
+    return strapi.db.transaction(async () => {
+      await validateProductOwnedRelations(strapi, null, ctx.request.body.data);
+      return super.create(ctx);
+    });
   },
 
   async update(ctx) {
+    await validateProductOwnedRelations(strapi, Number(ctx.params.id), ctx.request?.body?.data || {});
     if (rejectPublicationFields(ctx)) return;
     if (rejectLifecycleFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
@@ -818,7 +836,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         action,
         ids,
         { origin: "admin", actor: http.actor },
-        { publishAt: body.publishAt, timezone: body.timezone },
+        { publishAt: body.publishAt, timezone: body.timezone, undoToken: body.undoToken, canPublish: http.capabilities.includes("product.publish"), canSchedule: http.capabilities.includes("product.schedule") },
       );
       ctx.set("Cache-Control", "private, no-store");
       ctx.body = { data: result };
@@ -1038,37 +1056,41 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         actor,
       });
       let queueState = "not-required";
-
-      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) {
-        try {
-          await enqueueScheduledProductPublication({
-            productId,
-            scheduleRevision: result.scheduleRevision,
-            expectedPublishAt: result.scheduledPublishAt,
-            auditContext: result.auditJobContext,
-          });
-          queueState = "queued";
-        } catch (error) {
-          queueState = "pending-reconciliation";
-          strapi.log.error("[product-publication] delayed job enqueue failed", {
-            productId,
-            scheduleRevision: result.scheduleRevision,
-            error: error instanceof Error ? error.message : String(error),
-          });
+      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) queueState = "pending-reconciliation";
+      await afterCatalogCommit(strapi, async () => {
+        if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) {
+          try {
+            await enqueueScheduledProductPublication({
+              productId,
+              scheduleRevision: result.scheduleRevision,
+              expectedPublishAt: result.scheduledPublishAt,
+              auditContext: result.auditJobContext,
+            });
+            queueState = "queued";
+          } catch (error) {
+            queueState = "pending-reconciliation";
+            strapi.log.error("[product-publication] delayed job enqueue failed", {
+              productId,
+              scheduleRevision: result.scheduleRevision,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
-      }
 
-      if (result.previousScheduleRevision) {
-        await removeScheduledProductPublication(productId, result.previousScheduleRevision);
-      }
-
-      if (result.needsPublicationEffects) {
-        try {
-          await runPublicationEffects(strapi, productId, result.publicationRevision);
-        } catch {
-          queueState = "pending-reconciliation";
+        if (result.previousScheduleRevision) {
+          try { await removeScheduledProductPublication(productId, result.previousScheduleRevision); }
+          catch { queueState = "pending-reconciliation"; }
         }
-      }
+
+        if (result.needsPublicationEffects) {
+          try {
+            await runPublicationEffects(strapi, productId, result.publicationRevision);
+          } catch {
+            queueState = "pending-reconciliation";
+          }
+        }
+        if (ctx.body?.data?.id === result.productId) ctx.body.data.queueState = queueState;
+      });
 
       ctx.body = {
         data: {

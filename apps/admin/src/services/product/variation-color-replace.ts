@@ -1,4 +1,5 @@
 import { apiClient } from "@/services";
+import type { ProductEditorClient } from "@/services/super-admin/product/editor-session";
 
 /**
  * Re-points a product's variations from one colour to another in place, via
@@ -42,8 +43,9 @@ export async function replaceProductColor(
   fromColorId: number,
   target: ColorReplaceTarget,
   options: { dryRun?: boolean; removeEmptyDrafts?: boolean } = {},
+  client: ProductEditorClient = apiClient,
 ): Promise<ColorReplaceResult> {
-  const response = await apiClient.post<ColorReplaceResult>(
+  const response = await client.post<ColorReplaceResult>(
     `/products/${productId}/variation-colors/replace`,
     {
       fromColorId,
@@ -51,6 +53,7 @@ export async function replaceProductColor(
       dryRun: options.dryRun === true,
       removeEmptyDrafts: options.removeEmptyDrafts === true,
     },
+    { retries: 0 },
   );
   return response.data;
 }

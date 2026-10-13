@@ -1,3 +1,5 @@
+jest.mock("../../../utils/orderDeliverySnapshot", () => ({ captureOrderDeliverySnapshot: jest.fn(async () => undefined) }));
+import { captureOrderDeliverySnapshot } from "../../../utils/orderDeliverySnapshot";
 import {
   canonicalIranPhone,
   exactNonNegativeInteger,
@@ -9,6 +11,7 @@ import {
 } from "../services/wordpress-migration";
 
 describe("WordPress migration write service", () => {
+  beforeEach(() => jest.clearAllMocks());
   test("normalizes Iranian phones and exact big integers", () => {
     expect(canonicalIranPhone("۰۹۱۲ ۳۴۵ ۶۷۸۹")).toBe("+989123456789");
     expect(canonicalIranPhone("invalid")).toBeNull();
@@ -495,6 +498,7 @@ describe("WordPress migration write service", () => {
       ],
     });
 
+    expect(captureOrderDeliverySnapshot).toHaveBeenCalledWith(strapiMock, 101, undefined, trx, "woocommerce");
     expect(result).toEqual(expect.objectContaining({
       mode: "created",
       itemsCreated: 2,
@@ -566,6 +570,7 @@ describe("WordPress migration write service", () => {
       items: [{ sourceId: "1", variationSourceId: "4", count: 1, unitPriceToman: "12694000", title: "کالا", sku: "A" }],
     });
 
+    expect(captureOrderDeliverySnapshot).not.toHaveBeenCalled();
     expect(result).toEqual(expect.objectContaining({
       mode: "updated",
       settlementsCreated: 1,

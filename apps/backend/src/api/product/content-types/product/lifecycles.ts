@@ -1,3 +1,4 @@
+import { afterCatalogCommit } from "../../../../utils/catalogEdit";
 import { resolveAuditActor } from "../../../../utils/audit";
 import {
   recordAdminAudit,
@@ -73,7 +74,7 @@ const PRODUCT_DIFF_SNAPSHOT_SPEC = {
  * cache with its own bearer token.
  */
 async function triggerProductRevalidation(slug: string) {
-  await triggerFrontendRevalidation({ path: slug, type: "product" }, "Product Lifecycle");
+  await afterCatalogCommit(strapi, () => triggerFrontendRevalidation({ path: slug, type: "product" }, "Product Lifecycle"));
 }
 
 /**
@@ -85,6 +86,10 @@ async function triggerProductRevalidation(slug: string) {
  * job ids so attaching a new clip after an earlier job finished still queues.
  */
 async function enqueueProductVideoNormalization(productId: number) {
+  await afterCatalogCommit(strapi, () => enqueueProductVideoNormalizationCommitted(productId));
+}
+
+async function enqueueProductVideoNormalizationCommitted(productId: number) {
   try {
     const product = await strapi.entityService.findOne("api::product.product", productId, {
       fields: ["id"],

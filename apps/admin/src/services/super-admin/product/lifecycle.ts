@@ -39,17 +39,13 @@ export type BulkLifecycleResponse = {
   unchanged: number[];
   failed: Array<{ id: number; code: string }>;
   warnings: Array<{ id: number; warnings: RestoreWarning[] }>;
+  results?: Array<{ productId: number; changed: boolean; state: ProductLifecycleState; status: "Active" | "InActive" | "Scheduled"; removedAt: string | null; previousStatus: "Active" | "InActive" | "Scheduled" | null; warnings: RestoreWarning[] }>;
 };
 
 const COMMAND_OPTIONS = { retries: 0, timeout: 20_000 } as const;
 
 export async function moveProductToTrash(productId: string | number): Promise<ProductLifecycleResponse> {
-  const response = await apiClient.post<ProductLifecycleResponse>(
-    `/products/${productId}/soft-delete`,
-    {},
-    COMMAND_OPTIONS,
-  );
-  return response.data as ProductLifecycleResponse;
+  return runSingleLifecycle("trash", productId);
 }
 
 /** Restores to draft. With the token from Move to Trash it is the bounded Undo. */
@@ -57,23 +53,21 @@ export async function restoreProductFromTrash(
   productId: string | number,
   undoToken?: string | null,
 ): Promise<ProductLifecycleResponse> {
-  const response = await apiClient.post<ProductLifecycleResponse>(
-    `/products/${productId}/restore`,
-    undoToken ? { data: { undoToken } } : {},
-    COMMAND_OPTIONS,
-  );
-  return response.data as ProductLifecycleResponse;
+  return runSingleLifecycle("restore", productId, undoToken);
 }
 
 export async function permanentlyDeleteProduct(
   productId: string | number,
 ): Promise<ProductLifecycleResponse> {
-  const response = await apiClient.post<ProductLifecycleResponse>(
-    `/products/${productId}/permanent-delete`,
-    {},
-    COMMAND_OPTIONS,
-  );
-  return response.data as ProductLifecycleResponse;
+  return runSingleLifecycle("purge", productId);
+}
+
+async function runSingleLifecycle(action: BulkLifecycleAction, id: string | number, undoToken?: string | null): Promise<ProductLifecycleResponse> {
+  const bulk = await runBulkProductLifecycle({ action, ids: [id], undoToken });
+  if (bulk.failed.length) throw { errorCode: bulk.failed[0].code };
+  const result = bulk.results?.find((item) => item.productId === Number(id));
+  if (!result) throw { errorCode: "LIFECYCLE_RESULT_UNCERTAIN" };
+  return { id: result.productId, state: result.state, Status: result.status, removedAt: result.removedAt, previousStatus: result.previousStatus, warnings: result.warnings, unchanged: !result.changed };
 }
 
 export async function runBulkProductLifecycle(input: {
@@ -81,6 +75,7 @@ export async function runBulkProductLifecycle(input: {
   ids: Array<string | number>;
   publishAt?: string;
   timezone?: string;
+  undoToken?: string | null;
 }): Promise<BulkLifecycleResponse> {
   const response = await apiClient.post<BulkLifecycleResponse>(
     "/products/lifecycle/bulk",
@@ -88,6 +83,7 @@ export async function runBulkProductLifecycle(input: {
       data: {
         action: input.action,
         ids: input.ids.map(Number),
+        ...(input.undoToken ? { undoToken: input.undoToken } : {}),
         ...(input.publishAt ? { publishAt: input.publishAt, timezone: input.timezone } : {}),
       },
     },

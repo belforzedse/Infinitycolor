@@ -2,6 +2,8 @@ import DeleteIcon from "@/components/Kits/Icons/DeleteIcon";
 import React, { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { apiClient } from "@/services";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
+import ProductEditorFields from "@/components/Product/add/ProductEditorFields";
 import toast from "react-hot-toast";
 import { HexColorPicker, HexColorInput } from "react-colorful";
 import { Pencil } from "lucide-react";
@@ -179,7 +181,10 @@ export const FeaturesTable = ({
   onVariationsGenerated,
   axesRefreshKey = 0,
 }: FeaturesTableProps) => {
-  const [features, setFeatures] = useState<FeatureGroup>({
+  const { session, client: productClient, canEdit } = useProductEditor();
+  const restored = session?.drafts.get("features") as { data?: FeatureGroup; colorModal?: { isOpen: boolean; name: string; colorCode: string; noColor: boolean } } | undefined;
+  const restoredAtMount = useRef(Boolean(restored?.data));
+  const [features, setFeatures] = useState<FeatureGroup>(restored?.data ?? {
     colors: [],
     sizes: [],
     models: [],
@@ -238,7 +243,7 @@ export const FeaturesTable = ({
       return next;
     });
   };
-  const [colorModal, setColorModal] = useState({
+  const [colorModal, setColorModal] = useState(restored?.colorModal ?? {
     isOpen: false,
     name: "",
     colorCode: "#000000",
@@ -250,10 +255,14 @@ export const FeaturesTable = ({
     models: false,
   });
 
+  useEffect(() => {
+    session?.drafts.set("features", { data: features, colorModal, dirty: [...features.colors, ...features.sizes, ...features.models].some((item) => !item.persisted) || Boolean(colorModal.name.trim()) });
+  }, [session, features, colorModal]);
   const createAttributeOption = async (
     type: "colors" | "sizes" | "models",
     payload: { Title: string; ColorCode?: string },
   ) => {
+    if (!canEdit) return null;
     const title = payload.Title?.trim();
     if (!title) {
       toast.error("نام ویژگی نمی‌تواند خالی باشد");
@@ -267,6 +276,7 @@ export const FeaturesTable = ({
         {
           data: payload,
         },
+        { retries: 0 },
       );
       const created = response.data;
 
@@ -514,6 +524,7 @@ export const FeaturesTable = ({
   // Independent, so one failing endpoint no longer blanks the whole editor.
   useEffect(() => {
     void loadGenericAttributeDefinitions();
+    if (restoredAtMount.current) return;
     void loadProductAssignments();
     void loadExistingVariationAxes();
   }, [
@@ -597,7 +608,7 @@ export const FeaturesTable = ({
   ) => {
     markAssignmentSaving(group.assignmentId, true);
     try {
-      await apiClient.put(
+      await productClient.put(
         `${ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS}/${group.assignmentId}`,
         { data: { terms: nextTerms.map((term) => Number(term.id)) } },
       );
@@ -672,7 +683,7 @@ export const FeaturesTable = ({
 
     setIsAddingAssignment(true);
     try {
-      const response = await apiClient.post<{ id: number }>(
+      const response = await productClient.post<{ id: number }>(
         ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS,
         {
           data: {
@@ -725,7 +736,7 @@ export const FeaturesTable = ({
   const removeGenericAssignment = async (assignmentId: number) => {
     markAssignmentSaving(assignmentId, true);
     try {
-      await apiClient.delete(
+      await productClient.delete(
         `${ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS}/${assignmentId}`,
       );
       setFeatures((prev) => ({
@@ -791,7 +802,7 @@ export const FeaturesTable = ({
         return;
       }
 
-      const response = await apiClient.post<any>(
+      const response = await productClient.post<any>(
         `/products/${productId}/variation-combinations`,
         {
           axes,
@@ -1174,6 +1185,7 @@ export const FeaturesTable = ({
                 leaveTo="opacity-0 scale-95"
               >
                 <Dialog.Panel className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+                  <ProductEditorFields>
                   <Dialog.Title className="text-lg font-medium text-neutral-900">
                     افزودن رنگ جدید
                   </Dialog.Title>
@@ -1352,6 +1364,7 @@ export const FeaturesTable = ({
                       ذخیره رنگ
                     </button>
                   </div>
+                  </ProductEditorFields>
                 </Dialog.Panel>
               </Transition.Child>
             </div>

@@ -44,7 +44,7 @@ export type AdminProductRow = {
           Price: string | null;
           DiscountPrice?: string | null;
           product_stock: {
-            data: { id: number; attributes: { Count: number } } | null;
+            data: { id: number; attributes: { Count: number; StockRevision?: number } } | null;
           };
         };
       }>;

@@ -1,4 +1,8 @@
 import { initializeBackendSentry } from "./utils/sentry-initialization";
+import { registerCatalogInteractiveAssertions } from "./utils/catalogOwnership";
+import { afterCatalogCommit } from "./utils/catalogEdit";
+import { ensureCatalogEditStorage } from "./utils/catalogEditStorage";
+import { ensureOrderSearchStorage } from "./utils/orderDeliverySnapshot";
 import bcrypt from "bcryptjs";
 import { createClient } from "redis";
 import type { Strapi } from "@strapi/strapi";
@@ -96,7 +100,7 @@ const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // the route — same U&P-grant omission pattern as admin-product-list above:
   // every non-superadmin role 403'd at Strapi's RBAC layer despite passing
   // the capability policy, so only superadmin could preview products.
-  "api::product": { product: [...READ_ACTIONS, "search", "createPreviewDraft"] },
+  "api::product": { product: [...READ_ACTIONS, "search", "createPreviewDraft", "editLease", "editSnapshot"] },
   "api::product-faq": { "product-faq": READ_ACTIONS },
   "api::product-size-helper": { "product-size-helper": READ_ACTIONS },
   "api::product-tag": { "product-tag": READ_ACTIONS },
@@ -159,7 +163,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "product.read": PRODUCT_READ_GRANTS,
   "product.create": { "api::product": { product: ["create"] } },
-  "product.update": { "api::product": { product: ["update"] } },
+  "product.update": { "api::product": { product: ["update", "editor", "editAcquire", "editRenew", "editTakeover", "editRelease"] } },
   // `bulkLifecycle` is one route for every lifecycle action; the controller
   // checks the capability of the action requested, so each capability that owns
   // a bulk action must also grant the route.
@@ -169,6 +173,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "product.stock.update": {
     "api::product-stock": { "product-stock": CREATE_UPDATE_ACTIONS },
+    "api::product": { product: ["editorBulkStock"] },
   },
   "product.media.manage": {
     // Catalog media picker (POST /admin/media-library/query). The capability policy alone
@@ -177,7 +182,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
   "product.variation.manage": {
-    "api::product": { product: ["generateVariationCombinations", "replaceVariationColor"] },
+    "api::product": { product: ["generateVariationCombinations", "replaceVariationColor", "editorVariation"] },
     "api::product-variation": { "product-variation": CREATE_UPDATE_ACTIONS },
     "api::product-variation-color": { "product-variation-color": CREATE_UPDATE_ACTIONS },
     "api::product-variation-size": { "product-variation-size": CREATE_UPDATE_ACTIONS },
@@ -225,6 +230,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
         "updateHomepageCustomSection",
       ],
     },
+    "api::product": { product: ["editorHomepage"] },
   },
   "category.read": { "api::product-category": { "product-category": READ_ACTIONS } },
   "category.create": { "api::product-category": { "product-category": ["create"] } },
@@ -1410,6 +1416,8 @@ export default {
       // The schema sync above dropped any index its models do not declare, and
       // these repairs put them back; one process at a time (bootstrap/bootLock.ts).
       await withBootLock(strapi, "the database invariants", async () => {
+        await ensureCatalogEditStorage(strapi);
+        await ensureOrderSearchStorage(strapi);
         const auditStorage = await ensureAuditEventStorage(strapi);
         if (auditStorage.repaired) {
           strapi.log.info("Canonical audit storage protections installed after schema sync");
@@ -1461,6 +1469,7 @@ export default {
         skipped: legacyBackfill.skipped,
       });
     }
+    registerCatalogInteractiveAssertions(strapi);
     registerAppLifecycles(strapi);
     strapi.db.lifecycles.subscribe(productLifeCycles);
     strapi.db.lifecycles.subscribe(productVariationLifeCycles);
@@ -1508,16 +1517,16 @@ export default {
         strapi.db.lifecycles.subscribe({
           models: [uid],
           async afterCreate() {
-            await cacheStore.clearByUid(uid, {}, true);
+            await afterCatalogCommit(strapi, () => cacheStore.clearByUid(uid, {}, true));
           },
           async afterUpdate(event: any) {
             if (isCounterOnlyUpdate(uid, event?.params?.data)) {
               return;
             }
-            await cacheStore.clearByUid(uid, {}, true);
+            await afterCatalogCommit(strapi, () => cacheStore.clearByUid(uid, {}, true));
           },
           async afterDelete() {
-            await cacheStore.clearByUid(uid, {}, true);
+            await afterCatalogCommit(strapi, () => cacheStore.clearByUid(uid, {}, true));
           },
         });
       }
