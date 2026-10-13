@@ -167,24 +167,63 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     if (window.location.pathname === "/auth/complete") return;
 
     let active = true;
+    let requestSequence = 0;
+    let needsRecovery = false;
+    let recoveryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const retryDelays = [1_000, 3_000, 8_000];
+    const clearRetry = () => {
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
     const updateLoginState = async (forceRefresh = false) => {
+      clearRetry();
+      needsRecovery = false;
+      const sequence = ++requestSequence;
       const requestGeneration = cartInitGenerationRef.current;
       const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh });
-      if (active && requestGeneration === cartInitGenerationRef.current)
-        setAuthRecoveryUnavailable(outcome.state === "unavailable");
       if (
-        active &&
-        requestGeneration === cartInitGenerationRef.current &&
-        (outcome.state === "authenticated" || outcome.state === "unauthenticated")
-      ) {
+        !active ||
+        sequence !== requestSequence ||
+        requestGeneration !== cartInitGenerationRef.current
+      )
+        return;
+      needsRecovery = outcome.state === "unavailable";
+      setAuthRecoveryUnavailable(needsRecovery);
+      if (needsRecovery && recoveryAttempt < retryDelays.length) {
+        // A failed initial session check must not lock every PDP until reload.
+        // Retry only this read, with a bounded backoff; never replay cart writes
+        // or treat an unknown account as a guest.
+        const delay = retryDelays[recoveryAttempt++];
+        retryTimer = setTimeout(() => {
+          if (document.visibilityState === "hidden" || navigator.onLine === false) return;
+          void updateLoginState(true);
+        }, delay);
+      }
+      if (outcome.state === "authenticated" || outcome.state === "unauthenticated") {
+        recoveryAttempt = 0;
         setIsLoggedIn(outcome.state === "authenticated");
         if (forceRefresh) setSessionGeneration((generation) => generation + 1);
       }
     };
+    const recoverWhenVisible = () => {
+      if (!needsRecovery || document.visibilityState === "hidden" || navigator.onLine === false)
+        return;
+      recoveryAttempt = 0;
+      void updateLoginState(true);
+    };
     void updateLoginState(authRetry > 0);
+    window.addEventListener("online", recoverWhenVisible);
+    window.addEventListener("focus", recoverWhenVisible);
+    document.addEventListener("visibilitychange", recoverWhenVisible);
     const unsubscribe = subscribeToAuthState((event) => {
+      clearRetry();
+      needsRecovery = false;
+      recoveryAttempt = 0;
+      requestSequence += 1;
       cartInitGenerationRef.current += 1;
       if (event.type === "logout") {
+        setAuthRecoveryUnavailable(false);
         setIsLoggedIn(false);
         setSessionGeneration((generation) => generation + 1);
       } else {
@@ -196,6 +235,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     });
     return () => {
       active = false;
+      clearRetry();
+      window.removeEventListener("online", recoverWhenVisible);
+      window.removeEventListener("focus", recoverWhenVisible);
+      document.removeEventListener("visibilitychange", recoverWhenVisible);
       unsubscribe();
     };
   }, [authRetry]);
