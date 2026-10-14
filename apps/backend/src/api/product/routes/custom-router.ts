@@ -52,7 +52,9 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.softDelete")],
-        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
+        // The authorized lifecycle controller uses the same transient row lock
+        // as bulk commands, including idempotent tombstone transitions.
+        middlewares: [],
       },
     },
     {
@@ -62,7 +64,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.restore")],
-        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
+        middlewares: [],
       },
     },
     {
@@ -72,7 +74,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [capabilityPolicy("product.delete")],
-        middlewares: [{ name: "global::catalog-edit", config: { resource: "product" } }],
+        middlewares: [],
       },
     },
     {

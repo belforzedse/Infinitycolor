@@ -5,7 +5,7 @@ import {
   createRuntimeProductFixture,
   updateRuntimeVariationStock,
 } from "../../helpers/admin";
-import { apiGet, apiPut, expectApiOk, getProductVariationStock } from "../../helpers/api";
+import { apiGet, expectApiOk, getProductVariationStock } from "../../helpers/api";
 import { prepareStorefrontPage } from "../../helpers/page";
 
 async function waitForProductsListURLToSettle(page: Page) {
@@ -72,10 +72,14 @@ test.describe("super-admin product CRUD", () => {
     await expect(page).toHaveURL(editURLPattern);
 
     const updatedTitle = `${fixture.productTitle} Updated`;
-    const updateResponse = await apiPut(request, "admin", `/products/${fixture.productId}`, {
-      data: { Title: updatedTitle },
-    });
-    await expectApiOk(updateResponse, "update runtime product");
+    await expect(page.getByTestId("admin-product-save")).toBeEnabled();
+    await page.locator('input[name="name"]').fill(updatedTitle);
+    await page.getByTestId("admin-product-save").click();
+    await expect.poll(async () => {
+      const response = await apiGet(request, "admin", `/products/${fixture.productId}`);
+      await expectApiOk(response, "read updated runtime product");
+      return (await response.json()).data.attributes.Title;
+    }).toBe(updatedTitle);
 
     await page.goto("/products?pageSize=100", { waitUntil: "commit" });
     await waitForProductsListURLToSettle(page);

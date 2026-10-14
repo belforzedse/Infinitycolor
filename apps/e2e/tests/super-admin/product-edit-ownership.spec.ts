@@ -433,7 +433,7 @@ test("@admin @mock product takeover freezes the previous editor and retains all 
     const stale = await a.evaluate(
       async ({ id, proof }) => {
         const response = await fetch(
-          `http://127.0.0.1:4437/api/products/${id}/editor`,
+          `/api/backend/products/${id}/editor`,
           {
             method: "PUT",
             headers: {

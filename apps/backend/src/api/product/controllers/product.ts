@@ -6,7 +6,7 @@
 import { factories } from "@strapi/strapi";
 import { validateProductOwnedRelations } from "../../../utils/catalogOwnership";
 import { productEditorActions, saveProductEditor } from "./product-editor";
-import { afterCatalogCommit } from "../../../utils/catalogEdit";
+import { afterCatalogCommit, CatalogEditError, sendCatalogEditError } from "../../../utils/catalogEdit";
 import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import {
   buildCacheKey,
@@ -644,6 +644,10 @@ async function authorizeLifecycle(
 }
 
 function sendLifecycleError(ctx: any, strapi: any, error: unknown, label: string) {
+  if (error instanceof CatalogEditError) {
+    sendCatalogEditError(ctx, error);
+    return;
+  }
   if (error instanceof PublicationCommandError) {
     ctx.status = error.status;
     ctx.body = {

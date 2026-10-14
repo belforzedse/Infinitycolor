@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { resolveAdminActor, type AdminActor } from "./adminAuthorization";
+import { apiTokenCredentials, resolveAdminActor, type AdminActor } from "./adminAuthorization";
 import { resolveUserFullName } from "./userDisplayName";
 import { writeAuditEvent } from "../audit/writer";
 import { hasCapability } from "@repo/auth-core";
@@ -16,8 +16,8 @@ export type EditProof = { token: string; instanceId: string; generation: number;
 export type StaffEditor = { actor: AdminActor; sessionId: string };
 type Writer =
   | { kind: "human"; editor: StaffEditor; proof: EditProof }
-  | { kind: "transient"; editor: StaffEditor }
-  | { kind: "system"; command: "publication" | "scheduled-publication" | "catalog-import" | "catalog-lifecycle" | "category-reassignment" | "fixture" };
+  | { kind: "transient"; editor: StaffEditor; command?: "catalog-lifecycle" }
+  | { kind: "system"; command: "publication" | "scheduled-publication" | "catalog-import" | "catalog-lifecycle" | "catalog-initialization" | "category-reassignment" | "fixture" };
 type MutationContext = {
   ids: number[]; trx: any; writer: Writer; revisions: Map<number, number>; effects: Array<() => Promise<unknown>>;
 };
@@ -82,10 +82,10 @@ async function databaseNow(trx: any): Promise<Date> {
   return new Date(result.rows[0].now);
 }
 
-async function lockProduct(trx: any, id: number): Promise<any> {
+async function lockProduct(trx: any, id: number, allowPurged = false): Promise<any> {
   if (!Number.isSafeInteger(id) || id < 1) throw new CatalogEditError("PRODUCT_ID_INVALID", 400);
   const row = await trx("products").where({ id }).forUpdate().first();
-  if (!row || row.purged_at) throw new CatalogEditError("PRODUCT_NOT_FOUND", 404);
+  if (!row || (row.purged_at && !allowPurged)) throw new CatalogEditError("PRODUCT_NOT_FOUND", 404);
   return row;
 }
 
@@ -208,7 +208,10 @@ export async function runCatalogMutation<T>(strapi: any, ids: number[], writer: 
   let context: MutationContext;
   const value = await strapi.db.transaction(async ({ trx }: any) => {
     const rows = new Map<number, any>();
-    for (const id of productIds) rows.set(id, await lockProduct(trx, id));
+    // Lifecycle commands must reach the transition matrix for tombstones:
+    // repeated purge is a no-op, while restore reports PRODUCT_PURGED.
+    const allowPurged = writer.kind !== "human" && writer.command === "catalog-lifecycle";
+    for (const id of productIds) rows.set(id, await lockProduct(trx, id, allowPurged));
     if (writer.kind !== "system") await refreshEditor(strapi, writer.editor, writer.kind === "human");
     for (const id of productIds) {
       const row = await leaseRow(trx, id);
@@ -228,12 +231,12 @@ export async function runCatalogMutation<T>(strapi: any, ids: number[], writer: 
     context = { ids: productIds, trx, writer, revisions: new Map(), effects: [] };
     return mutationStorage.run(context, async () => {
       const result = await callback(trx);
-      const noSystemChange = writer.kind === "system" && result && typeof result === "object" && ((result as any).changed === false || ["stale", "not-due"].includes((result as any).outcome));
+      const noCatalogChange = (writer.kind === "system" || (writer.kind === "transient" && writer.command === "catalog-lifecycle")) && result && typeof result === "object" && ((result as any).changed === false || ["stale", "not-due"].includes((result as any).outcome));
       for (const id of productIds) {
-        const nextRevision = Number(rows.get(id).edit_revision || 0) + (noSystemChange ? 0 : 1);
-        if (!noSystemChange) await trx("products").where({ id }).update({ edit_revision: nextRevision });
+        const nextRevision = Number(rows.get(id).edit_revision || 0) + (noCatalogChange ? 0 : 1);
+        if (!noCatalogChange) await trx("products").where({ id }).update({ edit_revision: nextRevision });
         context.revisions.set(id, nextRevision);
-        if (writer.kind !== "system") await leaseAudit(strapi, trx, writer.editor, id, "products.edit_committed");
+        if (writer.kind !== "system" && !noCatalogChange) await leaseAudit(strapi, trx, writer.editor, id, "products.edit_committed");
       }
       if (finalize) await finalize(trx);
       return result;
@@ -264,8 +267,11 @@ export async function coordinateCatalogCommand<T>(strapi: any, productId: number
   }
   const request = strapi.requestContext?.get?.();
   if (origin === "admin" && request) {
+    // The entry controller has already validated the token's capability.
+    // Service credentials have no human session or browser edit lease.
+    if (apiTokenCredentials(request)) return runCatalogSystemMutation(strapi, [productId], command, callback);
     const editor = await staffEditor(request, strapi);
-    return (await runCatalogMutation(strapi, [productId], { kind: "transient", editor }, callback)).value;
+    return (await runCatalogMutation(strapi, [productId], { kind: "transient", editor, ...(command === "catalog-lifecycle" ? { command } : {}) }, callback)).value;
   }
   return runCatalogSystemMutation(strapi, [productId], command, callback);
 }

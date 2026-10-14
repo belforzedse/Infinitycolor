@@ -165,7 +165,7 @@ export default defineConfig({
             name: "admin",
             reuseExistingServer: !isCI,
             ...webServerOutput,
-            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
+            timeout: Number(process.env.E2E_ADMIN_SERVER_TIMEOUT_MS || process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
             env: {
               ...stringProcessEnvironment(),
               NEXT_PUBLIC_ADMIN_ENVIRONMENT: "e2e",
