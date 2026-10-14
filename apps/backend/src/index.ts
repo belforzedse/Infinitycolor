@@ -288,6 +288,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   "report.finance.read": {
     "api::report": { report: ["liquidity", "gatewayLiquidity"] },
   },
+  "report.excel.export": {
+    "api::report-export": { "report-export": ["payments", "wallet", "inventoryHistory", "orders", "productBuyers"] },
+  },
   "report.carts.read": { "api::cart": { cart: ["find"] } },
   "report.traffic.read": {
     "api::report": {

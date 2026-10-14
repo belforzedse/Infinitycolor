@@ -16,6 +16,17 @@ function action(enabled = false) {
 
 function createActionTree() {
   const tree: Record<string, any> = {
+    "api::report-export": {
+      controllers: {
+        "report-export": {
+          payments: action(),
+          wallet: action(),
+          inventoryHistory: action(),
+          orders: action(),
+          productBuyers: action(),
+        },
+      },
+    },
     "api::auth": {
       controllers: {
         auth: {
@@ -949,6 +960,10 @@ describe("role permission templates", () => {
       {
         capabilities: ["report.finance.read"],
         actions: ["api::report.report.liquidity", "api::report.report.gatewayLiquidity"],
+      },
+      {
+        capabilities: ["report.excel.export"],
+        actions: ["payments", "wallet", "inventoryHistory", "orders", "productBuyers"].map((name) => `api::report-export.report-export.${name}`),
       },
       {
         capabilities: ["report.traffic.read"],

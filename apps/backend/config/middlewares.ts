@@ -88,7 +88,7 @@ export default [
         "X-Product-Expected-Revision",
         "X-Product-Expected-Stock-Revision",
       ],
-      expose: ["X-Request-Id"],
+      expose: ["X-Request-Id", "X-Report-Row-Count", "Content-Disposition"],
       keepHeaderOnError: true,
     },
   },

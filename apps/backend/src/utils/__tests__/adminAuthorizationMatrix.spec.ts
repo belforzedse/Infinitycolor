@@ -95,6 +95,15 @@ describe("canonical admin capability matrix", () => {
     expect(hasCapability("finance", "category.update")).toBe(true);
     expect(hasCapability("finance", "report.finance.read")).toBe(true);
     expect(hasCapability("finance", "report.product.read")).toBe(true);
+    for (const capability of ["report.excel.export", "report.wallet.export", "report.inventory-history.export"] as const) {
+      expect(hasCapability("finance", capability)).toBe(false);
+      expect(hasCapability("founder", capability)).toBe(false);
+      expect(hasCapability("superadmin", capability)).toBe(true);
+      expect(hasCapability("store_manager_2", capability)).toBe(false);
+      expect(hasCapability("seller2", capability)).toBe(false);
+    }
+    expect(hasCapability("finance", "system.audit.read")).toBe(false);
+    expect(hasCapability("founder", "system.audit.read")).toBe(false);
     // Finance does not gain status updates from the Store Manager branch; it
     // inherits them from Seller 2 now that status lives on Seller 2.
     expect(hasCapability("finance", "order.status.update")).toBe(true);

@@ -29,6 +29,7 @@ export const SALES_NAV_ITEMS: SalesNavItem[] = [
   { id: "sales-overview", label: "نمای کلی", href: "/sales" },
   { id: "sales-products", label: "فروش محصولات", href: "/sales/products" },
   { id: "sales-breakdown", label: "تفکیک فروش", href: "/sales/breakdown" },
+  { id: "sales-exports", label: "گزارش‌های اکسل", href: "/reports/exports" },
   { id: "sales-traffic", label: "رفتار کاربران", href: "/sales/traffic" },
   { id: "sales-liquidity", label: "نقدینگی", href: "/sales/liquidity" },
   {
