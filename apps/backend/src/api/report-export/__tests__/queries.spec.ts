@@ -17,7 +17,7 @@ describe("export source contracts", () => {
     expect(query.sql).toContain("infinity_order_sku(oi.product_sku) IN (?)");
     expect(query.sql).not.toMatch(/(?<!LEFT )JOIN product_variations/); expect(query.sql).toContain("'Started', 'Shipment', 'Done'");
     expect(query.sql).toContain("recorded_color.title AS color");
-    expect(query.sql).toContain("ct.status = 'Success'"); expect(query.sql).toContain("ct.date BETWEEN ? AND ?");
+    expect(query.sql).toContain("ct.status = 'Success'"); expect(query.sql).toContain("ct.date BETWEEN ? AND (?::timestamp - INTERVAL '1 microsecond')");
   });
   it("reads complete wallet ledger and uses an exact adjustment id link", () => {
     const query = Q.walletQuery(joins, parseExportFilters("wallet", { start: "2026-09-14", end: "2026-09-15" }));

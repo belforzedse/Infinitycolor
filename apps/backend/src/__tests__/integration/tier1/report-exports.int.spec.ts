@@ -362,4 +362,21 @@ describe("self-service XLSX exports on real PostgreSQL", () => {
       expect((await get(`orders?${query}`)).status).toBe(400);
     }
   });
+
+  it("includes the final PostgreSQL microsecond of a Tehran day in buyers and dashboard reconciliation", async () => {
+    const contract = await factory.createContract({ amount: 100, status: "Finished" });
+    const order = await factory.createOrder({ contractId: contract.id, status: "Done", paymentGateway: "SamanKish" });
+    await app.db.connection("orders").where({ id: order.id }).update({ date: START });
+    const item = await factory.createOrderItem({ orderId: order.id, variationId: inventoryVariationIds[0], count: 1, perAmount: 100 });
+    await app.db.connection("order_items").where({ id: item.id }).update({ product_sku: code });
+    const transaction = await factory.createContractTransaction({ contractId: contract.id, amount: 1000, status: "Success", type: "Gateway" });
+    await app.db.connection("contract_transactions").where({ id: transaction.id }).update({ date: "2026-10-01T20:29:59.999999Z", settlement_gateway: "SamanKish" });
+    const last = await workbook(`product-buyers?${range}&productCodes=${code}`);
+    expect(table(last.book, ["کد محصول", "شماره سفارش"]).rows.map((row) => row["شماره سفارش"])).toContain(String(order.id));
+    const payments = await workbook(`payments?${range}`);
+    expect(table(payments.book, ["سفارش واجد شرایط یکتا", "انتساب به درگاه"]).rows[0]).toMatchObject({ "سفارش واجد شرایط یکتا": 3, "انتساب به درگاه": 4 });
+    await app.db.connection("contract_transactions").where({ id: transaction.id }).update({ date: END });
+    const nextDay = await workbook(`product-buyers?${range}&productCodes=${code}`);
+    expect(table(nextDay.book, ["کد محصول", "شماره سفارش"]).rows.map((row) => row["شماره سفارش"])).not.toContain(String(order.id));
+  });
 });

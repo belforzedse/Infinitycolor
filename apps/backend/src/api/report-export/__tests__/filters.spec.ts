@@ -1,4 +1,4 @@
-import { analyticsEnd, MAX_REPORT_ROWS, parseExportFilters, ReportExportError, RowBudget } from "../lib/filters";
+import { MAX_REPORT_ROWS, parseExportFilters, ReportExportError, RowBudget } from "../lib/filters";
 
 const range = { start: "2026-09-14", end: "2026-10-14" };
 describe("export filters", () => {
@@ -6,7 +6,6 @@ describe("export filters", () => {
     const input = parseExportFilters("payments", range);
     expect(input.startAt!.toISOString()).toBe("2026-09-13T20:30:00.000Z");
     expect(input.endExclusive!.toISOString()).toBe("2026-10-14T20:30:00.000Z");
-    expect(analyticsEnd(input).toISOString()).toBe("2026-10-14T20:29:59.999Z");
   });
   it.each([
     {}, { ...range, start: "2026-09-13" }, { ...range, start: "2026-10-15" },

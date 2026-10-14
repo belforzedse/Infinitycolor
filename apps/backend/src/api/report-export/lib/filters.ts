@@ -75,9 +75,10 @@ export function parseExportFilters(report: ExportReport, query: unknown): Export
   return result;
 }
 
-/** Existing analytics use BETWEEN; their public end must be inclusive. */
-export function analyticsEnd(filters: ExportFilters): Date {
-  return new Date(filters.endExclusive!.getTime() - 1);
+/** Existing analytics use BETWEEN. Bind the exclusive next midnight and adapt
+ * the upper SQL boundary to PostgreSQL's final microsecond of the prior day. */
+export function completeDayAnalyticsSql(sql: string): string {
+  return sql.split("BETWEEN ? AND ?").join("BETWEEN ? AND (?::timestamp - INTERVAL '1 microsecond')");
 }
 
 export class RowBudget {

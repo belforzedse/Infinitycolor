@@ -1,5 +1,5 @@
 import * as PA from "../../report/services/product-analytics";
-import { analyticsEnd, ExportFilters, MAX_REPORT_ROWS } from "./filters";
+import { completeDayAnalyticsSql, ExportFilters, MAX_REPORT_ROWS } from "./filters";
 
 export type ReportQuery = { sql: string; bindings: any[] };
 export const customerSql = (joins: PA.ResolvedJoins) => ({
@@ -202,7 +202,7 @@ export function orderItemsQuery(joins: PA.ResolvedJoins, filters: ExportFilters)
 
 export function productBuyersQuery(joins: PA.ResolvedJoins, filters: ExportFilters): ReportQuery {
   const customer = customerSql(joins), variation = itemVariationSql(joins);
-  return { bindings: [filters.startAt, analyticsEnd(filters), ...filters.productCodes!], sql: `WITH ${PA.paidOrdersCte(joins, "settled", "settlement")}
+  return { bindings: [filters.startAt, filters.endExclusive, ...filters.productCodes!], sql: `WITH ${completeDayAnalyticsSql(PA.paidOrdersCte(joins, "settled", "settlement"))}
     SELECT oi.id::text AS id, o.id::text AS order_id, infinity_order_sku(oi.product_sku) AS sku, oi.product_title AS title,
       oi.count, oi.per_amount::text AS price_toman, (oi.per_amount::numeric * oi.count)::text AS gross_toman,
       po.settled_at AT TIME ZONE 'UTC' AS paid_at, o.status, ${customer.name} AS customer_name, ${customer.phone} AS phone,

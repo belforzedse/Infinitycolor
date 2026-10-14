@@ -1,6 +1,6 @@
 import * as PA from "../../report/services/product-analytics";
 import { normalizeOrderSku } from "../../admin-order-list/lib/delivery-search";
-import { analyticsEnd, ExportFilters, ExportReport, MAX_REPORT_ROWS, ReportExportError, RowBudget } from "../lib/filters";
+import { completeDayAnalyticsSql, ExportFilters, ExportReport, MAX_REPORT_ROWS, ReportExportError, RowBudget } from "../lib/filters";
 import { buildWorkbook, ReportColumn, ReportData, ReportSheet } from "../lib/workbook";
 import { sumIrr, tomanToIrr } from "../lib/money";
 import * as Q from "../lib/queries";
@@ -29,10 +29,10 @@ export async function loadReportData(knex: any, report: ExportReport, filters: E
   if (report === "payments") {
     const movements = await details(knex, Q.paymentsQuery(joins, filters), budget);
     const splits = await details(knex, Q.splitPaymentsQuery(joins, filters), budget);
-    const end = analyticsEnd(filters);
-    const analyticsKnex = { raw: (sql: string, bindings: any[]) => knex.raw(sql, utcBindings(bindings)) };
+    const end = filters.endExclusive!;
+    const analyticsKnex = { raw: (sql: string, bindings: any[]) => knex.raw(completeDayAnalyticsSql(sql), utcBindings(bindings)) };
     const definition = await PA.resolvePaidOrdersDefinition(analyticsKnex as any, joins, filters.startAt!, end, "settlement");
-    const reconciliation = await rows(knex, { sql: PA.gatewayBreakdownQuery(joins, definition, "settlement"), bindings: [filters.startAt, end, filters.startAt, end] });
+    const reconciliation = await rows(knex, { sql: completeDayAnalyticsSql(PA.gatewayBreakdownQuery(joins, definition, "settlement")), bindings: [filters.startAt, end, filters.startAt, end] });
     const first = reconciliation[0] || {};
     const summary = paymentSummary(movements);
     if (!summary.length) summary.push({ provider: "همه", kind: "همه", evidence: "بدون گردش", count: 0, amount_irr: BigInt(0), cash_irr: BigInt(0) });
