@@ -116,6 +116,37 @@ export default defineConfig({
     },
   ],
   webServer: [
+    // Build the admin before the auth/storefront dev servers are resident.
+    // Its live health endpoint has no dependency on those services.
+    ...(adminServerCommand
+      ? [
+          {
+            command: adminServerCommand,
+            url: `${adminBaseURL().replace(/\/$/, "")}/api/health/live`,
+            name: "admin",
+            reuseExistingServer: !isCI,
+            ...webServerOutput,
+            timeout: Number(process.env.E2E_ADMIN_SERVER_TIMEOUT_MS || process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
+            env: {
+              ...stringProcessEnvironment(),
+              NEXT_PUBLIC_ADMIN_ENVIRONMENT: "e2e",
+              ADMIN_URL: adminBaseURL(),
+              NEXT_PUBLIC_ADMIN_URL: adminBaseURL(),
+              NEXT_PUBLIC_STOREFRONT_URL: storefrontBaseURL(),
+              // Node-side fixtures still use the Docker service URL. Browser
+              // traffic must stay on the admin origin and pass through Next's
+              // E2E-only rewrite so every engine observes the same CORS policy.
+              NEXT_PUBLIC_API_BASE_URL: browserApiURL(),
+              NEXT_PUBLIC_API_URL: browserApiURL(),
+              NEXT_PUBLIC_IMAGE_BASE_URL: browserImageOrigin(),
+              NEXT_PUBLIC_AUTH_ENVIRONMENT: "e2e",
+              NEXT_PUBLIC_AUTH_ORIGIN: centralAuthOrigin(),
+              NEXT_PUBLIC_AUTH_URL: centralAuthOrigin(),
+              AUTH_SERVER_ORIGIN: centralAuthOrigin(),
+            },
+          },
+        ]
+      : []),
     ...(authServerCommand
       ? [
           {
@@ -153,35 +184,6 @@ export default defineConfig({
               E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
                 process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
               ...storefrontServerApiEnv(),
-            },
-          },
-        ]
-      : []),
-    ...(adminServerCommand
-      ? [
-          {
-            command: adminServerCommand,
-            url: `${adminBaseURL().replace(/\/$/, "")}/api/health/live`,
-            name: "admin",
-            reuseExistingServer: !isCI,
-            ...webServerOutput,
-            timeout: Number(process.env.E2E_ADMIN_SERVER_TIMEOUT_MS || process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
-            env: {
-              ...stringProcessEnvironment(),
-              NEXT_PUBLIC_ADMIN_ENVIRONMENT: "e2e",
-              ADMIN_URL: adminBaseURL(),
-              NEXT_PUBLIC_ADMIN_URL: adminBaseURL(),
-              NEXT_PUBLIC_STOREFRONT_URL: storefrontBaseURL(),
-              // Node-side fixtures still use the Docker service URL. Browser
-              // traffic must stay on the admin origin and pass through Next's
-              // E2E-only rewrite so every engine observes the same CORS policy.
-              NEXT_PUBLIC_API_BASE_URL: browserApiURL(),
-              NEXT_PUBLIC_API_URL: browserApiURL(),
-              NEXT_PUBLIC_IMAGE_BASE_URL: browserImageOrigin(),
-              NEXT_PUBLIC_AUTH_ENVIRONMENT: "e2e",
-              NEXT_PUBLIC_AUTH_ORIGIN: centralAuthOrigin(),
-              NEXT_PUBLIC_AUTH_URL: centralAuthOrigin(),
-              AUTH_SERVER_ORIGIN: centralAuthOrigin(),
             },
           },
         ]
