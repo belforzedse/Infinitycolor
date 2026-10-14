@@ -479,7 +479,9 @@ it("fences a real authenticated stale browser, keeps its draft, observes on refr
     );
     await b.getByRole("button", { name: "خروج بدون ذخیره", exact: true }).click();
     expect((await release).status()).toBe(200);
-    await browserExpect(b).toHaveURL(`${adminOrigin}/products`);
+    // The products list is a cold Next dev route in the integration job.
+    // Keep the destination assertion while allowing its compilation to finish.
+    await browserExpect(b).toHaveURL(`${adminOrigin}/products`, { timeout: 120_000 });
     await waitUntil(async () => {
       const row = await strapi.db
         .connection("product_edit_leases")

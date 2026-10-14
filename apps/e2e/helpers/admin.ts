@@ -163,10 +163,19 @@ export async function createRuntimeProductFixture(
     const variationPayload = await variationResponse.json() as { data: { id: number } };
     const variationId = Number(variationPayload.data.id);
     expect(variationId, "created variation id").toBeGreaterThan(0);
-    const stockResponse = await write("post", "/product-stocks", { data: { Count: 12, product_variation: variationId, external_source: E2E_SOURCE, external_id: `${variationSku}-stock` } });
-    const stockPayload = await stockResponse.json() as { data: { id: number } };
-    const stockId = Number(stockPayload.data.id);
-    expect(stockId, "created stock id").toBeGreaterThan(0);
+    // Variation creation initializes its one stock row. Update that row under
+    // the lease and its own stock revision rather than creating another one.
+    const stockResponse = await apiGet(request, "admin", "/product-stocks", {
+      "filters[product_variation][id][$eq]": variationId,
+    });
+    await expectApiOk(stockResponse, "read initialized fixture stock");
+    const stockPayload = await stockResponse.json() as { data: Array<{ id: number; attributes: { StockRevision: number } }> };
+    expect(stockPayload.data, "one initialized fixture stock").toHaveLength(1);
+    const stockId = Number(stockPayload.data[0].id);
+    const stockRevision = stockPayload.data[0].attributes.StockRevision;
+    expect(stockId, "initialized stock id").toBeGreaterThan(0);
+    expect(Number.isSafeInteger(stockRevision), "initialized stock revision").toBe(true);
+    await write("put", `/product-stocks/${stockId}`, { data: { Count: 12 } }, { "X-Product-Expected-Stock-Revision": String(stockRevision) });
     if ((options.initialPublication ?? "Active") === "Active") await write("post", `/products/${productId}/publication`, { action: "publish-now" });
     return { variationId, stockId };
   });

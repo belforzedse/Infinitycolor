@@ -75,6 +75,10 @@ beforeAll(async () => {
   for (const action of [
     "api::product.product.create", "api::product.product.editAcquire", "api::product.product.editSnapshot",
     "api::product.product.softDelete", "api::product.product.restore", "api::product.product.permanentDelete", "api::product.product.delete",
+    "api::product.product.editRelease", "api::product.product.publication",
+    "api::product.product.find", "api::product.product.findOne",
+    "api::product-variation.product-variation.create", "api::product-variation.product-variation.find", "api::product-variation.product-variation.findOne",
+    "api::product-stock.product-stock.find", "api::product-stock.product-stock.update",
     "api::product-size-helper.product-size-helper.create", "api::product-size-helper.product-size-helper.update",
   ]) {
     const permission = await strapi.db.query("plugin::users-permissions.permission").create({ data: { action, role: roleId } });
@@ -124,6 +128,72 @@ it("creates the authenticated draft with exactly one helper owned by the new pro
   expect(helper.Helper).toEqual({});
   expect(await strapi.db.query("api::product-size-helper.product-size-helper").count({ where: { product: { id } } })).toBe(1);
   expect(await strapi.db.connection("products").where({ id }).first()).toMatchObject({ title, status: "InActive", edit_revision: 1 });
+});
+
+it("updates the variation's single auto-created stock under its lease before publishing", async () => {
+  const { id } = await createProduct();
+  const claim = await request(`/products/${id}/edit-lease/acquire`, { editorInstanceId: randomUUID() });
+  expect(claim.status).toBe(200);
+  const { lease, snapshot } = claim.body.data;
+  const initialRevision = snapshot.revision;
+  let revision = initialRevision;
+  const headers = () => ({
+    "X-Product-Edit-Token": lease.token, "X-Product-Edit-Instance": lease.editorInstanceId,
+    "X-Product-Edit-Generation": String(lease.generation), "X-Product-Expected-Revision": String(revision),
+  });
+  try {
+    const variation = await request("/product-variations", {
+      data: { product: id, SKU: `${TEST_PREFIX}auto_stock_${randomUUID()}`, Price: 250000, IsPublished: false },
+    }, headers(), "POST");
+    expect([variation.status, variation.body.error]).toEqual([200, undefined]);
+    const variationId = variation.body.data.id;
+    f.remember("api::product-variation.product-variation", variationId);
+    revision = variation.body.meta.editRevision;
+    expect(revision).toBe(initialRevision + 1);
+
+    const stockQuery = new URLSearchParams({
+      "filters[product_variation][id][$eq]": String(variationId), "populate": "product_variation",
+    });
+    const stocks = await request(`/product-stocks?${stockQuery}`);
+    expect(stocks.status).toBe(200);
+    expect(stocks.body.data).toHaveLength(1);
+    const stock = stocks.body.data[0];
+    f.remember("api::product-stock.product-stock", stock.id);
+    expect(stock.attributes).toMatchObject({ Count: 0, StockRevision: 0 });
+    expect(stock.attributes.product_variation.data.id).toBe(variationId);
+
+    const updated = await request(`/product-stocks/${stock.id}`, { data: { Count: 12 } }, {
+      ...headers(), "X-Product-Expected-Stock-Revision": "0",
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.body.data.id).toBe(stock.id);
+    expect(updated.body.data.attributes).toMatchObject({ Count: 12, StockRevision: 1 });
+    revision = updated.body.meta.editRevision;
+    expect(revision).toBe(initialRevision + 2);
+
+    const published = await request(`/products/${id}/publication`, { data: { action: "publish-now" } }, headers(), "POST");
+    expect(published.status).toBe(200);
+    revision = published.body.meta.editRevision;
+    expect(revision).toBe(initialRevision + 3);
+    const saved = await request(`/products/${id}/edit-snapshot`);
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.revision).toBe(revision);
+    expect(saved.body.data.product.attributes.Status).toBe("Active");
+    const variations = saved.body.data.product.attributes.product_variations.data;
+    expect(variations).toHaveLength(1);
+    expect(variations[0].id).toBe(variationId);
+    expect(variations[0].attributes.IsPublished).toBe(true);
+    expect(variations[0].attributes.product_stock.data).toMatchObject({ id: stock.id, attributes: { Count: 12, StockRevision: 1 } });
+    const finalStocks = await request(`/product-stocks?${stockQuery}`);
+    expect(finalStocks.status).toBe(200);
+    expect(finalStocks.body.data).toHaveLength(1);
+    expect(finalStocks.body.data[0]).toMatchObject({ id: stock.id, attributes: { Count: 12, StockRevision: 1 } });
+  } finally {
+    const released = await request(`/products/${id}/edit-lease/release`, { data: {} }, headers(), "POST");
+    expect(released.status).toBe(200);
+    expect(released.body.data).toEqual({ released: true });
+  }
+  expect((await strapi.db.connection("product_edit_leases").where({ product_id: id }).first()).owner_id).toBeNull();
 });
 
 it("rolls back the product, initial helper and edit coordination when initialization fails", async () => {
