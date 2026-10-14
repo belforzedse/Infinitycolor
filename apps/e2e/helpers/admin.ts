@@ -112,10 +112,12 @@ export async function leaveRuntimeProductEditor(page: Page, request: APIRequestC
   if (!productId) return;
 
   const discard = page.getByRole("button", { name: "خروج بدون ذخیره", exact: true });
-  await page.getByTestId("admin-product-cancel").click();
-  await expect.poll(async () =>
-    new URL(page.url()).pathname === "/products" || await discard.isVisible(),
-  { message: "editor exits or asks to discard its unsaved changes", timeout: 30_000 }).toBe(true);
+  if (!(await discard.isVisible())) {
+    await page.getByTestId("admin-product-cancel").click();
+    await expect.poll(async () =>
+      new URL(page.url()).pathname === "/products" || await discard.isVisible(),
+    { message: "editor exits or asks to discard its unsaved changes", timeout: 30_000 }).toBe(true);
+  }
   if (await discard.isVisible()) await discard.click();
   await expect(page).toHaveURL(/\/products(?:\?.*)?$/, { timeout: 30_000 });
   await expect.poll(async () => {
