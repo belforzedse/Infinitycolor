@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   cleanupRuntimeProducts,
   createRuntimeProductFixture,
+  leaveRuntimeProductEditor,
   publishRuntimeProduct,
 } from "../../helpers/admin";
 import { apiGet, expectApiOk } from "../../helpers/api";
@@ -40,7 +41,8 @@ test.describe("scheduled product publication", () => {
     await cleanupRuntimeProducts(request);
   });
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ page, request }) => {
+    await leaveRuntimeProductEditor(page, request);
     await cleanupRuntimeProducts(request);
   });
 
@@ -126,12 +128,7 @@ test.describe("scheduled product publication", () => {
 
     // Leave the editor and prove its lease released before a separate fixture
     // editor instance prepares the next persisted schedule.
-    await page.goto("/products", { waitUntil: "commit" });
-    await expect.poll(async () => {
-      const response = await apiGet(request, "admin", `/products/${fixture.productId}/edit-lease`);
-      await expectApiOk(response, "observe released publication editor");
-      return (await response.json()).data.owner;
-    }).toBeNull();
+    await leaveRuntimeProductEditor(page, request);
     const scheduleAgain = await publishRuntimeProduct(
       request,
       fixture.productId,

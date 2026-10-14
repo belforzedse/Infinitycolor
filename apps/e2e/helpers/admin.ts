@@ -106,6 +106,25 @@ export async function gotoSuperAdmin(page: Page, path: string) {
   );
 }
 
+/** Leave through the editor UI while the document can finish its lease release. */
+export async function leaveRuntimeProductEditor(page: Page, request: APIRequestContext) {
+  const productId = new URL(page.url()).pathname.match(/^\/products\/(\d+)$/)?.[1];
+  if (!productId) return;
+
+  const discard = page.getByRole("button", { name: "خروج بدون ذخیره", exact: true });
+  await page.getByTestId("admin-product-cancel").click();
+  await expect.poll(async () =>
+    new URL(page.url()).pathname === "/products" || await discard.isVisible(),
+  { message: "editor exits or asks to discard its unsaved changes", timeout: 30_000 }).toBe(true);
+  if (await discard.isVisible()) await discard.click();
+  await expect(page).toHaveURL(/\/products(?:\?.*)?$/, { timeout: 30_000 });
+  await expect.poll(async () => {
+    const response = await apiGet(request, "admin", `/products/${productId}/edit-lease`);
+    await expectApiOk(response, `observe released editor for product ${productId}`);
+    return (await response.json()).data.owner;
+  }, { message: `product ${productId} editor lease released`, timeout: 10_000 }).toBeNull();
+}
+
 export async function seededCategoryId(request: APIRequestContext) {
   const response = await apiGet(request, "admin", "/product-categories", {
     "filters[Slug][$eq]": E2E_CATEGORY_SLUG,

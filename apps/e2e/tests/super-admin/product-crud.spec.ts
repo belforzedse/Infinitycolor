@@ -3,6 +3,7 @@ import { authStorageStatePath } from "../../helpers/auth";
 import {
   cleanupRuntimeProducts,
   createRuntimeProductFixture,
+  leaveRuntimeProductEditor,
   updateRuntimeVariationStock,
 } from "../../helpers/admin";
 import { apiGet, expectApiOk, getProductVariationStock } from "../../helpers/api";
@@ -41,7 +42,8 @@ test.describe("super-admin product CRUD", () => {
     await cleanupRuntimeProducts(request);
   });
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ page, request }) => {
+    await leaveRuntimeProductEditor(page, request);
     await cleanupRuntimeProducts(request);
   });
 
@@ -81,7 +83,7 @@ test.describe("super-admin product CRUD", () => {
       return (await response.json()).data.attributes.Title;
     }).toBe(updatedTitle);
 
-    await page.goto("/products?pageSize=100", { waitUntil: "commit" });
+    await leaveRuntimeProductEditor(page, request);
     await waitForProductsListURLToSettle(page);
     await expect(
       page.locator('[data-testid="admin-product-row"]:visible').filter({ hasText: updatedTitle }).first(),
