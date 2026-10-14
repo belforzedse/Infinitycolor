@@ -46,4 +46,11 @@ describe("order report calculation", () => {
     expect(data.sheets[0].rows[0]).toMatchObject({ debits_irr: BigInt(4000), net_irr: BigInt(-4000) });
     expect(data.sheets[3].rows.map((row) => row.payment_kind)).toEqual(["بخشی با کیف پول", "کامل با کیف پول", "نامشخص"]);
   });
+  it("exports detached inventory snapshots without treating unknown stock as zero", async () => {
+    const knex = { raw: jest.fn().mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ order_id: "1", sku: "OLD", title: "نام تاریخی", count: 2, variation_id: null }] }) };
+    const data = await loadReportData(knex, "inventory-history", parseExportFilters("inventory-history", { productCode: "OLD" }));
+    expect(data.rowCount).toBe(1);
+    expect(data.sheets[0].rows[0]).toMatchObject({ product_id: "نامشخص", current: null, reserved: null, available: null });
+    expect(data.sheets[1].rows[0]).toMatchObject({ title: "نام تاریخی", variation_id: "نامشخص" });
+  });
 });

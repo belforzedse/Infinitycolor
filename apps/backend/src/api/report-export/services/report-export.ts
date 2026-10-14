@@ -96,8 +96,15 @@ function walletCause(value: string): string {
 }
 
 async function loadInventory(knex: any, joins: PA.ResolvedJoins, filters: ExportFilters, budget: RowBudget): Promise<ReportData> {
-  const matches = await rows(knex, { sql: `SELECT DISTINCT p.id::text AS product_id FROM product_variations pv ${joins.variationToProduct} WHERE infinity_order_sku(pv.sku) = ? LIMIT 2`, bindings: [filters.productCode] });
-  if (!matches.length) throw new ReportExportError("PRODUCT_NOT_FOUND", 404, "محصولی با این کد پیدا نشد");
+  const matches = await rows(knex, Q.inventoryProductCandidatesQuery(joins, filters.productCode!));
+  if (!matches.length) {
+    const snapshots = await details(knex, Q.inventoryOrdersQuery(joins, "-1", [filters.productCode!]), budget);
+    if (!snapshots.length) throw new ReportExportError("PRODUCT_NOT_FOUND", 404, "محصولی با این کد پیدا نشد");
+    return { rowCount: budget.count, notes: ["فقط اقلام سفارش برای این کد باقی مانده‌اند. هویت محصول، موجودی فعلی، موجودی آغازین و تغییرات موجودی قابل تعیین نیستند.", "سفارش‌های ثبت‌شده به‌تنهایی شمارش فیزیکی انبار یا تاریخچه کامل موجودی را ثابت نمی‌کنند."], sheets: [
+      sheet("خلاصه", [col("sku", "کد محصول"), col("product_id", "شناسه محصول"), count("current", "موجودی فعلی"), count("reserved", "رزروشده"), count("available", "قابل فروش"), col("reconciliation", "تطبیق", "text", 60)], [{ sku: filters.productCode, product_id: "نامشخص", current: null, reserved: null, available: null, reconciliation: "نامشخص؛ فقط اقلام سفارش باقی مانده‌اند" }]),
+      inventoryOrderSheet(snapshots),
+    ] };
+  }
   if (matches.length !== 1) throw new ReportExportError("AMBIGUOUS_PRODUCT_CODE", 409, "این کد به بیش از یک محصول مربوط است");
   const productId = matches[0].product_id;
   const variations = await details(knex, Q.inventoryVariationsQuery(joins, productId), budget);
@@ -116,7 +123,7 @@ async function loadInventory(knex: any, joins: PA.ResolvedJoins, filters: Export
     FROM manual_admin_activities m WHERE (m.resource_type = 'Stock' AND m.resource_id IN (${placeholders}))
       OR (m.resource_type = 'Product' AND m.resource_id = ?)
     ORDER BY COALESCE(m.occurred_at, m.created_at), m.id LIMIT ${MAX_REPORT_ROWS + 1}`, bindings: [...stockBindings, productId] }, budget);
-  const orders = await details(knex, Q.inventoryOrdersQuery(joins, productId, [...new Set(variations.map((row) => normalizeOrderSku(row.sku)))]), budget);
+  const orders = await details(knex, Q.inventoryOrdersQuery(joins, productId, [...new Set([filters.productCode!, ...variations.map((row) => normalizeOrderSku(row.sku))])]), budget);
   const summaries = inventorySummary(variations, logs, orders);
   // These summary rows represent the already-counted variation detail rows.
   return { rowCount: budget.count, notes: [
@@ -130,8 +137,12 @@ async function loadInventory(knex: any, joins: PA.ResolvedJoins, filters: Export
     sheet("موجودی تنوع‌ها", [col("variation_id", "شناسه تنوع"), col("sku", "کد محصول"), col("color", "رنگ"), col("size", "سایز"), col("model", "مدل"), col("stock_id", "شناسه موجودی"), count("opening", "آغاز ثبت‌شده"), count("current_count", "موجودی فعلی"), count("reserved_count", "رزروشده"), count("available_count", "قابل فروش"), count("recorded_delta", "خالص ثبت‌های موجودی"), count("recorded_difference", "اختلاف با ثبت‌ها"), col("recorded_status", "تطبیق ثبت‌ها", "text", 42), count("consumed_units", "تعداد با مصرف ثبت‌شده"), count("manual_marked_units", "تعداد با نشان ثبت دستی"), col("reconciliation", "کامل‌بودن تاریخچه", "text", 50)], summaries, true),
     sheet("ثبت‌های موجودی", [col("id", "شناسه ثبت"), col("stock_id", "شناسه موجودی"), date("date", "تاریخ"), col("direction", "جهت"), count("count", "تعداد"), col("cause", "بابت", "text", 45), col("description", "شرح", "text", 50), col("actor", "کارمند")], logs.map((row) => ({ ...row, direction: row.type === "Add" ? "افزایش" : "کاهش", description: row.description === "Initial stock" ? "موجودی آغازین ثبت‌شده" : row.description === "Stock updated" ? "تغییر موجودی" : row.description, actor: "نامشخص" })), true),
     sheet("تغییرهای کارکنان", [col("id", "شناسه سابقه"), date("date", "تاریخ"), col("resource", "موضوع"), col("resource_id", "شناسه موضوع"), col("action", "اقدام"), count("from", "قبل"), count("to", "بعد"), count("delta", "تغییر"), col("actor", "کارمند"), col("actor_role", "نقش"), col("reason", "دلیل", "text", 55), col("evidence", "وضعیت مقدار", "text", 45)], audit.map((row) => { const change = row.resource_type === "Stock" ? stockCountChange(row.changes) : null; return { ...row, resource: row.resource_type === "Stock" ? "موجودی" : "محصول", action: ({ Create: "ایجاد", Update: "ویرایش", Adjust: "تغییر", Publish: "انتشار", Unpublish: "توقف انتشار", Delete: "حذف" } as any)[row.action] || "سایر", from: change?.from ?? null, to: change?.to ?? null, delta: change ? change.to - change.from : null, actor: row.actor || "نامشخص", actor_role: staffRoleLabel(row.actor_role), evidence: change ? "مقدار قبل و بعد ثبت شده" : "مقدار تغییر موجودی ثبت نشده" }; }), true),
-    sheet("سفارش‌های مرتبط", [col("order_id", "شماره سفارش"), date("date", "تاریخ سفارش"), col("variation_id", "شناسه تنوع"), col("sku", "کد محصول"), col("title", "محصول", "text", 50), count("count", "تعداد"), col("status", "وضعیت"), col("provider", "درگاه"), col("reservation_status", "وضعیت رزرو"), date("manual_stock_applied_at", "ثبت موجودی دستی")], orders.map((row) => ({ ...row, variation_id: row.variation_id || "نامشخص", provider: labelProviders(row.provider), status: statusLabels[row.status], reservation_status: ({ Reserved: "رزروشده", Released: "آزادشده", Consumed: "مصرف‌شده", Expired: "منقضی‌شده" } as any)[row.reservation_status] || "نامشخص" })), true),
+    inventoryOrderSheet(orders),
   ] };
+}
+
+function inventoryOrderSheet(orders: any[]): ReportSheet {
+  return sheet("سفارش‌های مرتبط", [col("order_id", "شماره سفارش"), date("date", "تاریخ سفارش"), col("variation_id", "شناسه تنوع"), col("sku", "کد محصول"), col("title", "محصول", "text", 50), count("count", "تعداد"), col("status", "وضعیت"), col("provider", "درگاه"), col("reservation_status", "وضعیت رزرو"), date("manual_stock_applied_at", "ثبت موجودی دستی")], orders.map((row) => ({ ...row, variation_id: row.variation_id || "نامشخص", provider: labelProviders(row.provider), status: statusLabels[row.status], reservation_status: ({ Reserved: "رزروشده", Released: "آزادشده", Consumed: "مصرف‌شده", Expired: "منقضی‌شده" } as any)[row.reservation_status] || "نامشخص" })), true);
 }
 
 export async function generateReportExport(strapi: any, report: ExportReport, filters: ExportFilters): Promise<{ buffer: Buffer; rowCount: number; filename: string }> {

@@ -39,4 +39,11 @@ describe("export source contracts", () => {
     expect(funding).toContain("ct.status = 'Success'"); expect(funding).not.toContain("ct.date >=");
     expect(query.sql).toContain("wallet_charges_irr"); expect(query.sql).toContain("other_charges_irr");
   });
+  it("resolves former inventory codes through surviving identity links and refuses contradictory SKU matches", () => {
+    const identities = Q.inventoryProductCandidatesQuery(joins, "OLD");
+    expect(identities.sql).toContain("UNION");
+    expect(identities.sql).toContain("infinity_order_sku(oi.product_sku) = ?");
+    expect(identities.bindings).toEqual(["OLD", "OLD"]);
+    expect(Q.inventoryOrdersQuery(joins, "1", ["OLD"]).sql).toContain("OR (p.id IS NULL AND infinity_order_sku(oi.product_sku)");
+  });
 });

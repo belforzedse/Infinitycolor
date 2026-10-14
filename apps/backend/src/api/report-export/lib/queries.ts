@@ -260,13 +260,31 @@ export function inventoryVariationsQuery(joins: PA.ResolvedJoins, productId: str
     WHERE p.id = ? ORDER BY pv.id LIMIT ${MAX_REPORT_ROWS + 1}` };
 }
 
+/** A code may have changed or been freed by purge; surviving identities win over the code. */
+function historicalProductJoins(joins: PA.ResolvedJoins): string {
+  // resolveJoins includes pv for relation-table installations; direct foreign
+  // keys need it added here. Product joins must stay optional for detached history.
+  const variation = joins.oiToVariation.join || `LEFT JOIN product_variations pv ON pv.id = ${joins.oiToVariation.idExpr}`;
+  const product = joins.variationToProduct.replace(/\b(?:INNER\s+|LEFT\s+)?JOIN\b/g, "LEFT JOIN");
+  return `${variation} ${product}`;
+}
+export function inventoryProductCandidatesQuery(joins: PA.ResolvedJoins, productCode: string): ReportQuery {
+  return { bindings: [productCode, productCode], sql: `SELECT product_id FROM (
+    SELECT p.id::text AS product_id FROM product_variations pv ${joins.variationToProduct}
+      WHERE infinity_order_sku(pv.sku) = ? AND p.id IS NOT NULL
+    UNION
+    SELECT p.id::text AS product_id FROM order_items oi ${historicalProductJoins(joins)}
+      WHERE infinity_order_sku(oi.product_sku) = ? AND p.id IS NOT NULL
+    ) identities LIMIT 2` };
+}
+
 export function inventoryOrdersQuery(joins: PA.ResolvedJoins, productId: string, skus: string[]): ReportQuery {
   return { bindings: [productId, ...skus], sql: `SELECT oi.id::text AS id, o.id::text AS order_id, o.date AT TIME ZONE 'UTC' AS date, o.status,
     o.reservation_status, o.manual_stock_applied_at AT TIME ZONE 'UTC' AS manual_stock_applied_at, o.payment_gateway AS provider,
     oi.product_sku AS sku, oi.product_title AS title, oi.count,
     ${joins.oiToVariation.idExpr}::text AS variation_id
-    FROM order_items oi ${joins.oiToOrder} ${joins.oiToVariation.join}
+    FROM order_items oi ${joins.oiToOrder} ${historicalProductJoins(joins)}
     WHERE ${joins.oiToVariation.idExpr} IN (SELECT pv.id FROM product_variations pv ${joins.variationToProduct} WHERE p.id = ?)
-      ${skus.length ? `OR infinity_order_sku(oi.product_sku) IN (${skus.map(() => "?").join(", ")})` : ""}
+      ${skus.length ? `OR (p.id IS NULL AND infinity_order_sku(oi.product_sku) IN (${skus.map(() => "?").join(", ")}))` : ""}
     ORDER BY o.date, o.id, oi.id LIMIT ${MAX_REPORT_ROWS + 1}` };
 }

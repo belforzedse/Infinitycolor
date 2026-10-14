@@ -19,6 +19,8 @@ let lateOrder: number;
 let code: string;
 let adjustmentId: number;
 let topupId: number;
+let inventoryProductId: number;
+let inventoryVariationIds: number[];
 const owned: Array<{ uid: string; id: number }> = [];
 const range = "start=2026-10-01&end=2026-10-01";
 const START = "2026-09-30T20:30:00.000Z";
@@ -111,6 +113,8 @@ beforeAll(async () => {
   const product = await factory.createProduct({ title: "محصول آزمایشی گزارش" });
   const a = await factory.createVariation({ productId: product.id, stockCount: 3, price: 600 });
   const b = await factory.createVariation({ productId: product.id, stockCount: 0, price: 400 });
+  inventoryProductId = product.id;
+  inventoryVariationIds = [a.id, b.id];
   code = `${TEST_PREFIX}REPORT_EXPORT`;
   await app.db.connection("product_variations").whereIn("id", [a.id, b.id]).update({ sku: code });
   const wallet = await factory.createWallet({ userId: buyer.id, balanceIrr: 50000 });
@@ -303,6 +307,51 @@ describe("self-service XLSX exports on real PostgreSQL", () => {
     const text = allText(book);
     expect(text).toContain("محصول آزمایشی گزارش");
     expect(text).toMatch(/نامشخص|ناقص|کامل نیست/);
+  });
+
+  it("resolves former inventory codes after a rename and on a retained purged tombstone", async () => {
+    try {
+      await app.db.connection("product_variations").whereIn("id", inventoryVariationIds).update({ sku: `${code}_RENAMED` });
+      const renamed = await workbook(`inventory-history?productCode=${code}`);
+      expect(table(renamed.book, ["شناسه محصول", "موجودی فعلی"]).rows[0]["شناسه محصول"]).toBe(String(inventoryProductId));
+      await app.db.connection("product_variations").whereIn("id", inventoryVariationIds).update({ sku: `${code}~purged-${inventoryProductId}` });
+      await app.db.connection("products").where({ id: inventoryProductId }).update({ purged_at: "2026-10-02T00:00:00.000Z" });
+      const purged = await workbook(`inventory-history?productCode=${code}`);
+      expect(table(purged.book, ["شماره سفارش", "شناسه تنوع"]).rows.map((row) => row["شماره سفارش"])).toContain(String(splitOrder));
+    } finally {
+      await app.db.connection("products").where({ id: inventoryProductId }).update({ purged_at: null });
+      await app.db.connection("product_variations").whereIn("id", inventoryVariationIds).update({ sku: code });
+    }
+  });
+
+  it("rejects a reused code that identifies two products instead of attributing old orders to the new product", async () => {
+    const other = await factory.createProduct({ title: "محصول دیگری با کد قدیمی" });
+    const variation = await factory.createVariation({ productId: other.id, stockCount: 7, price: 100 });
+    try {
+      await app.db.connection("product_variations").whereIn("id", inventoryVariationIds).update({ sku: `${code}_RENAMED` });
+      await app.db.connection("product_variations").where({ id: variation.id }).update({ sku: code });
+      const response = await get(`inventory-history?productCode=${code}`);
+      expect(response.status).toBe(409);
+      expect((await response.json()).error.details.code).toBe("AMBIGUOUS_PRODUCT_CODE");
+    } finally {
+      await app.db.connection("product_variations").where({ id: variation.id }).update({ sku: `${code}_OTHER` });
+      await app.db.connection("product_variations").whereIn("id", inventoryVariationIds).update({ sku: code });
+    }
+  });
+
+  it("exports detached historical inventory order facts with unknown balances", async () => {
+    const links = await app.db.connection("order_items_product_variation_links").whereIn("product_variation_id", inventoryVariationIds).select("*");
+    try {
+      await app.db.connection("product_variations").whereIn("id", inventoryVariationIds).update({ sku: `${code}_RENAMED` });
+      await app.db.connection("order_items_product_variation_links").whereIn("product_variation_id", inventoryVariationIds).delete();
+      const { book } = await workbook(`inventory-history?productCode=${code}`);
+      expect(table(book, ["شناسه محصول", "موجودی فعلی"]).rows[0]).toMatchObject({ "شناسه محصول": "نامشخص", "موجودی فعلی": "نامشخص", "رزروشده": "نامشخص", "قابل فروش": "نامشخص" });
+      expect(table(book, ["شماره سفارش", "شناسه تنوع"]).rows).toHaveLength(10);
+      expect(allText(book)).toContain("نام ثبت‌شده هنگام خرید");
+    } finally {
+      if (links.length) await app.db.connection("order_items_product_variation_links").insert(links);
+      await app.db.connection("product_variations").whereIn("id", inventoryVariationIds).update({ sku: code });
+    }
   });
 
   it("returns a useful empty XLSX and rejects invalid, unknown, reversed and pre-cutover filters", async () => {
