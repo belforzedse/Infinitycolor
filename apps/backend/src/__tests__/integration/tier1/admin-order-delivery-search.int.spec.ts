@@ -210,4 +210,44 @@ describe("order delivery filters on real PostgreSQL", () => {
     ]);
     expect(all.rows[0].address).toBe(normalizeOrderAddress(allLatin));
   });
+  it("evaluates and rebuilds populated expression indexes with PostgreSQL 17's restricted search path", async () => {
+    await seed();
+    const functions = () => strapi.db.connection.raw(
+      "SELECT p.oid, p.proname, p.proowner, p.proacl FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY(?::text[]) ORDER BY p.proname",
+      [["infinity_order_digits", "infinity_order_postal", "infinity_order_sku", "infinity_order_address"]],
+    );
+    const beforeFunctions = (await functions()).rows;
+    const beforeRows = await strapi.db.connection("order_delivery_snapshots").orderBy("order_id");
+    await ensureOrderSearchStorage(strapi);
+    expect((await functions()).rows).toEqual(beforeFunctions);
+    expect(beforeFunctions).toHaveLength(4);
+    expect(await strapi.db.connection("order_delivery_snapshots").orderBy("order_id")).toEqual(beforeRows);
+    await strapi.db.connection.transaction(async (trx: any) => {
+      await trx.raw("SET LOCAL search_path TO pg_catalog, pg_temp");
+      const normalized = await trx.raw(
+        "SELECT public.infinity_order_postal(?::text) AS postal, public.infinity_order_sku(?::text) AS sku, public.infinity_order_address(?::text) AS address",
+        ["۰۱۲۳۴-۵۶۷۸۹", " Ab-۰۰۱  ٢ ", "خيابان كاشاني ۱۲ ABC"],
+      );
+      expect(normalized.rows[0]).toEqual({
+        postal: "0123456789",
+        sku: normalizeOrderSku(" Ab-۰۰۱  ٢ "),
+        address: normalizeOrderAddress("خيابان كاشاني ۱۲ ABC"),
+      });
+      for (const index of [
+        "idx_order_snapshot_postal",
+        "idx_order_snapshot_address",
+        "idx_order_legacy_postal",
+        "idx_order_legacy_address",
+        "idx_order_item_snapshot_sku",
+      ]) {
+        await trx.raw("REINDEX INDEX ??", [`public.${index}`]);
+      }
+    });
+    const result = await strapi.db.connection.raw(
+      "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = ANY(?::text[])",
+      [["idx_order_snapshot_postal", "idx_order_snapshot_address", "idx_order_legacy_postal", "idx_order_legacy_address", "idx_order_item_snapshot_sku"]],
+    );
+    expect(result.rows).toHaveLength(5);
+    expect(result.rows.every((row: any) => row.indisvalid)).toBe(true);
+  });
 });

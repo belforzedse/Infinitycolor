@@ -56,22 +56,20 @@ function normalizedLatinSql(expression) {
 }
 
 async function ensureStorage(knex) {
+  // Bind nested function references at definition time. PostgreSQL 17 builds
+  // indexes with search_path=pg_catalog,pg_temp, excluding the app schema.
   await knex.raw(`CREATE OR REPLACE FUNCTION infinity_order_digits(value text) RETURNS text
-    LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-      SELECT translate(coalesce(value, ''), '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
-    $$`);
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    RETURN translate(coalesce(value, ''), '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')`);
   await knex.raw(`CREATE OR REPLACE FUNCTION infinity_order_sku(value text) RETURNS text
-    LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-      SELECT regexp_replace(infinity_order_digits(normalize(coalesce(value, ''), NFC)), '^${SPACE_CLASS}+|${SPACE_CLASS}+$', '', 'g')
-    $$`);
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    RETURN regexp_replace(infinity_order_digits(normalize(coalesce(value, ''), NFC)), '^${SPACE_CLASS}+|${SPACE_CLASS}+$', '', 'g')`);
   await knex.raw(`CREATE OR REPLACE FUNCTION infinity_order_postal(value text) RETURNS text
-    LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-      SELECT regexp_replace(infinity_order_digits(coalesce(value, '')), '[${SPACE_CONTENT}-]+', '', 'g')
-    $$`);
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    RETURN regexp_replace(infinity_order_digits(coalesce(value, '')), '[${SPACE_CONTENT}-]+', '', 'g')`);
   await knex.raw(`CREATE OR REPLACE FUNCTION infinity_order_address(value text) RETURNS text
-    LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-      SELECT btrim(regexp_replace(${normalizedLatinSql("infinity_order_digits(normalize(coalesce(value, ''), NFKC))")}, '[${SPACE_CONTENT}‌]+', ' ', 'g'))
-    $$`);
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    RETURN btrim(regexp_replace(${normalizedLatinSql("infinity_order_digits(normalize(coalesce(value, ''), NFKC))")}, '[${SPACE_CONTENT}‌]+', ' ', 'g'))`);
   if (!(await knex.schema.hasTable(TABLE))) {
     await knex.schema.createTable(TABLE, (t) => {
       t.integer("order_id").primary();
