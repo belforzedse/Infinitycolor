@@ -32,7 +32,7 @@ async function ensureCatalogEditStorage(knex) {
       table.timestamp("expires_at", { useTz: true }).nullable();
     });
   }
-  for (const [table, column] of [["products", "edit_revision"], ["product_stocks", "stock_revision"], ["settings", "homepage_products_revision"]]) {
+  for (const [table, column] of [["products", "edit_revision"], ["product_stocks", "stock_revision"], ["site_settings", "homepage_products_revision"]]) {
     if (await knex.schema.hasTable(table) && !(await knex.schema.hasColumn(table, column))) {
       await knex.schema.alterTable(table, (definition) => definition.integer(column).notNullable().defaultTo(0));
     }

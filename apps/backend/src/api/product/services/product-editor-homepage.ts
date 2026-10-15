@@ -11,7 +11,7 @@ export async function saveEditorHomepage(strapi: any, productId: number, input: 
   if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => !FIELDS.includes(key) || typeof input[key] !== "boolean")) throw new CatalogEditError("HOMEPAGE_PAYLOAD_INVALID", 400);
   const initial = await strapi.db.query(UID).findOne({ where: {}, orderBy: { id: "asc" } });
   if (!initial) throw new CatalogEditError("SETTINGS_NOT_FOUND", 404);
-  await context.trx("settings").where({ id: initial.id }).forUpdate().first();
+  await context.trx("site_settings").where({ id: initial.id }).forUpdate().first();
   const current = await strapi.db.query(UID).findOne({ where: { id: initial.id } });
   const data: Record<string, unknown> = {};
   for (const field of Object.keys(input)) {

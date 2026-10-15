@@ -1,4 +1,4 @@
-/** Real authenticated catalog creation; only the local token authority and external providers are fixtures. */
+/** Real authenticated catalog writes; only the local token authority and external providers are fixtures. */
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { exportJWK, generateKeyPair, SignJWT, type KeyLike } from "jose";
@@ -42,6 +42,7 @@ async function request(pathname: string, data?: any, headers: Record<string, str
 
 beforeAll(async () => {
   if ((process.env.INTEGRATION_DB_MODE || "testcontainers") !== "testcontainers") throw new Error("Catalog creation fixture requires disposable Testcontainers PostgreSQL");
+  if (process.env.NODE_ENV !== "test" || process.env.DATABASE_NAME !== "infinity_test") throw new Error("Catalog write fixture refused a non-disposable database");
   apiServer = createServer();
   origin = await listen(apiServer);
   const keys = await generateKeyPair("EdDSA");
@@ -59,6 +60,7 @@ beforeAll(async () => {
   });
   jest.doMock(`${process.env.INTEGRATION_DIST_DIR}/src/utils/revalidate`, () => ({
     triggerFrontendRevalidation: jest.fn(async () => ({ attempted: 1, successful: 1, failed: 0 })),
+    getFrontendUrls: jest.fn(() => []),
   }));
   strapi = await setupStrapi();
   strapi.server.mount();
@@ -76,6 +78,7 @@ beforeAll(async () => {
     "api::product.product.create", "api::product.product.editAcquire", "api::product.product.editSnapshot",
     "api::product.product.softDelete", "api::product.product.restore", "api::product.product.permanentDelete", "api::product.product.delete",
     "api::product.product.editRelease", "api::product.product.publication",
+    "api::product.product.editorHomepage", "api::settings.settings.updateHomepageProducts",
     "api::product.product.find", "api::product.product.findOne",
     "api::product-variation.product-variation.create", "api::product-variation.product-variation.find", "api::product-variation.product-variation.findOne",
     "api::product-stock.product-stock.find", "api::product-stock.product-stock.update",
@@ -345,4 +348,113 @@ it("preserves authorized API-token lifecycle commands and denies restricted toke
   const restore = await call("restore", full.accessKey);
   expect(restore.status).toBe(409);
   expect(restore.body.error.details.code).toBe("PRODUCT_PURGED");
+});
+
+describe("authenticated homepage settings writes on the declared PostgreSQL table", () => {
+  let settingsId: number;
+
+  beforeEach(async () => {
+    expect(strapi.db.metadata.get("api::settings.settings").tableName).toBe("site_settings");
+    expect(await strapi.db.connection.schema.hasTable("site_settings")).toBe(true);
+    expect(await strapi.db.connection.schema.hasTable("settings")).toBe(false);
+    settingsId = (await strapi.db.query("api::settings.settings").create({ data: {
+      homeNewestProductIds: [], homeFavoriteProductIds: [], homeDiscountedProductIds: [],
+      homeWeeklyPicksProductIds: [], homeEveryoneFollowsProductIds: [],
+      homeWeeklyPicksEnabled: false, homeEveryoneFollowsEnabled: false,
+    } })).id;
+  });
+
+  afterEach(async () => {
+    if (settingsId) await strapi.db.query("api::settings.settings").delete({ where: { id: settingsId } });
+    settingsId = undefined;
+  });
+
+  const settingsRow = () => strapi.db.query("api::settings.settings").findOne({ where: { id: settingsId } });
+
+  it("saves global membership, ordering and toggles and rolls back stale revisions", async () => {
+    const first = await createProduct();
+    const second = await createProduct();
+    const productRows = () => strapi.db.connection("products").whereIn("id", [first.id, second.id]).orderBy("id").select("id", "edit_revision");
+    const leaseRows = () => strapi.db.connection("product_edit_leases").whereIn("product_id", [first.id, second.id]).orderBy("product_id");
+    const save = (data: any, expectedRevision: number) => request("/settings/homepage-products", { data, expectedRevision });
+
+    const membership = await save({ homeNewestProductIds: [first.id, second.id], homeWeeklyPicksEnabled: true }, 0);
+    expect([membership.status, membership.body.error]).toEqual([200, undefined]);
+    expect(membership.body.data.attributes).toMatchObject({ homeNewestProductIds: [first.id, second.id], homeWeeklyPicksEnabled: true, HomepageProductsRevision: 1 });
+    expect(await settingsRow()).toMatchObject({ homeNewestProductIds: [first.id, second.id], homeWeeklyPicksEnabled: true, HomepageProductsRevision: 1 });
+    expect(await productRows()).toEqual([{ id: first.id, edit_revision: 2 }, { id: second.id, edit_revision: 2 }]);
+
+    const reorder = await save({ homeNewestProductIds: [second.id, first.id] }, 1);
+    expect([reorder.status, reorder.body.error]).toEqual([200, undefined]);
+    expect(reorder.body.data.attributes.HomepageProductsRevision).toBe(2);
+    expect(await settingsRow()).toMatchObject({ homeNewestProductIds: [second.id, first.id], HomepageProductsRevision: 2 });
+
+    const toggle = await save({ homeWeeklyPicksEnabled: false }, 2);
+    expect([toggle.status, toggle.body.error]).toEqual([200, undefined]);
+    expect(toggle.body.data.attributes.HomepageProductsRevision).toBe(3);
+    expect(await settingsRow()).toMatchObject({ homeNewestProductIds: [second.id, first.id], homeWeeklyPicksEnabled: false, HomepageProductsRevision: 3 });
+    expect(await productRows()).toEqual([{ id: first.id, edit_revision: 2 }, { id: second.id, edit_revision: 2 }]);
+
+    const before = { settings: await settingsRow(), products: await productRows(), leases: await leaseRows() };
+    const stale = await save({ homeNewestProductIds: [first.id], homeWeeklyPicksEnabled: true }, 1);
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.details.code).toBe("HOMEPAGE_VERSION_CONFLICT");
+    expect({ settings: await settingsRow(), products: await productRows(), leases: await leaseRows() }).toEqual(before);
+  });
+
+  it("adds and removes homepage membership through the product editor with both revisions", async () => {
+    const product = await createProduct();
+    const other = await createProduct();
+    await strapi.db.query("api::settings.settings").update({ where: { id: settingsId }, data: {
+      homeNewestProductIds: [other.id], homeDiscountedProductIds: [product.id, other.id],
+      homeWeeklyPicksProductIds: [other.id], homeWeeklyPicksEnabled: true,
+    } });
+    const claim = await request(`/products/${product.id}/edit-lease/acquire`, { editorInstanceId: randomUUID() });
+    expect([claim.status, claim.body.error]).toEqual([200, undefined]);
+    const { lease, snapshot } = claim.body.data;
+    let revision = snapshot.revision;
+    const save = (data: any) => request(`/products/${product.id}/editor/homepage`, { data }, {
+      "X-Product-Edit-Token": lease.token, "X-Product-Edit-Instance": lease.editorInstanceId,
+      "X-Product-Edit-Generation": String(lease.generation), "X-Product-Expected-Revision": String(revision),
+    });
+
+    const added = await save({ homeNewestProductIds: true, homeFavoriteProductIds: true, homeDiscountedProductIds: false });
+    expect([added.status, added.body.error]).toEqual([200, undefined]);
+    expect(added.body.meta).toMatchObject({ editRevision: snapshot.revision + 1, homepageProductsRevision: 1 });
+    expect(await settingsRow()).toMatchObject({
+      homeNewestProductIds: [product.id, other.id], homeFavoriteProductIds: [product.id],
+      homeDiscountedProductIds: [other.id], homeWeeklyPicksProductIds: [other.id],
+      homeWeeklyPicksEnabled: true, HomepageProductsRevision: 1,
+    });
+
+    revision = added.body.meta.editRevision;
+    const removed = await save({ homeNewestProductIds: false, homeFavoriteProductIds: false });
+    expect([removed.status, removed.body.error]).toEqual([200, undefined]);
+    expect(removed.body.meta).toMatchObject({ editRevision: snapshot.revision + 2, homepageProductsRevision: 2 });
+    expect(await settingsRow()).toMatchObject({
+      homeNewestProductIds: [other.id], homeFavoriteProductIds: [], homeDiscountedProductIds: [other.id],
+      homeWeeklyPicksProductIds: [other.id], homeWeeklyPicksEnabled: true, HomepageProductsRevision: 2,
+    });
+    expect(await strapi.db.connection("products").where({ id: product.id }).first()).toMatchObject({ edit_revision: snapshot.revision + 2 });
+    expect(await strapi.db.connection("products").where({ id: other.id }).first()).toMatchObject({ edit_revision: 1 });
+  });
+
+  it("repairs a missing homepage revision column on site_settings idempotently", async () => {
+    const { ensureCatalogEditStorage } = require("../../../../database/catalog-edit-storage");
+    // DDL stays inside a rolled-back transaction on this disposable test DB.
+    const trx = await strapi.db.connection.transaction();
+    try {
+      await trx.schema.alterTable("site_settings", (table: any) => table.dropColumn("homepage_products_revision"));
+      expect(await trx.schema.hasColumn("site_settings", "homepage_products_revision")).toBe(false);
+      await ensureCatalogEditStorage(trx);
+      expect(await trx.schema.hasColumn("site_settings", "homepage_products_revision")).toBe(true);
+      expect(await trx("site_settings").where({ id: settingsId }).first()).toMatchObject({ homepage_products_revision: 0 });
+      await trx("site_settings").where({ id: settingsId }).update({ homepage_products_revision: 7 });
+      await ensureCatalogEditStorage(trx);
+      expect(await trx("site_settings").where({ id: settingsId }).first()).toMatchObject({ homepage_products_revision: 7 });
+      expect(await trx.schema.hasTable("settings")).toBe(false);
+    } finally {
+      await trx.rollback();
+    }
+  });
 });

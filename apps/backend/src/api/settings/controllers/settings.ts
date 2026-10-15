@@ -409,7 +409,7 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       for (const id of after) if (!before.has(id)) changedMembership.add(id);
     }
     const mutate = async (trx: any) => {
-      const locked = await trx("settings").where({ id: settingsEntity.id }).forUpdate().first();
+      const locked = await trx("site_settings").where({ id: settingsEntity.id }).forUpdate().first();
       if (Number(locked.homepage_products_revision || 0) !== expectedRevision) throw new CatalogEditError("HOMEPAGE_VERSION_CONFLICT");
       data.HomepageProductsRevision = expectedRevision + 1;
       const entity = await withHomepageSettingsWrite(() => strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
