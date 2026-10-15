@@ -352,21 +352,41 @@ it("preserves authorized API-token lifecycle commands and denies restricted toke
 
 describe("authenticated homepage settings writes on the declared PostgreSQL table", () => {
   let settingsId: number;
+  let previousHomepage: Record<string, unknown>;
+  const homepageDefaults = {
+    homeNewestProductIds: [], homeFavoriteProductIds: [], homeDiscountedProductIds: [],
+    homeWeeklyPicksProductIds: [], homeEveryoneFollowsProductIds: [],
+    homeWeeklyPicksEnabled: false, homeEveryoneFollowsEnabled: false, HomepageProductsRevision: 0,
+  };
 
   beforeEach(async () => {
     expect(strapi.db.metadata.get("api::settings.settings").tableName).toBe("site_settings");
     expect(await strapi.db.connection.schema.hasTable("site_settings")).toBe(true);
     expect(await strapi.db.connection.schema.hasTable("settings")).toBe(false);
-    settingsId = (await strapi.db.query("api::settings.settings").create({ data: {
-      homeNewestProductIds: [], homeFavoriteProductIds: [], homeDiscountedProductIds: [],
-      homeWeeklyPicksProductIds: [], homeEveryoneFollowsProductIds: [],
-      homeWeeklyPicksEnabled: false, homeEveryoneFollowsEnabled: false,
-    } })).id;
+    const query = strapi.db.query("api::settings.settings");
+    const existing = await query.findOne({ where: {}, orderBy: { id: "asc" } });
+    if (existing) {
+      settingsId = existing.id;
+      previousHomepage = Object.fromEntries(Object.keys(homepageDefaults).map((field) => [field, existing[field]]));
+      await query.update({ where: { id: settingsId }, data: { ...homepageDefaults } });
+    } else {
+      settingsId = (await query.create({ data: { ...homepageDefaults } })).id;
+    }
   });
 
   afterEach(async () => {
-    if (settingsId) await strapi.db.query("api::settings.settings").delete({ where: { id: settingsId } });
+    if (settingsId) {
+      const query = strapi.db.query("api::settings.settings");
+      if (previousHomepage) {
+        await query.update({ where: { id: settingsId }, data: { ...previousHomepage } });
+        const restored = await query.findOne({ where: { id: settingsId } });
+        expect(Object.fromEntries(Object.keys(homepageDefaults).map((field) => [field, restored[field]]))).toEqual(previousHomepage);
+      } else {
+        await query.delete({ where: { id: settingsId } });
+      }
+    }
     settingsId = undefined;
+    previousHomepage = undefined;
   });
 
   const settingsRow = () => strapi.db.query("api::settings.settings").findOne({ where: { id: settingsId } });
