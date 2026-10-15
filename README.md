@@ -1,124 +1,83 @@
-# Infinity Store
+<p align="center">
+  <img src="docs/branding/logo.png" alt="Infinitycolor" width="220">
+</p>
 
-Infinity Store is a full-stack e-commerce platform built for the Iranian market with a Strapi backend and a Next.js frontend. This repository contains everything required to run, test, and deploy the platform in a consistent and secure manner.
+# Infinitycolor
 
-## Project Structure
+Infinitycolor is a Persian commerce platform. Next.js serves the storefront;
+Strapi owns catalog, accounts, orders, and payment integrations.
 
-```
-infinity/
-├── apps/
-│   ├── apps/backend/      # Strapi 4.25 API (TypeScript, PostgreSQL, Redis)
-│   └── apps/frontend/     # Next.js 16 App Router (TypeScript, Tailwind, Jotai)
-├── packages/         # Future shared workspace packages
-├── package.json      # pnpm workspace scripts
-├── pnpm-workspace.yaml
-├── turbo.json
-└── .github/          # CI/CD workflows and CODEOWNERS
-```
+![Infinitycolor brand artwork](docs/branding/cover.jpg)
 
-## Technology Stack
+## First local start
 
-### Backend
-- **Framework**: Strapi 4.25.21 (Headless CMS)
-- **Database**: PostgreSQL 16
-- **Cache**: Redis 7
-- **Language**: TypeScript
-- **Payment**: Beh Pardakht Mellat, SnappPay
-- **Authentication**: Strapi users-permissions plugin
+[راهنمای کامل فارسی](docs/development.fa.md) · [Complete English guide](docs/development.md)
 
-### Frontend
-- **Framework**: Next.js 16.0.3 (App Router)
-- **React**: 19.2.0
-- **Language**: TypeScript 5 (strict mode)
-- **Styling**: Tailwind CSS 3.4.1 + shadcn/ui
-- **State**: Jotai 2.11.1
-- **UI**: RTL-first design for Persian/Farsi
-
-## Key Capabilities
-
-- Comprehensive shopping journey with intelligent discounting and wallet support
-- Secure checkout across Mellat, SnappPay, and in-platform wallet gateways
-- Operational tooling for orders, fulfillment, and shipping with Anipo
-- Rich user accounts with wallets, histories, and saved preferences
-- RTL-first responsive UI optimized for Persian shoppers
-- Administrative dashboards for monitoring catalog health and KPIs
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 20+
-- PostgreSQL 16
-- Redis 7
-- pnpm 10+ via Corepack
-
-### Install
+Use Node.js 20.19+ within 20.x, pnpm 10.28.2 through Corepack, and Docker Compose.
+From the repository root, in Bash or PowerShell:
 
 ```bash
-corepack enable
-pnpm install
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter @repo/auth-core build
+node scripts/setup-dev-env.mjs
+docker compose --env-file apps/backend/.env -f compose.dev.yml up -d
+docker compose --env-file apps/backend/.env -f compose.dev.yml ps
 ```
 
-### Backend
+Wait for PostgreSQL to be healthy. Start the backend, keeping the terminal open:
 
 ```bash
-pnpm turbo run develop --filter=@repo/backend
+corepack pnpm --filter @repo/backend dev
 ```
 
-Starts Strapi on http://localhost:1337.
-
-### Frontend
+In another terminal at the root:
 
 ```bash
-pnpm turbo run dev --filter=@repo/frontend
+corepack pnpm --filter @repo/frontend dev
 ```
 
-Starts Next.js on http://localhost:2888.
+Create the local technical admin at http://localhost:1337/admin. Open
+http://localhost:1337/api/_health and confirm database/cache checks, then open
+http://localhost:2888. Local PostgreSQL is on 5432; Redis is on 6379.
 
-See the backend and frontend app directories for additional environment configuration details.
+A fresh database has no complete demo catalog or storefront login account.
+The [first-use checklist](docs/development.md#first-use-and-local-fixtures) gives
+API/unit-test checks you can do immediately and the exact local catalog/account
+fixture to request from the maintainer. Strapi's technical admin is a separate
+account from a customer or store administrator.
 
-## Documentation
+Authentication, custom admin, and social content need the Auth migration and
+matching service secrets. Follow the [Auth setup](docs/development.md#auth-and-the-other-apps)
+before starting those apps.
 
-- **Backend Guide**: [`apps/backend/CLAUDE.md`](apps/backend/CLAUDE.md)
-- **Frontend Guide**: [`apps/frontend/CLAUDE.md`](apps/frontend/CLAUDE.md)
-- **Development Rules**: `.cursor/rules/*.mdc`
-- **Troubleshooting**: [`apps/backend/TROUBLESHOOTING-SLUGS.md`](apps/backend/TROUBLESHOOTING-SLUGS.md), [`apps/backend/DOCKER_DEV.md`](apps/backend/DOCKER_DEV.md)
+## Where to work
 
-## Deployment
+- [`apps/frontend`](apps/frontend) — storefront, port 2888
+- [`apps/backend`](apps/backend) — Strapi commerce API, port 1337
+- [`apps/auth`](apps/auth) — central session runtime, port 2889
+- [`apps/admin`](apps/admin) — custom admin, port 2891
+- [`apps/social`](apps/social) — social app, port 2890
+- [`apps/e2e`](apps/e2e) — Playwright coverage
+- [`packages`](packages) — shared contracts and UI
 
-| Branch        | Environment   | Notes                                  |
-| ------------- | ------------- | -------------------------------------- |
-| `main`        | Production    | Protected, release-ready only          |
-| `dev`         | Staging       | Integration branch for feature work    |
-| `experimental`| Experimental  | Safe space for spikes and prototypes   |
+## Checks
 
-Each branch has associated CI workflows defined under `.github/workflows`. Refer to the apps/backend/frontend app READMEs for deployment details.
+```bash
+corepack pnpm --filter @repo/frontend lint
+corepack pnpm --filter @repo/frontend check-types
+corepack pnpm --filter @repo/frontend test --runInBand
+corepack pnpm --filter @repo/backend check-types
+corepack pnpm --filter @repo/backend test --runInBand
+```
 
-## Contributing
+Run affected checks and builds as described in the guide. Keep real payment/SMS
+credentials out of the first local run.
 
-We welcome thoughtful contributions and expect all contributors to follow the established workflows.
+## Collaboration and releases
 
-- **[Contributing Guide](CONTRIBUTING.md)** — Development workflow and review expectations
-- **[Code of Conduct](CODE_OF_CONDUCT.md)** — Community standards
-- **[Collaborator Roles](.github/COLLABORATORS.md)** — Access levels and responsibilities
+- [GitLab workflow](docs/gitlab-workflow.md) · [راهنمای GitLab](docs/gitlab-workflow.fa.md)
+- [GitLab CI](.gitlab-ci.yml) · [Production release guide](deploy/production/README.md)
+- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+- [Issues](https://git.alpagency.net/bel4/infinity/-/issues) · [Merge requests](https://git.alpagency.net/bel4/infinity/-/merge_requests)
 
-All changes targeting `main` or `dev` must go through a pull request and pass automated checks.
-
-## Support
-
-- **[Support Guide](.github/SUPPORT.md)** — Issue triage and troubleshooting resources
-- **[Security Policy](SECURITY.md)** — Private vulnerability disclosure process
-- **[GitHub Issues](../../issues)** — Bug reports and feature requests
-- **[GitHub Discussions](../../discussions)** — General questions and community topics
-
-## Project Management
-
-- **[Changelog](CHANGELOG.md)** — Release history
-- **[Code Owners](.github/CODEOWNERS)** — Default reviewer coverage
-- **[Issue Templates](.github/ISSUE_TEMPLATE/)** — Standardized issue creation
-
-## License
-
-Infinity Store is released under the MIT License. See the [LICENSE](LICENSE) file for the full text.
-
-
+[MIT license](LICENSE).

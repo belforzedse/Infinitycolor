@@ -1,0 +1,25 @@
+name: infinity-dev
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:?Generate apps/backend/.env first}
+      POSTGRES_USER: ${DATABASE_USERNAME:?Generate apps/backend/.env first}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Generate apps/backend/.env first}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+  queue-redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6381:6379"]
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
+volumes:
+  postgres-data:
