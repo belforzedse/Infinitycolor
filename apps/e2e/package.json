@@ -14,6 +14,7 @@
     "e2e:adaptive:parity": "playwright test --config static-parity.playwright.config.ts",
     "e2e:adaptive:lowest": "playwright test --config forced-low.playwright.config.ts",
     "e2e:instant": "playwright test --config instant.playwright.config.ts",
+    "e2e:cart-recovery": "playwright test --config cart-recovery.playwright.config.ts",
     "e2e:analytics": "playwright test --config analytics.playwright.config.ts",
     "e2e:admin": "playwright test --config admin.playwright.config.ts",
     "e2e:admin:smoke": "playwright test --config admin.playwright.config.ts --grep \"@smoke\"",

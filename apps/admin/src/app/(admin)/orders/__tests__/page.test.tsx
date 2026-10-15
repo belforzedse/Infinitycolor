@@ -1,3 +1,6 @@
+jest.mock("@/components/SuperAdmin/UpsertPage/ContentWrapper/Fields/ProvinceCityField", () => ({
+  __esModule: true, default: () => <div data-testid="city-filter" />,
+}));
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { NuqsTestingAdapter, type UrlUpdateEvent } from "nuqs/adapters/testing";
 
@@ -11,6 +14,7 @@ let mockOrderCountsState: {
   loading: boolean;
   error?: string;
 };
+let mockOrderCountOptions: { filters: unknown[] };
 
 jest.mock("@/components/SuperAdmin/Table", () => ({
   refreshTable: {},
@@ -40,10 +44,13 @@ jest.mock("@/services/super-admin/orders/adjustItems", () => ({
   cancelOrder: jest.fn(),
 }));
 jest.mock("@/hooks/useOrderStatusCounts", () => ({
-  useOrderStatusCounts: () => ({
-    ...mockOrderCountsState,
-    refresh: mockRefreshOrderCounts,
-  }),
+  useOrderStatusCounts: (options: { filters: unknown[] }) => {
+    mockOrderCountOptions = options;
+    return {
+      ...mockOrderCountsState,
+      refresh: mockRefreshOrderCounts,
+    };
+  },
 }));
 jest.mock("react-hot-toast", () => ({
   __esModule: true,
@@ -63,7 +70,7 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/orders",
   useSearchParams: () => new URLSearchParams(),
 }));
-jest.mock("jotai", () => ({ useAtom: () => [false, jest.fn()] }));
+jest.mock("jotai", () => ({ atom: () => ({}), useAtom: () => [false, jest.fn()], useSetAtom: () => jest.fn() }));
 // Stable across renders like the real hook: a new function each render would
 // re-run the page's search effect, and its setPage, on every render.
 jest.mock("use-debounce", () => {
@@ -137,6 +144,10 @@ describe("orders page bounded data ownership", () => {
     expect(mockTableProps.url).toBeUndefined();
     expect(mockTableProps.dataLoader).toEqual(expect.any(Function));
     expect(mockTableProps.refreshOnVisibility).toBe(false);
+    expect(mockTableProps.rowGrouping).toEqual(expect.objectContaining({
+      getKey: expect.any(Function),
+      renderHeader: expect.any(Function),
+    }));
     expect(mockWrapperProps.filters).toEqual([]);
     expect(mockWrapperProps.onFiltersChange).toEqual(expect.any(Function));
 
@@ -154,6 +165,7 @@ describe("orders page bounded data ownership", () => {
         tab: "all",
         sort: "newest",
         signal: controller.signal,
+        filters: [{ field: "[reserve_shipment][id]", operator: "$null", value: "true" }],
       }),
     );
   });
@@ -273,7 +285,7 @@ describe("orders page bounded data ownership", () => {
     );
   });
 
-  it("narrows the list to reserve orders with the reserve checkbox", async () => {
+  it("excludes reserve orders while unchecked and shows them while checked in both rows and counts", async () => {
     renderPage();
 
     const reserveOnly = screen.getByRole("checkbox", {
@@ -281,11 +293,17 @@ describe("orders page bounded data ownership", () => {
     });
     expect(reserveOnly).not.toBeChecked();
     expect(mockTableProps.isFiltered).toBe(false);
+    expect(mockOrderCountOptions.filters).toEqual([
+      { field: "[reserve_shipment][id]", operator: "$null", value: "true" },
+    ]);
 
     fireEvent.click(reserveOnly);
 
     await waitFor(() => expect(mockTableProps.isFiltered).toBe(true));
     expect(mockTableProps.dataLoaderKey).toContain('"reserveOnly":true');
+    expect(mockOrderCountOptions.filters).toEqual([
+      { field: "[reserve_shipment][id]", operator: "$notNull", value: "true" },
+    ]);
     // The toggle rides along with the request, never with the operator's
     // advanced filters, so it must not surface as a removable chip.
     expect(mockWrapperProps.filters).toEqual([]);
@@ -315,8 +333,14 @@ describe("orders page bounded data ownership", () => {
       signal: new AbortController().signal,
     });
     expect(listAdminOrders).toHaveBeenLastCalledWith(
-      expect.objectContaining({ filters: [ownFilter] }),
+      expect.objectContaining({ filters: [
+        ownFilter,
+        { field: "[reserve_shipment][id]", operator: "$null", value: "true" },
+      ] }),
     );
+    expect(mockOrderCountOptions.filters).toEqual([
+      { field: "[reserve_shipment][id]", operator: "$null", value: "true" },
+    ]);
   });
 
   it("keeps reserve shipments off the order-status tabs", () => {
@@ -485,4 +509,16 @@ describe("orders page bounded data ownership", () => {
       expect(mockWrapperProps.filters).toEqual([ownFilter]);
     });
   });
+  it("restores delivery criteria and applies identical filters to the list and counts", async () => {
+    renderPage("?cityId=7&productCode=Ab-001&postalCode=0123456789&addressText=خیابان&page=3");
+    expect(screen.getByLabelText("کد محصول")).toHaveValue("Ab-001");
+    await mockTableProps.dataLoader({ page: 3, pageSize: 25, filters: [], signal: new AbortController().signal });
+    expect(listAdminOrders).toHaveBeenLastCalledWith(expect.objectContaining({
+      cityId: "7", productCode: "Ab-001", postalCode: "0123456789", addressText: "خیابان", page: 3,
+    }));
+    expect(mockOrderCountOptions).toMatchObject({ deliverySearch: {
+      cityId: "7", productCode: "Ab-001", postalCode: "0123456789", addressText: "خیابان",
+    } });
+  });
+
 });

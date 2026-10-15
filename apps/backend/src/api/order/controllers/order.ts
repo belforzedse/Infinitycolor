@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { captureOrderDeliverySnapshot, effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
+import { parseOrderAddressInput, OrderAddressValidationError } from "./helpers/adminUpdateAddress";
 /**
  * order controller (slim delegator)
  */
@@ -7,6 +9,7 @@ import { factories } from "@strapi/strapi";
 import { Strapi } from "@strapi/strapi";
 import { generateAnipoBarcodeHandler } from "./helpers/generateBarcode";
 import { checkAnipoBarcodeHandler } from "./helpers/checkAnipoBarcode";
+import { reserveParcelAnipoHandler } from "./helpers/anipoReserveParcel";
 import { verifyPaymentHandler } from "./helpers/payment";
 import { snappayCallbackHandler } from "./helpers/snappayCallback";
 import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
@@ -236,6 +239,9 @@ export default factories.createCoreController(
           }
         }
 
+        // Snapshot fields are read only after the existing order authorization.
+        const effectiveDelivery = await effectiveOrderDeliveryAddress(strapi, Number(order.id), order.delivery_address);
+
         // Transform the response to match the frontend's expected structure
         // Check both order.user_info (legacy) and order.user.user_info (correct structure)
         const userInfo = order.user?.user_info || order.user_info;
@@ -260,6 +266,7 @@ export default factories.createCoreController(
             : userInfo;
         const transformedOrder = {
           ...order,
+          delivery_address: effectiveDelivery,
           // The reserve columns on the row are frozen at creation; the live view
           // comes from the group. Without this the admin detail screen would
           // offer fulfillment actions the server refuses (and vice versa).
@@ -296,6 +303,14 @@ export default factories.createCoreController(
             : null,
         };
 
+        if (order.reserve_shipment?.id) {
+          const { getReserveParcelSummary } = await import("../services/anipoReserveParcel");
+          const parcel = await getReserveParcelSummary(strapi, Number(order.reserve_shipment.id));
+          if (["Started", "Done", "Shipment"].includes(order.Status)) {
+            Object.assign(transformedOrder, parcel.workflow);
+            if (parcel.barcode) transformedOrder.ShippingBarcode = parcel.barcode;
+          }
+        }
         ctx.body = { data: transformedOrder };
       } catch (error) {
         ctx.badRequest("Error fetching order", {
@@ -313,12 +328,41 @@ export default factories.createCoreController(
      * orders are logged; customer checkout creates orders through cart finalize (which uses
      * `entityService.create` and bypasses this controller), so there is no double-logging.
      */
-    async create(ctx) {
+    async create(ctx: any) {
       if (!(await requireCapability(ctx, strapi, "order.manual.create"))) return;
+      const requestData = (ctx.request?.body as any)?.data ?? {};
+      let deliveryInput: ReturnType<typeof parseOrderAddressInput> | undefined;
+      if (requestData.deliveryAddress !== undefined) {
+        try { deliveryInput = parseOrderAddressInput(requestData.deliveryAddress); }
+        catch (error) {
+          if (error instanceof OrderAddressValidationError) return ctx.badRequest(error.message);
+          throw error;
+        }
+      }
+      const city = deliveryInput ? await strapi.db.query("api::shipping-city.shipping-city").findOne({
+        where: { id: deliveryInput.shippingCityId }, populate: { shipping_province: true },
+      }) : null;
+      if (deliveryInput && !city?.shipping_province) return ctx.badRequest("استان و شهر معتبر نیست");
       return strapi.db.transaction(async ({ trx }) => {
+        // This small input is not an order-schema attribute. Persist its address
+        // first so both the relation and immutable order-time snapshot commit.
+        if (deliveryInput) {
+          const address = await strapi.db.query("api::local-user-address.local-user-address").create({ data: {
+            shipping_city: deliveryInput.shippingCityId, FullAddress: deliveryInput.fullAddress,
+            PostalCode: deliveryInput.postalCode, FullName: deliveryInput.recipientName,
+            Phone: deliveryInput.recipientPhone, IsTemporary: true,
+            user: requestData.user || undefined,
+          }, transacting: trx } as any);
+          const { deliveryAddress, ...orderInput } = requestData;
+          ctx.request.body.data = { ...orderInput, delivery_address: address.id };
+        }
         const response = await super.create(ctx);
         const actorId = ctx.state?.user?.id ? Number(ctx.state.user.id) : null;
         const orderId = Number((response as any)?.data?.id ?? (response as any)?.id);
+        if (orderId) {
+          const addressId = Number((ctx.request?.body as any)?.data?.delivery_address) || undefined;
+          await captureOrderDeliverySnapshot(strapi, orderId, addressId, trx, "manual");
+        }
         if (actorId && orderId) {
           const requestData = (ctx.request?.body as any)?.data ?? {};
           const ip = getClientIp(ctx);
@@ -401,6 +445,12 @@ export default factories.createCoreController(
 
     async checkAnipoBarcode(ctx) {
       return checkAnipoBarcodeHandler(strapi as any, ctx);
+    },
+    async generateReserveParcelBarcode(ctx) {
+      return reserveParcelAnipoHandler(strapi, ctx);
+    },
+    async checkReserveParcelBarcode(ctx) {
+      return reserveParcelAnipoHandler(strapi, ctx, true);
     },
 
     async verifyPayment(ctx) {

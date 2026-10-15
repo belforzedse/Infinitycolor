@@ -1,5 +1,8 @@
 "use client";
 
+import DeliverySearchFilters from "./DeliverySearchFilters";
+import { useOrderDeliverySearch } from "@/hooks/useOrderDeliverySearch";
+
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { MobileTable, columns, bulkPrintOrders, Order } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
@@ -35,6 +38,7 @@ import ShippingMethodFilters from "./ShippingMethodFilters";
 import { useOrderStatusCounts } from "@/hooks/useOrderStatusCounts";
 import { faNum } from "@/utils/faNum";
 import Link from "next/link";
+import { reserveParcelGrouping } from "./ReserveParcelHeader";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
@@ -62,17 +66,21 @@ const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
   { status: "Shipment", label: "ارسال شده" },
 ];
 
-// The «نمایش سفارش‌های رزروی» checkbox is a one-click form of the advanced
-// «سفارش رزروی» filter: same server-side condition (the reserve group relation
-// is present), sent alongside the operator's own advanced filters rather than
-// stored with them, so it never shows up as a removable filter chip.
+// The checkbox switches between regular orders and reserve parcels using the
+// live shipment relation. Apply the same condition to rows and tab counts.
 const RESERVE_ONLY_FILTER: AdvancedFilterItem = {
   field: "[reserve_shipment][id]",
   operator: "$notNull",
   value: "true",
 };
+const REGULAR_ONLY_FILTER: AdvancedFilterItem = {
+  field: "[reserve_shipment][id]",
+  operator: "$null",
+  value: "true",
+};
 
 export default function OrdersPage() {
+  const deliverySearch = useOrderDeliverySearch();
   const canCreateManualOrder = useCan("order.manual.create");
   // Bulk actions call the exact same per-order operations, so they must use
   // the same capabilities instead of requiring a second, unrelated bulk flag.
@@ -129,7 +137,7 @@ export default function OrdersPage() {
   // Tab badges must count the same population the table shows, so the reserve
   // toggle is folded into the counts request exactly as it is into the list.
   const countFilters = useMemo(
-    () => (reserveOnly ? [...advancedFilters, RESERVE_ONLY_FILTER] : advancedFilters),
+    () => [...advancedFilters, reserveOnly ? RESERVE_ONLY_FILTER : REGULAR_ONLY_FILTER],
     [advancedFilters, reserveOnly],
   );
   const {
@@ -139,6 +147,7 @@ export default function OrdersPage() {
     error: countsError,
     refresh: refreshOrderCounts,
   } = useOrderStatusCounts({
+    deliverySearch: deliverySearch.searchFilters,
     filters: countFilters,
     search: debouncedSearchQuery,
     shippingMethodCodes: selectedShippingMethodCodes,
@@ -387,16 +396,17 @@ export default function OrdersPage() {
       signal: AbortSignal;
     }) =>
       listAdminOrders({
+        ...deliverySearch.searchFilters,
         page,
         pageSize,
-        filters: reserveOnly ? [...filters, RESERVE_ONLY_FILTER] : filters,
+        filters: [...filters, reserveOnly ? RESERVE_ONLY_FILTER : REGULAR_ONLY_FILTER],
         signal,
         tab: activeTab,
         sort,
         search: debouncedSearchQuery,
         shippingMethodCodes: selectedShippingMethodCodes,
       }),
-    [activeTab, debouncedSearchQuery, reserveOnly, selectedShippingMethodCodes, sort],
+    [activeTab, debouncedSearchQuery, deliverySearch.searchFilters, reserveOnly, selectedShippingMethodCodes, sort],
   );
 
   const handleReserveOnlyChange = useCallback(
@@ -559,6 +569,7 @@ export default function OrdersPage() {
           <span>نمایش سفارش‌های رزروی</span>
         </label>
       </div>
+      <DeliverySearchFilters {...deliverySearch} />
       <ShippingMethodFilters
         methods={shippingMethods}
         selectedCodes={selectedShippingMethodCodes}
@@ -579,12 +590,14 @@ export default function OrdersPage() {
       />
       <SuperAdminTable
         columns={columns}
+        rowGrouping={reserveParcelGrouping}
         enableSelection={bulkOptions.length > 0}
         bulkOptions={bulkOptions}
         onBulkAction={handleBulkAction}
         filters={advancedFilters}
         dataLoader={loadOrders}
         dataLoaderKey={JSON.stringify({
+          deliverySearch: deliverySearch.searchFilters,
           tab: activeTab,
           sort,
           search: debouncedSearchQuery,
@@ -593,12 +606,15 @@ export default function OrdersPage() {
         })}
         refreshOnVisibility={false}
         isFiltered={
+          deliverySearch.active ||
           Boolean(debouncedSearchQuery) ||
           advancedFilters.length > 0 ||
           selectedShippingMethodCodes.length > 0 ||
           reserveOnly
         }
         onClearFilters={() => {
+          deliverySearch.clear();
+          debouncedSearch.cancel();
           setSearchQuery("");
           setDebouncedSearchQuery("");
           setSelectedShippingMethodCodes([]);

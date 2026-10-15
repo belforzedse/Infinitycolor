@@ -61,6 +61,9 @@ export interface GenericRelationArray<T> {
 }
 
 export interface ProductDataResponse {
+  EditRevision?: number;
+  LastEditedByAdminAt?: string | null;
+  product_size_helper?: { data: { id: number; attributes: { Helper?: unknown } } | null };
   Title: string;
   Slug?: string | null;
   Description: string;

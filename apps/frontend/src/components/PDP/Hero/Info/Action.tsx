@@ -109,7 +109,16 @@ export default function PDPHeroInfoAction({
   const availableStock = currentVariation ? getAvailableStockCount(currentVariation) : 0;
 
   // Initialize add to cart hook
-  const { quantity, setQuantity, isAdding, isInCart, isCartReady, addToCart } = useAddToCart({
+  const {
+    quantity,
+    setQuantity,
+    isAdding,
+    isInCart,
+    isCartReady,
+    authRecoveryUnavailable,
+    retryAuthRecovery,
+    addToCart,
+  } = useAddToCart({
     productId,
     name,
     category,
@@ -364,6 +373,18 @@ export default function PDPHeroInfoAction({
             </>
           )}
         </div>
+        {isCartActionPending && authRecoveryUnavailable && (
+          <div role="alert" className="flex items-center justify-between gap-3 text-sm">
+            <p>اتصال به سبد خرید برقرار نشد.</p>
+            <button
+              type="button"
+              onClick={retryAuthRecovery}
+              className="min-h-11 shrink-0 px-2 text-infinity-primary underline underline-offset-4"
+            >
+              تلاش دوباره
+            </button>
+          </div>
+        )}
         {/*
           Availability is `Count - reservedCount`, so a shopper used to learn the
           real number only from the rejection toast after overshooting. Say it up

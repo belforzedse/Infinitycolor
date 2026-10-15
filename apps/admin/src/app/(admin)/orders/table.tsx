@@ -13,6 +13,7 @@ import {
   StatusBadge,
 } from "@/components/admin";
 import type { AnipoBarcodeState } from "@/types/super-admin/order";
+import type { AnipoParcelSummary } from "@/services/super-admin/orders/reserveGroups";
 /**
  * Identity shown on an order row.
  *
@@ -80,6 +81,7 @@ export type Order = {
      */
     isReserveOrder?: boolean;
     reserveGroupId?: string | null;
+    reserveParcel?: AnipoParcelSummary;
     reserveState?: string | null;
     reserveClosureReason?: string | null;
     reserveExpiresAt?: string | null;

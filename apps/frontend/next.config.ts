@@ -200,6 +200,19 @@ const nextConfig = {
   // invalidation inconsistent and can leave the Redis handler unused.
   cacheMaxMemorySize: 0,
 };
+const sentryRelease = process.env.SENTRY_RELEASE || process.env.GITHUB_SHA;
+// Releases are named by commit SHA; the repo name is how Sentry's GitLab
+// integration lists bel4/infinity.
+const sentryCommits =
+  sentryRelease && /^[0-9a-f]{40}$/.test(sentryRelease)
+    ? {
+        repo: process.env.SENTRY_REPO || "Yazdan / Infinity",
+        commit: sentryRelease,
+        ignoreMissing: true,
+        ignoreEmpty: true,
+      }
+    : undefined;
+
 module.exports = withSentryConfig(nextConfig, {
   silent: !process.env.CI,
   org: process.env.SENTRY_ORG || "alpagency",
@@ -214,5 +227,11 @@ module.exports = withSentryConfig(nextConfig, {
     deleteSourcemapsAfterUpload: true,
   },
   widenClientFileUpload: true,
-  release: { name: process.env.SENTRY_RELEASE || process.env.GITHUB_SHA },
+  release: {
+    name: sentryRelease,
+    // Attach the release's commits so Sentry can show suspect commits and
+    // resolve issues from "Fixes <SHORT-ID>" commit messages. Failures here are
+    // logged by the plugin and never fail the build.
+    setCommits: sentryCommits,
+  },
 });

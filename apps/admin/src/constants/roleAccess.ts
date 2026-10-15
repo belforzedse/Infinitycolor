@@ -57,6 +57,10 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/reports/liquidity", capability: "report.finance.read" },
   { prefix: "/reports/gateway-liquidity", capability: "report.finance.read" },
   { prefix: "/reports/admin-activity", capability: "system.audit.read" },
+  {
+    prefix: "/reports/exports",
+    capability: "report.excel.export" as AdminCapability,
+  },
   { prefix: "/reports", capability: "report.sales.read" },
   { prefix: "/carts", capability: "report.carts.read" },
   { prefix: "/wallets", capability: "wallet.read" },

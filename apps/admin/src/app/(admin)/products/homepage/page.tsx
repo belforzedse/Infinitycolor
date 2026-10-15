@@ -42,6 +42,8 @@ export default function HomepageProductsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const [homepageRevision, setHomepageRevision] = useState<number | null>(null);
+  const [conflicted, setConflicted] = useState(false);
   const [newestIds, setNewestIds] = useState<number[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<number[]>([]);
   const [discountedIds, setDiscountedIds] = useState<number[]>([]);
@@ -51,14 +53,24 @@ export default function HomepageProductsPage() {
   const [everyoneFollowsIds, setEveryoneFollowsIds] = useState<number[]>([]);
 
   const [newestSummaries, setNewestSummaries] = useState<ProductSummary[]>([]);
-  const [favoriteSummaries, setFavoriteSummaries] = useState<ProductSummary[]>([]);
-  const [discountedSummaries, setDiscountedSummaries] = useState<ProductSummary[]>([]);
-  const [weeklyPicksSummaries, setWeeklyPicksSummaries] = useState<ProductSummary[]>([]);
-  const [everyoneFollowsSummaries, setEveryoneFollowsSummaries] = useState<ProductSummary[]>([]);
+  const [favoriteSummaries, setFavoriteSummaries] = useState<ProductSummary[]>(
+    [],
+  );
+  const [discountedSummaries, setDiscountedSummaries] = useState<
+    ProductSummary[]
+  >([]);
+  const [weeklyPicksSummaries, setWeeklyPicksSummaries] = useState<
+    ProductSummary[]
+  >([]);
+  const [everyoneFollowsSummaries, setEveryoneFollowsSummaries] = useState<
+    ProductSummary[]
+  >([]);
 
   const loadSettingsAndSummaries = useCallback(async () => {
     try {
       const settings = await getHomepageProductSettings();
+      setHomepageRevision(settings.HomepageProductsRevision);
+      setConflicted(false);
       setNewestIds(settings.homeNewestProductIds);
       setFavoriteIds(settings.homeFavoriteProductIds);
       setDiscountedIds(settings.homeDiscountedProductIds);
@@ -67,13 +79,14 @@ export default function HomepageProductsPage() {
       setEveryoneFollowsEnabled(settings.homeEveryoneFollowsEnabled);
       setEveryoneFollowsIds(settings.homeEveryoneFollowsProductIds);
 
-      const [newest, favorites, discounted, weeklyPicks, everyoneFollows] = await Promise.all([
-        getProductSummariesByIds(settings.homeNewestProductIds),
-        getProductSummariesByIds(settings.homeFavoriteProductIds),
-        getProductSummariesByIds(settings.homeDiscountedProductIds),
-        getProductSummariesByIds(settings.homeWeeklyPicksProductIds),
-        getProductSummariesByIds(settings.homeEveryoneFollowsProductIds),
-      ]);
+      const [newest, favorites, discounted, weeklyPicks, everyoneFollows] =
+        await Promise.all([
+          getProductSummariesByIds(settings.homeNewestProductIds),
+          getProductSummariesByIds(settings.homeFavoriteProductIds),
+          getProductSummariesByIds(settings.homeDiscountedProductIds),
+          getProductSummariesByIds(settings.homeWeeklyPicksProductIds),
+          getProductSummariesByIds(settings.homeEveryoneFollowsProductIds),
+        ]);
       setNewestSummaries(newest);
       setFavoriteSummaries(favorites);
       setDiscountedSummaries(discounted);
@@ -108,24 +121,31 @@ export default function HomepageProductsPage() {
     [weeklyPicksSummaries, weeklyPicksIds],
   );
   const everyoneFollowsSummariesForPicker = useMemo(
-    () => everyoneFollowsSummaries.filter((s) => everyoneFollowsIds.includes(s.id)),
+    () =>
+      everyoneFollowsSummaries.filter((s) => everyoneFollowsIds.includes(s.id)),
     [everyoneFollowsSummaries, everyoneFollowsIds],
   );
 
   const handleSave = async () => {
+    if (homepageRevision === null || conflicted) return;
     setSaving(true);
     try {
-      const saved = await updateHomepageProductSettings({
-        homeNewestProductIds: newestIds,
-        homeFavoriteProductIds: favoriteIds,
-        homeDiscountedProductIds: discountedIds,
-        homeWeeklyPicksEnabled: weeklyPicksEnabled,
-        homeWeeklyPicksProductIds: weeklyPicksIds,
-        homeEveryoneFollowsEnabled: everyoneFollowsEnabled,
-        homeEveryoneFollowsProductIds: everyoneFollowsIds,
-      });
+      const saved = await updateHomepageProductSettings(
+        {
+          homeNewestProductIds: newestIds,
+          homeFavoriteProductIds: favoriteIds,
+          homeDiscountedProductIds: discountedIds,
+          homeWeeklyPicksEnabled: weeklyPicksEnabled,
+          homeWeeklyPicksProductIds: weeklyPicksIds,
+          homeEveryoneFollowsEnabled: everyoneFollowsEnabled,
+          homeEveryoneFollowsProductIds: everyoneFollowsIds,
+        },
+        homepageRevision,
+      );
       toast.success("تنظیمات با موفقیت ذخیره شد");
       const settings = saved ?? (await getHomepageProductSettings());
+      setHomepageRevision(settings.HomepageProductsRevision);
+      setConflicted(false);
       setNewestIds(settings.homeNewestProductIds);
       setFavoriteIds(settings.homeFavoriteProductIds);
       setDiscountedIds(settings.homeDiscountedProductIds);
@@ -134,19 +154,25 @@ export default function HomepageProductsPage() {
       setEveryoneFollowsEnabled(settings.homeEveryoneFollowsEnabled);
       setEveryoneFollowsIds(settings.homeEveryoneFollowsProductIds);
 
-      const [newest, favorites, discounted, weeklyPicks, everyoneFollows] = await Promise.all([
-        getProductSummariesByIds(settings.homeNewestProductIds),
-        getProductSummariesByIds(settings.homeFavoriteProductIds),
-        getProductSummariesByIds(settings.homeDiscountedProductIds),
-        getProductSummariesByIds(settings.homeWeeklyPicksProductIds),
-        getProductSummariesByIds(settings.homeEveryoneFollowsProductIds),
-      ]);
+      const [newest, favorites, discounted, weeklyPicks, everyoneFollows] =
+        await Promise.all([
+          getProductSummariesByIds(settings.homeNewestProductIds),
+          getProductSummariesByIds(settings.homeFavoriteProductIds),
+          getProductSummariesByIds(settings.homeDiscountedProductIds),
+          getProductSummariesByIds(settings.homeWeeklyPicksProductIds),
+          getProductSummariesByIds(settings.homeEveryoneFollowsProductIds),
+        ]);
       setNewestSummaries(newest);
       setFavoriteSummaries(favorites);
       setDiscountedSummaries(discounted);
       setWeeklyPicksSummaries(weeklyPicks);
       setEveryoneFollowsSummaries(everyoneFollows);
     } catch (err) {
+      if (
+        (err as { status?: number }).status === 409 ||
+        !(err as { status?: number }).status
+      )
+        setConflicted(true);
       console.error(err);
       toast.error("خطا در ذخیره. دوباره تلاش کنید.");
     } finally {
@@ -164,12 +190,37 @@ export default function HomepageProductsPage() {
 
   return (
     <ContentWrapper title="محصولات صفحه اصلی">
+      {conflicted && (
+        <div
+          role="alert"
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"
+        >
+          تنظیمات تغییر کرده یا نتیجه ذخیره تأیید نشده است. انتخاب‌های شما در
+          این صفحه محفوظ است.
+          <button
+            className="mr-3 rounded-lg border px-3 py-2"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "انتخاب‌های این صفحه با آخرین تنظیمات جایگزین شود؟",
+                )
+              )
+                void loadSettingsAndSummaries();
+            }}
+          >
+            بارگذاری دوباره
+          </button>
+        </div>
+      )}
+
       <div className="space-y-6 p-4">
         <p className="rounded-lg border border-blue-100 bg-blue-50/50 p-3 text-sm text-blue-800">
-          اگر برای هر بخش محصولی انتخاب نشود، محصولات به صورت خودکار (جدیدترین، محبوب‌ترین یا
-          دارای تخفیف) نمایش داده می‌شوند. برای «جدیدترین ها»، «محبوب ترین ها» و «تخفیف‌های وسوسه
-          انگیز»، محصولات انتخاب‌شده هم در اسلایدر صفحه اصلی و هم در ابتدای صفحه «مشاهده همه» با
-          همین ترتیب نمایش داده می‌شوند؛ باقی محصولات صفحه پس از آن‌ها با ترتیب معمول ظاهر می‌شوند.
+          اگر برای هر بخش محصولی انتخاب نشود، محصولات به صورت خودکار (جدیدترین،
+          محبوب‌ترین یا دارای تخفیف) نمایش داده می‌شوند. برای «جدیدترین ها»،
+          «محبوب ترین ها» و «تخفیف‌های وسوسه انگیز»، محصولات انتخاب‌شده هم در
+          اسلایدر صفحه اصلی و هم در ابتدای صفحه «مشاهده همه» با همین ترتیب نمایش
+          داده می‌شوند؛ باقی محصولات صفحه پس از آن‌ها با ترتیب معمول ظاهر
+          می‌شوند.
         </p>
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -196,7 +247,9 @@ export default function HomepageProductsPage() {
             selectedProductIds={discountedIds}
             productSummaries={discountedSummariesForPicker}
             onProductsChange={setDiscountedIds}
-            onProductAdded={(p) => setDiscountedSummaries((prev) => [...prev, p])}
+            onProductAdded={(p) =>
+              setDiscountedSummaries((prev) => [...prev, p])
+            }
             renderLimit={HOMEPAGE_RENDER_LIMIT}
             sectionKind="discount"
           />
@@ -212,7 +265,9 @@ export default function HomepageProductsPage() {
               selectedProductIds={weeklyPicksIds}
               productSummaries={weeklyPicksSummariesForPicker}
               onProductsChange={setWeeklyPicksIds}
-              onProductAdded={(p) => setWeeklyPicksSummaries((prev) => [...prev, p])}
+              onProductAdded={(p) =>
+                setWeeklyPicksSummaries((prev) => [...prev, p])
+              }
               renderLimit={HOMEPAGE_RENDER_LIMIT}
             />
           </div>
@@ -228,7 +283,9 @@ export default function HomepageProductsPage() {
               selectedProductIds={everyoneFollowsIds}
               productSummaries={everyoneFollowsSummariesForPicker}
               onProductsChange={setEveryoneFollowsIds}
-              onProductAdded={(p) => setEveryoneFollowsSummaries((prev) => [...prev, p])}
+              onProductAdded={(p) =>
+                setEveryoneFollowsSummaries((prev) => [...prev, p])
+              }
               renderLimit={HOMEPAGE_RENDER_LIMIT}
             />
           </div>
@@ -238,7 +295,7 @@ export default function HomepageProductsPage() {
           <button
             type="button"
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || conflicted || homepageRevision === null}
             className="rounded-xl bg-infinity-primary px-6 py-2.5 text-white transition hover:bg-infinity-primary-dark disabled:opacity-50"
           >
             {saving ? "در حال ذخیره..." : "ذخیره تغییرات"}

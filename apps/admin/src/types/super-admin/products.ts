@@ -37,6 +37,7 @@ export interface EditProductData {
   IsSimpleProduct: boolean;
   SimpleVariationId?: number;
   SimpleStockId?: number;
+  SimpleStockRevision?: number;
   SimpleSKU?: string;
   SimplePrice?: number;
   SimpleDiscountPrice?: number | null;

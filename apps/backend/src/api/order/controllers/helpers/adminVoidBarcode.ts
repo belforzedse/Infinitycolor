@@ -16,11 +16,18 @@ export async function adminVoidBarcodeHandler(strapi: Strapi, ctx: any) {
       where: { id },
       populate: {
         contract: true,
+        reserve_shipment: { select: ["id"] },
       },
     });
 
     if (!order) {
       return ctx.notFound("Order not found");
+    }
+
+    if (order.reserve_shipment?.id) {
+      return ctx.badRequest("بارکد این سفارش متعلق به کل بسته است و جداگانه حذف نمی‌شود", {
+        data: { error: "ANIPO_SHARED_PARCEL" },
+      });
     }
 
     if (!order.ShippingBarcode) {

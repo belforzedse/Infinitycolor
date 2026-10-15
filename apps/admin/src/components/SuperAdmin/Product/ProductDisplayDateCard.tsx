@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { DatePicker, TimePicker } from "zaman";
 import toast from "react-hot-toast";
-import { apiClient } from "@/services";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 
 type Props = {
   productId: string | number;
@@ -18,6 +18,7 @@ type Props = {
 // LastEditedByAdminAt, so afterUpdate never re-stamps it to "now" and the chosen instant is
 // preserved without granting the caller broad product-update permission.
 export default function ProductDisplayDateCard({ productId, initialDate }: Props) {
+  const { client, canEdit } = useProductEditor();
   const [date, setDate] = useState<Date>(() => (initialDate ? new Date(initialDate) : new Date()));
   const [saving, setSaving] = useState(false);
 
@@ -44,12 +45,12 @@ export default function ProductDisplayDateCard({ productId, initialDate }: Props
   };
 
   const handleSave = async () => {
-    if (saving) return;
+    if (saving || !canEdit) return;
     setSaving(true);
     try {
       // Local Date → ISO (UTC) so the stored instant round-trips back to the same
       // wall-clock time when re-displayed in the admin's timezone.
-      await apiClient.put(`/products/${productId}/display-date`, {
+      await client.put(`/products/${productId}/display-date`, {
         data: { displayAt: date.toISOString() },
       });
       toast.success("تاریخ و ساعت نمایش محصول ثبت شد");
@@ -109,7 +110,7 @@ export default function ProductDisplayDateCard({ productId, initialDate }: Props
       <button
         type="button"
         onClick={handleSave}
-        disabled={saving}
+        disabled={saving || !canEdit}
         className="rounded-lg bg-actions-primary px-4 py-2 text-sm font-medium text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {saving ? "در حال ثبت..." : "ثبت تاریخ و ساعت"}

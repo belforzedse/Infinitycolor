@@ -66,9 +66,9 @@ describe("editing one variation's colour", () => {
     await save();
 
     await waitFor(() =>
-      expect(mockPut).toHaveBeenCalledWith("/product-variations/11", {
-        data: expect.objectContaining({ product_variation_color: 2, Price: 100 }),
-      }),
+      expect(mockPut).toHaveBeenCalledWith("/products/5/editor/variations/11", {
+        data: { product_variation_color: 2 },
+      }, { retries: 0 }),
     );
     expect(onVariationsChanged).toHaveBeenCalled();
     expect(await screen.findAllByText("S - آبی")).not.toHaveLength(0);

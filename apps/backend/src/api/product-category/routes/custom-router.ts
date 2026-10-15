@@ -16,6 +16,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: superadminOnlyPolicy,
+        middlewares: [{ name: "global::catalog-edit", config: { resource: "category-associations" } }],
       },
     },
   ],

@@ -8,7 +8,19 @@ import {
   getSortedRowModel,
 } from "@tanstack/react-table";
 // removed unused import: getPaginationRowModel from "@tanstack/react-table"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  groupTableRows,
+  type RowGroupHeaderProps,
+  type TableRowGrouping,
+} from "./rowGrouping";
 import { cn } from "@/utils/tailwind";
 import { twMerge } from "tailwind-merge";
 import DragIcon from "../Layout/Icons/DragIcon";
@@ -50,6 +62,7 @@ declare module "@tanstack/table-core" {
 
 interface TableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
+  rowGrouping?: TableRowGrouping<TData>;
   data?: TData[];
   url?: string;
   loading?: boolean;
@@ -130,6 +143,7 @@ interface TableProps<TData, TValue> {
 
 export function SuperAdminTable<TData, TValue>({
   columns,
+  rowGrouping,
   data,
   url,
   loading,
@@ -222,6 +236,13 @@ export function SuperAdminTable<TData, TValue>({
   );
 
   const lastRequestKeyRef = useRef<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<{
+    context: string | null;
+    keys: Set<string>;
+  }>({ context: requestKey, keys: new Set() });
+
+  const isGroupExpanded = (key: string) =>
+    expandedGroups.context === requestKey && expandedGroups.keys.has(key);
 
   // Helper function to resolve row keys consistently
   const resolveRowKey = useCallback(
@@ -233,7 +254,9 @@ export function SuperAdminTable<TData, TValue>({
   );
 
   const allRowsSelected =
-    !!tableData && selectedIds.size > 0 && selectedIds.size === tableData.length;
+    !!tableData &&
+    selectedIds.size > 0 &&
+    selectedIds.size === tableData.length;
 
   const toggleAllRows = useCallback(
     (checked: boolean) => {
@@ -291,7 +314,9 @@ export function SuperAdminTable<TData, TValue>({
         toast.error("هیچ ردیفی انتخاب نشده است");
         return;
       }
-      const rows = tableData.filter((row) => selectedIds.has(resolveRowKey(row)));
+      const rows = tableData.filter((row) =>
+        selectedIds.has(resolveRowKey(row)),
+      );
       setBulkBusy(true);
       try {
         await onBulkAction(option.id, rows, context);
@@ -612,6 +637,50 @@ export function SuperAdminTable<TData, TValue>({
     },
   });
 
+  const rowSections = groupTableRows(
+    table.getRowModel().rows,
+    rowGrouping ? (row) => rowGrouping.getKey(row.original) : undefined,
+  );
+
+  const renderGroupHeader = (groupKey: string, rows: Row<TData>[]) => {
+    const members = rows.map((row) => row.original);
+    const memberIds = members.map(resolveRowKey);
+    const selectedCount = memberIds.filter((id) => selectedIds.has(id)).length;
+    const props: RowGroupHeaderProps<TData> = {
+      groupKey,
+      rows: members,
+      expanded: isGroupExpanded(groupKey),
+      onToggle: () => {
+        setExpandedGroups((previous) => {
+          const keys = new Set(
+            previous.context === requestKey ? previous.keys : [],
+          );
+          if (keys.has(groupKey)) keys.delete(groupKey);
+          else keys.add(groupKey);
+          return { context: requestKey, keys };
+        });
+      },
+      selection: enableSelection
+        ? {
+            checked: selectedCount === memberIds.length,
+            indeterminate:
+              selectedCount > 0 && selectedCount < memberIds.length,
+            onChange: (checked) => {
+              setSelectedIds((previous) => {
+                const next = new Set(previous);
+                memberIds.forEach((id) => {
+                  if (checked) next.add(id);
+                  else next.delete(id);
+                });
+                return next;
+              });
+            },
+          }
+        : undefined,
+    };
+    return rowGrouping?.renderHeader(props);
+  };
+
   const handleDragStart = (row: Row<TData>) => {
     setDraggedRow(row);
   };
@@ -645,8 +714,7 @@ export function SuperAdminTable<TData, TValue>({
   const showSkeleton = isLoading && (isPageTransitioning || !hasLoadedOnce);
   // A search or filter narrowing the results is a different situation from an
   // empty resource, and the two used to render the same generic box.
-  const hasNarrowingFilter =
-    isFiltered ?? (activeFilters?.length ?? 0) > 0;
+  const hasNarrowingFilter = isFiltered ?? (activeFilters?.length ?? 0) > 0;
   const resolvedEmptyState = fetchError
     ? (errorState ?? (
         <ErrorState
@@ -667,6 +735,21 @@ export function SuperAdminTable<TData, TValue>({
   const cardLayoutClassName = "block lg:hidden";
   const tableLayoutClassName =
     "hidden min-w-0 w-full overflow-x-auto overflow-y-clip lg:block";
+
+  const mobileSelectionProps = enableSelection
+    ? {
+        enableSelection: true,
+        selectedIds,
+        onSelectionChange: (id: string, selected: boolean) => {
+          setSelectedIds((previous) => {
+            const next = new Set(previous);
+            if (selected) next.add(id);
+            else next.delete(id);
+            return next;
+          });
+        },
+      }
+    : undefined;
 
   return (
     <div className="w-full">
@@ -744,70 +827,94 @@ export function SuperAdminTable<TData, TValue>({
                 <ReportTableSkeleton columns={columns.length} />
               ) : table.getRowModel().rows?.length ? (
                 <>
-                  {table.getRowModel().rows.map((row) => {
-                    const resolvedKey = resolveRowKey(row.original as TData);
-                    const rowKey = resolvedKey || String(row.id); // fallback avoids empty/unstable keys
-                    const isNew = rowKey ? newlyAddedIds.has(rowKey) : false;
-
-                    return (
-                      <AnimatedTableRow
-                        key={rowKey}
-                        rowKey={rowKey}
-                        isNew={isNew}
-                        isPageTransitioning={isPageTransitioning}
-                        draggable={draggable}
-                        onDragStart={() => handleDragStart(row)}
-                        onDragOver={(e) => handleDragOver(e, row)}
-                        onDrop={(e) => handleDrop(e, row)}
-                        className={twMerge(
-                          // IMPORTANT: avoid `transition-all` (conflicts with Framer transforms)
-                          "border-b border-gray-200 transition-colors hover:bg-gray-50/50",
-                          // IMPORTANT: outline doesn't affect layout height
-                          dragOverRow?.id === row.id &&
-                            "outline outline-2 -outline-offset-2 outline-blue-500",
-                        )}
-                      >
-                        {row.getVisibleCells().map((cell, index) => (
-                          <td
-                            key={cell.id}
-                            className={twMerge(
-                              "p-2 text-right align-middle md:p-3 lg:p-4 [&:has([role=checkbox])]:pr-0",
-                              cell.column.columnDef.meta?.cellClassName,
-                            )}
-                          >
-                            {index === 0 && enableSelection ? (
-                              <div className="flex items-center gap-2">
-                                {draggable && (
-                                  <div className="cursor-move">
-                                    <DragIcon />
-                                  </div>
-                                )}
-                                <input
-                                  type="checkbox"
-                                  checked={selectedIds.has(rowKey)}
-                                  onChange={(e) => {
-                                    const next = new Set(selectedIds);
-                                    if (e.target.checked) next.add(rowKey);
-                                    else next.delete(rowKey);
-                                    setSelectedIds(next);
-                                  }}
-                                />
-                                {flexRender(
-                                  cell.column.columnDef.cell,
-                                  cell.getContext(),
-                                )}
-                              </div>
-                            ) : (
-                              flexRender(
-                                cell.column.columnDef.cell,
-                                cell.getContext(),
-                              )
-                            )}
+                  {rowSections.map((section) => (
+                    <Fragment
+                      key={
+                        section.groupKey
+                          ? `group:${section.groupKey}`
+                          : `rows:${section.rows[0].id}`
+                      }
+                    >
+                      {section.groupKey && (
+                        <tr className="border-b border-slate-200 bg-white">
+                          <td colSpan={columns.length}>
+                            {renderGroupHeader(section.groupKey, section.rows)}
                           </td>
-                        ))}
-                      </AnimatedTableRow>
-                    );
-                  })}
+                        </tr>
+                      )}
+                      {(!section.groupKey ||
+                        isGroupExpanded(section.groupKey)) &&
+                        section.rows.map((row) => {
+                          const resolvedKey = resolveRowKey(
+                            row.original as TData,
+                          );
+                          const rowKey = resolvedKey || String(row.id); // fallback avoids empty/unstable keys
+                          const isNew = rowKey
+                            ? newlyAddedIds.has(rowKey)
+                            : false;
+
+                          return (
+                            <AnimatedTableRow
+                              key={rowKey}
+                              rowKey={rowKey}
+                              isNew={isNew}
+                              isPageTransitioning={isPageTransitioning}
+                              draggable={draggable}
+                              onDragStart={() => handleDragStart(row)}
+                              onDragOver={(e) => handleDragOver(e, row)}
+                              onDrop={(e) => handleDrop(e, row)}
+                              className={twMerge(
+                                // IMPORTANT: avoid `transition-all` (conflicts with Framer transforms)
+                                "border-b border-gray-200 transition-colors hover:bg-gray-50/50",
+                                // IMPORTANT: outline doesn't affect layout height
+                                dragOverRow?.id === row.id &&
+                                  "outline outline-2 -outline-offset-2 outline-blue-500",
+                              )}
+                            >
+                              {row.getVisibleCells().map((cell, index) => (
+                                <td
+                                  key={cell.id}
+                                  className={twMerge(
+                                    "p-2 text-right align-middle md:p-3 lg:p-4 [&:has([role=checkbox])]:pr-0",
+                                    cell.column.columnDef.meta?.cellClassName,
+                                  )}
+                                >
+                                  {index === 0 && enableSelection ? (
+                                    <div className="flex items-center gap-2">
+                                      {draggable && (
+                                        <div className="cursor-move">
+                                          <DragIcon />
+                                        </div>
+                                      )}
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(rowKey)}
+                                        onChange={(e) => {
+                                          const next = new Set(selectedIds);
+                                          if (e.target.checked)
+                                            next.add(rowKey);
+                                          else next.delete(rowKey);
+                                          setSelectedIds(next);
+                                        }}
+                                      />
+                                      {flexRender(
+                                        cell.column.columnDef.cell,
+                                        cell.getContext(),
+                                      )}
+                                    </div>
+                                  ) : (
+                                    flexRender(
+                                      cell.column.columnDef.cell,
+                                      cell.getContext(),
+                                    )
+                                  )}
+                                </td>
+                              ))}
+                            </AnimatedTableRow>
+                          );
+                        })}
+                    </Fragment>
+                  ))}
                 </>
               ) : (
                 <tr>
@@ -821,22 +928,49 @@ export function SuperAdminTable<TData, TValue>({
 
       {/* Mobile cards/table alternative */}
       <div className={cardLayoutClassName}>
-        {mobileTable ? (
-          mobileTable(
-            tableData,
-            enableSelection
-              ? {
-                  enableSelection: true,
-                  selectedIds,
-                  onSelectionChange: (id: string, selected: boolean) => {
-                    const next = new Set(selectedIds);
-                    if (selected) next.add(id);
-                    else next.delete(id);
-                    setSelectedIds(next);
-                  },
-                }
-              : undefined,
-          )
+        {mobileTable && rowGrouping && showSkeleton ? (
+          <div className="mt-3 flex flex-col gap-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div
+                key={index}
+                className="h-28 animate-pulse rounded-2xl border border-slate-100 bg-white"
+              />
+            ))}
+          </div>
+        ) : mobileTable && rowGrouping && rowSections.length > 0 ? (
+          <div className="mt-2 flex flex-col gap-2">
+            {rowSections.map((section) =>
+              section.groupKey ? (
+                <section
+                  key={`group:${section.groupKey}`}
+                  className="min-w-0 border-t border-slate-200"
+                >
+                  {renderGroupHeader(section.groupKey, section.rows)}
+                  {isGroupExpanded(section.groupKey) && (
+                    <div className="min-w-0">
+                      {mobileTable(
+                        section.rows.map((row) => row.original),
+                        mobileSelectionProps,
+                      )}
+                    </div>
+                  )}
+                </section>
+              ) : (
+                <Fragment key={`rows:${section.rows[0].id}`}>
+                  {mobileTable(
+                    section.rows.map((row) => row.original),
+                    mobileSelectionProps,
+                  )}
+                </Fragment>
+              ),
+            )}
+          </div>
+        ) : mobileTable && rowGrouping ? (
+          <div className="mt-3 rounded-2xl border border-slate-100 bg-white">
+            {resolvedEmptyState}
+          </div>
+        ) : mobileTable ? (
+          mobileTable(tableData, mobileSelectionProps)
         ) : showSkeleton ? (
           <div className="mt-3 flex flex-col gap-3">
             {Array.from({ length: 3 }).map((_, index) => (
@@ -938,7 +1072,9 @@ export function SuperAdminTable<TData, TValue>({
       {pendingBulkAction && pendingBulkConfirm && (
         <ConfirmDialog
           isOpen
-          variant={pendingBulkAction.variant === "danger" ? "danger" : "default"}
+          variant={
+            pendingBulkAction.variant === "danger" ? "danger" : "default"
+          }
           title={pendingBulkConfirm.title ?? "تأیید عملیات"}
           description={bulkConfirmDescription(
             pendingBulkConfirm,
@@ -955,10 +1091,15 @@ export function SuperAdminTable<TData, TValue>({
           onConfirm={() => {
             if (bulkConfirmInputError) return;
             const option = pendingBulkAction;
-            const input = pendingBulkConfirm.input ? bulkConfirmInput : undefined;
+            const input = pendingBulkConfirm.input
+              ? bulkConfirmInput
+              : undefined;
             setPendingBulkAction(null);
             setBulkConfirmInput("");
-            void executeBulkAction(option, input !== undefined ? { input } : undefined);
+            void executeBulkAction(
+              option,
+              input !== undefined ? { input } : undefined,
+            );
           }}
         >
           {pendingBulkConfirm.input && (

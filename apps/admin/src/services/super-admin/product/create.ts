@@ -99,11 +99,12 @@ export const createProduct = async (body: ProductData) => {
 
     const response = await apiClient.post(endpoint, {
       data: transformedBody,
-    });
+    }, { retries: 0 });
     const productId = (response.data as { id?: number } | undefined)?.id;
 
     if (productId) {
-      await syncSimpleProductVariation(Number(productId), body);
+      try { await syncSimpleProductVariation(Number(productId), body); }
+      catch { return { success: true, data: response.data, followupFailed: true }; }
     }
 
     return { success: true, data: response.data };

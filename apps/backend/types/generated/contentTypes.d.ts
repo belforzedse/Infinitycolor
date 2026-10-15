@@ -3229,6 +3229,9 @@ export interface ApiProductStockProductStock extends Schema.CollectionType {
       Attribute.Private;
     external_id: Attribute.String;
     external_source: Attribute.String;
+    StockRevision: Attribute.Integer &
+      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.DefaultTo<0>;
     product_stock_logs: Attribute.Relation<
       "api::product-stock.product-stock",
       "oneToMany",
@@ -3549,6 +3552,9 @@ export interface ApiProductProduct extends Schema.CollectionType {
       Attribute.Private;
     Description: Attribute.RichText;
     discounts: Attribute.Relation<"api::product.product", "manyToMany", "api::discount.discount">;
+    EditRevision: Attribute.Integer &
+      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.DefaultTo<0>;
     external_id: Attribute.String;
     external_source: Attribute.String;
     Files: Attribute.Media<"files", true>;
@@ -3876,6 +3882,9 @@ export interface ApiSettingsSettings extends Schema.SingleType {
     homeHeroSliderMeta: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeHeroSliderPublished: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeNewestProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
+    HomepageProductsRevision: Attribute.Integer &
+      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.DefaultTo<0>;
     homeWeeklyPicksEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
     homeWeeklyPicksProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     siteGifAltText: Attribute.String & Attribute.DefaultTo<"">;

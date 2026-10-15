@@ -14,6 +14,8 @@ import {
   type ColorReplaceResult,
   type ColorReplaceTarget,
 } from "@/services/product/variation-color-replace";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
+import ProductEditorFields from "@/components/Product/add/ProductEditorFields";
 import {
   DEFAULT_COLOR_CODE,
   resolveColorSave,
@@ -59,7 +61,7 @@ export default function ReplaceColorDialog({
       title={color ? `تغییر رنگ «${color.value}» در این محصول` : ""}
       className="max-w-lg"
     >
-      {color && (
+      <ProductEditorFields>{color && (
         <ReplaceColorForm
           key={color.id}
           productId={productId}
@@ -67,7 +69,7 @@ export default function ReplaceColorDialog({
           onClose={onClose}
           onReplaced={onReplaced}
         />
-      )}
+      )}</ProductEditorFields>
     </Modal>
   );
 }
@@ -83,6 +85,7 @@ function ReplaceColorForm({
   onClose: () => void;
   onReplaced: () => void | Promise<void>;
 }) {
+  const { client, canEdit } = useProductEditor();
   const canDeleteVariations = useCan("product.variation.delete");
   const [mode, setMode] = useState<Mode>("existing");
   const [picked, setPicked] = useState<VariationOption | null>(null);
@@ -121,7 +124,7 @@ function ReplaceColorForm({
     setPreviewing(true);
     setPreviewError(null);
     try {
-      setPreview(await replaceProductColor(productId, fromColorId, target, { dryRun: true }));
+      setPreview(await replaceProductColor(productId, fromColorId, target, { dryRun: true }, client));
     } catch (error) {
       setPreview(null);
       setPreviewError(
@@ -139,12 +142,12 @@ function ReplaceColorForm({
 
   const handleApply = async () => {
     const target = resolveTarget();
-    if (!target || !preview) return;
+    if (!target || !preview || !canEdit) return;
     setApplying(true);
     try {
       const result = await replaceProductColor(productId, fromColorId, target, {
         removeEmptyDrafts: preview.emptyDrafts.length > 0,
-      });
+      }, client);
       // The pickers and the variation list read through the admin cache.
       apiCache.clearByPattern(/product-variation/i);
       toast.success(
@@ -167,7 +170,7 @@ function ReplaceColorForm({
   const draftsNeedDelete = Boolean(
     preview && preview.emptyDrafts.length > 0 && !canDeleteVariations,
   );
-  const canApply = Boolean(preview) && !blocked && !draftsNeedDelete && !previewing && !applying;
+  const canApply = canEdit && Boolean(preview) && !blocked && !draftsNeedDelete && !previewing && !applying;
 
   return (
     <div className="space-y-5 text-sm" dir="rtl">

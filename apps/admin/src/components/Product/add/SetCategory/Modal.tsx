@@ -4,6 +4,7 @@ import DeleteIcon from "@/components/Kits/Icons/DeleteIcon";
 import SearchIcon from "../../Icons/SearchIcon";
 import ImportCategorty from "./Import";
 import SetCategoryTable from "./Table";
+import ProductEditorFields from "@/components/Product/add/ProductEditorFields";
 import { useAtomValue } from "jotai";
 import {
   productCategoryDataAtom,
@@ -38,7 +39,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose }) => {
       titleClassName="!justify-end"
       className="max-w-4xl lg:max-w-6xl"
     >
-      <div className="flex flex-col gap-4">
+      <ProductEditorFields><div className="flex flex-col gap-4">
         <div className="flex justify-between">
           <span className="text-base text-neutral-600">دسته بندی محصولات</span>
           <div className="relative max-w-56">
@@ -58,7 +59,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose }) => {
         <div className="max-h-[60vh] overflow-y-auto">
           <SetCategoryTable categories={filteredCategories} />
         </div>
-      </div>
+      </div></ProductEditorFields>
     </Modal>
   );
 };

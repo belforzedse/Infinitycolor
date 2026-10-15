@@ -31,7 +31,15 @@ export const ORDER_TAB_FILTERS: Record<OrderTabKey, Record<string, unknown> | nu
   // Manual is an order type, not a lifecycle status. It intentionally overlaps
   // the status buckets, matching the existing orders tab.
   manual: { Type: { $eq: "Manual" } },
-  anipo_attention: { AnipoBarcodeState: { $eq: "NeedsAttention" } },
+  anipo_attention: { $or: [
+    { $and: [
+      { $or: [{ reserve_shipment: { id: { $null: true } } }, { reserve_shipment: { AnipoBarcodeState: { $null: true } } }] },
+      { $or: [{ AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" }] },
+    ] },
+    { Status: { $in: ["Started", "Done", "Shipment"] }, reserve_shipment: { $or: [
+      { AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" },
+    ] } },
+  ] },
 };
 
 export function orderWhereForTab(

@@ -31,6 +31,7 @@ interface VariationStockData {
   id: number;
   attributes?: {
     Count?: number;
+    StockRevision?: number;
   };
 }
 
@@ -135,6 +136,7 @@ export function transformToProductData(strapiProduct: ProductDataResponse): Edit
     IsSimpleProduct: isSimpleProduct,
     SimpleVariationId: simpleVariation?.id,
     SimpleStockId: simpleStock?.id,
+    SimpleStockRevision: simpleStock?.attributes?.StockRevision,
     SimpleSKU: simpleVariationAttributes?.SKU || "",
     SimplePrice: safeNumber(simpleVariationAttributes?.Price, 0),
     SimpleDiscountPrice:

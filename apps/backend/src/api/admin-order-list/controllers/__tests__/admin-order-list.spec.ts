@@ -1,3 +1,5 @@
+jest.mock("../../../../utils/orderDeliverySnapshot", () => ({ loadOrderSnapshotRecipientNames: jest.fn(async () => new Map()) }));
+import { loadOrderSnapshotRecipientNames } from "../../../../utils/orderDeliverySnapshot";
 jest.mock("@strapi/utils", () => ({
   sanitize: { contentAPI: { output: jest.fn(async (rows) => rows) } },
 }));
@@ -39,6 +41,18 @@ function installStrapi(rows: any[] = [], transactionRows: any[] = []) {
 }
 
 describe("bounded admin orders list", () => {
+  it("keeps the captured recipient after a customer changes a saved address, in one batch", async () => {
+    const { findMany } = installStrapi([
+      { id: 10, delivery_address: { FullName: "گیرنده ویرایش شده" } },
+      { id: 11, delivery_address: { FullName: "گیرنده قدیمی" } },
+    ]);
+    (loadOrderSnapshotRecipientNames as jest.Mock).mockResolvedValueOnce(new Map([[10, "گیرنده سفارش"]]));
+    const context = createContext(); await controller.query(context);
+    expect(context.body.data.map((row: any) => row.attributes.recipientName)).toEqual(["گیرنده سفارش", "گیرنده قدیمی"]);
+    expect(loadOrderSnapshotRecipientNames).toHaveBeenLastCalledWith((global as any).strapi, [10, 11]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the order-read capability policy on every orders-list route", () => {
     const orderRead = {
       name: "global::require-capability",
@@ -62,13 +76,23 @@ describe("bounded admin orders list", () => {
     ["inprogress", { Status: { $in: ["Started"] } }],
     ["completed", { Status: { $in: ["Done"] } }],
     ["shipped", { Status: { $in: ["Shipment"] } }],
-    ["anipo_attention", { AnipoBarcodeState: { $eq: "NeedsAttention" } }],
   ])("keeps the %s status tab in its own server-side bucket", async (tab, expected) => {
     const { findMany } = installStrapi();
 
     await controller.query(createContext({ tab }));
 
     expect(findMany.mock.calls[0][0].where.$and).toContainEqual(expected);
+  });
+
+  it("includes authoritative parcel workflow and recipient failures in the review tab", async () => {
+    const { findMany } = installStrapi();
+    await controller.query(createContext({ tab: "anipo_attention" }));
+    expect(findMany.mock.calls[0][0].where.$and).toContainEqual(expect.objectContaining({
+      $or: expect.arrayContaining([expect.objectContaining({
+        Status: { $in: ["Started", "Done", "Shipment"] },
+        reserve_shipment: { $or: [{ AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" }] },
+      })]),
+    }));
   });
 
   it("counts every tab from the same current filters and keeps active reserves separate", async () => {
@@ -135,7 +159,11 @@ describe("bounded admin orders list", () => {
       Status: { $in: ["Returned", "Cancelled"] },
     });
     expect(count.mock.calls[6][0].where.$and).toContainEqual({ Type: { $eq: "Manual" } });
-    expect(count.mock.calls[7][0].where.$and).toContainEqual({ AnipoBarcodeState: { $eq: "NeedsAttention" } });
+    expect(count.mock.calls[7][0].where.$and).toContainEqual(expect.objectContaining({
+      $or: expect.arrayContaining([expect.objectContaining({ reserve_shipment: {
+        $or: [{ AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" }],
+      } })]),
+    }));
     expect(count.mock.calls[3][0].where.$and).not.toContainEqual({
       Type: { $ne: "Manual" },
     });

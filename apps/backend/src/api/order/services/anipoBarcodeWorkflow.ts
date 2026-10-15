@@ -1,3 +1,4 @@
+import { effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
 import type { Strapi } from "@strapi/strapi";
 import { logAdminBarcodeOperation } from "../../../utils/adminActivity";
 import { writeAuditEvent } from "../../../audit/writer";
@@ -264,7 +265,7 @@ async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
     },
   });
   if (!order) throw new AnipoWorkflowError(404, "ANIPO_ORDER_NOT_FOUND", "سفارش پیدا نشد");
-  return order;
+  return { ...order, delivery_address: await effectiveOrderDeliveryAddress(strapi, Number(order.id), order.delivery_address) };
 }
 
 /**
@@ -421,6 +422,10 @@ export async function submitAnipoBarcode(
   options: SubmitOptions = {},
 ): Promise<AnipoWorkflowResponse> {
   const order = await loadOrder(strapi, orderId);
+  if (order.reserve_shipment?.id) {
+    const { submitReserveParcel } = await import("./anipoReserveParcel");
+    return submitReserveParcel(strapi, Number(order.reserve_shipment.id), options);
+  }
   if (order.AnipoBarcodeState === ANIPO_BARCODE_STATES.issued ||
       (order.ShippingBarcode && !order.AnipoBarcodeState)) {
     return responseFromOrder(
@@ -569,6 +574,10 @@ export async function refreshAnipoBarcodeStatus(
   options: RefreshOptions,
 ): Promise<AnipoWorkflowResponse> {
   const order = await loadOrder(strapi, orderId);
+  if (order.reserve_shipment?.id) {
+    const { refreshReserveParcel } = await import("./anipoReserveParcel");
+    return refreshReserveParcel(strapi, Number(order.reserve_shipment.id), options.actor);
+  }
   if (order.AnipoBarcodeState === ANIPO_BARCODE_STATES.issued ||
       (order.ShippingBarcode && !order.AnipoBarcodeState)) {
     return responseFromOrder(
@@ -725,7 +734,12 @@ export async function processAnipoRegistrationJob(
   const row = await strapi.db.query("api::order.order").findOne({
     where: { id: orderId },
     select: ["id", "Status", "AnipoBarcodeState", "AnipoSubmittedAt", "ShippingBarcode"],
+    populate: { reserve_shipment: { select: ["id"] } },
   });
+  if (row?.reserve_shipment?.id) {
+    const { submitReserveParcel } = await import("./anipoReserveParcel");
+    return submitReserveParcel(strapi, Number(row.reserve_shipment.id), { weightFromItems: true, boxSizeId: 3 });
+  }
   if (!row || row.Status !== "Shipment" || row.AnipoSubmittedAt || row.ShippingBarcode ||
       row.AnipoBarcodeState !== ANIPO_BARCODE_STATES.pending) return { skipped: true };
   try {
@@ -799,6 +813,7 @@ export async function runAnipoBarcodeReconciliation(strapi: Strapi) {
       const now = new Date();
       const sevenDaysAgo = new Date(now.getTime() - POLLING_WINDOW_MS);
       const postalShipment = {
+        reserve_shipment: { id: { $null: true } },
         Status: "Shipment",
         $or: [{ ShippingMethodCode: "post" }, { shipping: { Code: "post" } }],
       };
@@ -944,6 +959,7 @@ export async function runAnipoBarcodeReconciliation(strapi: Strapi) {
         needsAttention,
         stopped: 0,
         failed,
+        parcelsProcessed: (await (await import("./anipoReserveParcel")).runReserveParcelReconciliation(strapi)).processed,
       };
     },
   });

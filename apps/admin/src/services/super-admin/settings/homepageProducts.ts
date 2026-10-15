@@ -27,7 +27,8 @@ export async function updateHomepageProductSettings(
       | "homeEveryoneFollowsProductIds"
     >
   >,
+  expectedRevision: number,
 ): Promise<SuperAdminSettings> {
-  const response = await apiClient.put("/settings/homepage-products", { data: settings });
+  const response = await apiClient.put("/settings/homepage-products", { data: settings, expectedRevision }, { retries: 0 });
   return normalizeSettingsApiResponse(response) ?? defaultSettings();
 }

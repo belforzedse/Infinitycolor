@@ -1,4 +1,5 @@
 import { apiClient } from "@/services";
+import type { ProductEditorClient } from "./editor-session";
 
 export const PRODUCT_PUBLICATION_TIMEZONE = "Asia/Tehran";
 
@@ -28,8 +29,9 @@ export async function changeProductPublication(
     publishAt?: string;
     timezone?: string;
   },
+  client: ProductEditorClient = apiClient,
 ): Promise<ProductPublicationResponse> {
-  const response = await apiClient.post<ProductPublicationResponse>(
+  const response = await client.post<ProductPublicationResponse>(
     `/products/${productId}/publication`,
     {
       data: {

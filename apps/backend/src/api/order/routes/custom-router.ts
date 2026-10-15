@@ -109,6 +109,18 @@ export default {
     },
     {
       method: "POST",
+      path: "/orders/reserve-groups/:groupKey/anipo-barcode",
+      handler: "order.generateReserveParcelBarcode",
+      config: { auth: { scope: [] }, policies: capabilityPolicy("order.shipping.manage") },
+    },
+    {
+      method: "POST",
+      path: "/orders/reserve-groups/:groupKey/anipo-barcode/check",
+      handler: "order.checkReserveParcelBarcode",
+      config: { auth: { scope: [] }, policies: capabilityPolicy("order.shipping.manage") },
+    },
+    {
+      method: "POST",
       path: "/orders/:id/anipo-barcode/check",
       handler: "order.checkAnipoBarcode",
       config: {

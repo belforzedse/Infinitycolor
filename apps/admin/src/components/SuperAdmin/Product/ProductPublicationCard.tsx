@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 import { DatePicker, TimePicker } from "zaman";
 import toast from "react-hot-toast";
 import {
@@ -43,6 +44,7 @@ export default function ProductPublicationCard({
   beforeAction,
   onChanged,
 }: Props) {
+  const { client, canEdit } = useProductEditor();
   const [showSchedule, setShowSchedule] = useState(false);
   const [date, setDate] = useState<Date>(() => initialPickerDate(scheduledPublishAt));
   const initialParts = useMemo(
@@ -63,7 +65,7 @@ export default function ProductPublicationCard({
     action: ProductPublicationAction,
     extra?: { publishAt?: string; timezone?: string },
   ) => {
-    if (savingAction) return;
+    if (savingAction || !canEdit) return;
     setSavingAction(action);
     try {
       if (
@@ -73,7 +75,7 @@ export default function ProductPublicationCard({
       ) {
         return;
       }
-      const result = await changeProductPublication(productId, { action, ...extra });
+      const result = await changeProductPublication(productId, { action, ...extra }, client);
       await onChanged(result);
       if (result.queueState === "pending-reconciliation") {
         toast.success("وضعیت ذخیره شد؛ تکمیل صف و کش به‌صورت خودکار بازیابی می‌شود");

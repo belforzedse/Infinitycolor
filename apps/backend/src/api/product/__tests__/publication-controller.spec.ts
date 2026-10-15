@@ -1,5 +1,6 @@
 const mockStrapi: any = {
   log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  db: { transaction: jest.fn(async (callback: any) => callback({ trx: {} })) },
 };
 const mockTrusted = jest.fn(() => false);
 const mockExecute = jest.fn();

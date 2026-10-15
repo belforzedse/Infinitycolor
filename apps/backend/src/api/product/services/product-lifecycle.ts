@@ -1,3 +1,4 @@
+import { afterCatalogCommit, catalogMutationContext, CatalogEditError, coordinateCatalogCommand } from "../../../utils/catalogEdit";
 import type { Strapi } from "@strapi/strapi";
 import { randomUUID } from "node:crypto";
 import { resolveCurrentAuditContext, writeAuditEvent } from "../../../audit/writer";
@@ -278,6 +279,10 @@ export async function completeLifecycleFollowUp(
   result: LifecycleResult,
   opts: { deferEffects?: boolean } = {},
 ): Promise<void> {
+  if (catalogMutationContext()) {
+    await afterCatalogCommit(strapi, () => completeLifecycleFollowUp(strapi, result, opts));
+    return;
+  }
   const followUp = result.followUp;
   if (!followUp) return;
   if (followUp.removeScheduleRevision) {
@@ -334,6 +339,9 @@ export async function trashProductInTransaction(
   productId: number,
   context: LifecycleContext,
 ): Promise<LifecycleResult> {
+  if (!catalogMutationContext()) {
+    return coordinateCatalogCommand(strapi, productId, context.origin, "catalog-lifecycle", () => trashProductInTransaction(strapi, productId, context));
+  }
   assertProductId(productId);
   const now = context.now || new Date();
   return strapi.db.transaction(async ({ trx }: any) => {
@@ -561,6 +569,9 @@ export async function restoreProductInTransaction(
   context: LifecycleContext,
   options: RestoreOptions = {},
 ): Promise<LifecycleResult> {
+  if (!catalogMutationContext()) {
+    return coordinateCatalogCommand(strapi, productId, context.origin, "catalog-lifecycle", () => restoreProductInTransaction(strapi, productId, context, options));
+  }
   assertProductId(productId);
   const now = context.now || new Date();
   const auditEventId = randomUUID();
@@ -715,6 +726,9 @@ export async function purgeProductInTransaction(
   context: LifecycleContext,
   opts: { trashedBefore?: Date } = {},
 ): Promise<LifecycleResult> {
+  if (!catalogMutationContext()) {
+    return coordinateCatalogCommand(strapi, productId, context.origin, "catalog-lifecycle", () => purgeProductInTransaction(strapi, productId, context, opts));
+  }
   assertProductId(productId);
   const now = context.now || new Date();
   return strapi.db.transaction(async ({ trx }: any) => {
@@ -828,6 +842,7 @@ export type BulkLifecycleResult = {
   unchanged: number[];
   failed: Array<{ id: number; code: string }>;
   warnings: Array<{ id: number; warnings: RestoreWarning[] }>;
+  results: LifecycleResult[];
 };
 
 export function parseBulkProductIds(raw: unknown): number[] {
@@ -861,11 +876,11 @@ export async function runLifecycleBulk(
   action: BulkLifecycleAction,
   productIds: number[],
   context: LifecycleContext,
-  input: { publishAt?: string; timezone?: string } = {},
+  input: { publishAt?: string; timezone?: string; undoToken?: string; canPublish?: boolean; canSchedule?: boolean } = {},
 ): Promise<BulkLifecycleResult> {
   const batchId = context.batchId || randomUUID();
   const itemContext: LifecycleContext = { ...context, batchId };
-  const summary: BulkLifecycleResult = { action, succeeded: [], unchanged: [], failed: [], warnings: [] };
+  const summary: BulkLifecycleResult = { action, succeeded: [], unchanged: [], failed: [], warnings: [], results: [] };
   const effects: number[] = [];
 
   await writeBulkAudit(strapi, "products.bulk_requested", action, productIds.length, itemContext, summary);
@@ -912,8 +927,9 @@ export async function runLifecycleBulk(
         action === "trash"
           ? await trashProductInTransaction(strapi, productId, itemContext)
           : action === "restore"
-            ? await restoreProductInTransaction(strapi, productId, itemContext)
+            ? await restoreProductInTransaction(strapi, productId, itemContext, { undoToken: productIds.length === 1 ? input.undoToken : undefined, canPublish: input.canPublish, canSchedule: input.canSchedule })
             : await purgeProductInTransaction(strapi, productId, itemContext);
+      summary.results.push({ ...result, followUp: undefined });
       await completeLifecycleFollowUp(strapi, result, { deferEffects: true });
       if (result.followUp?.needsPublicationEffects) effects.push(productId);
       if (result.warnings?.length) summary.warnings.push({ id: productId, warnings: result.warnings });
@@ -924,7 +940,7 @@ export async function runLifecycleBulk(
         });
       }
     } catch (error) {
-      if (error instanceof PublicationCommandError) {
+      if (error instanceof PublicationCommandError || error instanceof CatalogEditError) {
         summary.failed.push({ id: productId, code: error.code });
         continue;
       }

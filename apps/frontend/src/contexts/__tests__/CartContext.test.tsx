@@ -422,6 +422,105 @@ describe("CartProvider identity and storage hardening", () => {
     expect(screen.getByTestId("cart-count")).toHaveTextContent("1");
   });
 
+  describe("automatic session recovery", () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it("recovers from a failed initial check and restores the guest cart", async () => {
+      const stored = JSON.stringify([cartItem]);
+      localStorage.setItem("cart", stored);
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValueOnce(
+        new Error("network"),
+      );
+      render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("false");
+      expect(localStorage.getItem("cart")).toBe(stored);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1_000);
+      });
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("true");
+      expect(screen.getByTestId("auth-unavailable")).toHaveTextContent("false");
+      expect(screen.getByTestId("cart-count")).toHaveTextContent("1");
+      expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+    });
+
+    it("bounds retries, preserves an unknown identity, and recovers when connectivity returns", async () => {
+      const stored = JSON.stringify([cartItem]);
+      localStorage.setItem("cart", stored);
+      const getToken = mockedCentralAuth.centralAuth.tokenManager.getToken;
+      getToken.mockRejectedValue(new Error("network"));
+      render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      for (const delay of [1_000, 3_000, 8_000, 60_000]) {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(delay);
+        });
+      }
+      expect(getToken).toHaveBeenCalledTimes(4);
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("false");
+      expect(localStorage.getItem("cart")).toBe(stored);
+      expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+      getToken.mockResolvedValue(null);
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("true");
+      expect(screen.getByTestId("cart-count")).toHaveTextContent("1");
+    });
+
+    it("does not apply a recovery result after logout", async () => {
+      let resolve!: (token: string) => void;
+      const getToken = mockedCentralAuth.centralAuth.tokenManager.getToken;
+      getToken.mockRejectedValueOnce(new Error("network")).mockImplementationOnce(
+        () =>
+          new Promise<string>((r) => {
+            resolve = r;
+          }),
+      );
+      render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1_000);
+      });
+      act(() => mockAuthStateListener?.({ type: "logout", at: Date.now() }));
+      await act(async () => resolve("old-account"));
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("true");
+      expect(screen.getByTestId("auth-unavailable")).toHaveTextContent("false");
+      expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+    });
+
+    it("cleans up retry timers and recovery listeners on unmount", async () => {
+      const getToken = mockedCentralAuth.centralAuth.tokenManager.getToken;
+      getToken.mockRejectedValue(new Error("network"));
+      const { unmount } = render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      unmount();
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+        window.dispatchEvent(new Event("focus"));
+        await jest.advanceTimersByTimeAsync(60_000);
+      });
+      expect(getToken).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("discards a token result arriving after explicit logout", async () => {
     let resolve!: (value: string) => void;
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockImplementationOnce(

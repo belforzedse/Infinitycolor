@@ -1,3 +1,4 @@
+import { catalogEditRoutes } from "../../../utils/catalogEditRoutes";
 /**
  * product-faq router
  */
@@ -8,5 +9,5 @@ import { publicProductVisibilityRoutes } from "../../../utils/publicProductVisib
 // Public readers only see entries whose product is public (drafts, scheduled
 // and trashed products stay hidden); staff are unaffected.
 export default factories.createCoreRouter("api::product-faq.product-faq", {
-  config: publicProductVisibilityRoutes({ mode: "owner", uid: "api::product-faq.product-faq" }),
+  config: catalogEditRoutes("api::product-faq.product-faq", "faq", publicProductVisibilityRoutes({ mode: "owner", uid: "api::product-faq.product-faq" })),
 });

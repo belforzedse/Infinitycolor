@@ -2,8 +2,10 @@ import { expect, test } from "@playwright/test";
 import {
   cleanupRuntimeProducts,
   createRuntimeProductFixture,
+  leaveRuntimeProductEditor,
+  publishRuntimeProduct,
 } from "../../helpers/admin";
-import { apiGet, apiPost, expectApiOk } from "../../helpers/api";
+import { apiGet, expectApiOk } from "../../helpers/api";
 import { authStorageStatePath } from "../../helpers/auth";
 import { prepareStorefrontPage } from "../../helpers/page";
 
@@ -39,7 +41,8 @@ test.describe("scheduled product publication", () => {
     await cleanupRuntimeProducts(request);
   });
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ page, request }) => {
+    await leaveRuntimeProductEditor(page, request);
     await cleanupRuntimeProducts(request);
   });
 
@@ -54,10 +57,9 @@ test.describe("scheduled product publication", () => {
     });
     const firstPublishAt = new Date(Date.now() + 45 * 60_000).toISOString();
 
-    const firstSchedule = await apiPost(
+    const firstSchedule = await publishRuntimeProduct(
       request,
-      "admin",
-      `/products/${fixture.productId}/publication`,
+      fixture.productId,
       {
         action: "schedule",
         publishAt: firstPublishAt,
@@ -82,10 +84,9 @@ test.describe("scheduled product publication", () => {
     );
 
     const secondPublishAt = new Date(Date.now() + 90 * 60_000).toISOString();
-    const reschedule = await apiPost(
+    const reschedule = await publishRuntimeProduct(
       request,
-      "admin",
-      `/products/${fixture.productId}/publication`,
+      fixture.productId,
       {
         action: "schedule",
         publishAt: secondPublishAt,
@@ -125,10 +126,12 @@ test.describe("scheduled product publication", () => {
       .toBe("InActive");
     await expect(publicationCard).toContainText("پیش‌نویس");
 
-    const scheduleAgain = await apiPost(
+    // Leave the editor and prove its lease released before a separate fixture
+    // editor instance prepares the next persisted schedule.
+    await leaveRuntimeProductEditor(page, request);
+    const scheduleAgain = await publishRuntimeProduct(
       request,
-      "admin",
-      `/products/${fixture.productId}/publication`,
+      fixture.productId,
       {
         action: "schedule",
         publishAt: secondPublishAt,
@@ -142,7 +145,7 @@ test.describe("scheduled product publication", () => {
     // Firefox can commit this Next.js navigation without reporting
     // domcontentloaded to Playwright. The card assertion below is the stronger
     // proof that the refreshed document hydrated with the persisted state.
-    await page.reload({ waitUntil: "commit" });
+    await page.goto(`/products/${fixture.productId}`, { waitUntil: "commit" });
 
     const refreshedCard = page
       .locator("section:visible")

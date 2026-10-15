@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import toast from "react-hot-toast";
-import { changeProductPublication, PRODUCT_PUBLICATION_TIMEZONE } from "@/services/super-admin/product/publication";
+import { PRODUCT_PUBLICATION_TIMEZONE } from "@/services/super-admin/product/publication";
 import {
   createProductPreviewLink,
   emptyProductTrash,
@@ -97,16 +97,16 @@ export function useProductLifecycleActions({ onChanged }: { onChanged: () => voi
       publishAt?: string,
     ) => {
       try {
-        const result = await changeProductPublication(row.id, {
-          action,
+        const result = await runBulkProductLifecycle({
+          action: action === "publish-now" ? "publish" : action,
+          ids: [row.id],
           ...(action === "schedule" ? { publishAt, timezone: PRODUCT_PUBLICATION_TIMEZONE } : {}),
         });
+        if (result.failed.length) throw { errorCode: result.failed[0].code };
         onChanged();
         toast.success(
           action === "publish-now"
-            ? result.publishedVariationCount
-              ? `${title(row)} و ${faNum(result.publishedVariationCount)} تنوع آن منتشر شد`
-              : `${title(row)} منتشر شد`
+            ? `${title(row)} منتشر شد`
             : action === "schedule"
               ? `انتشار ${title(row)} زمان‌بندی شد`
               : `${title(row)} به پیش‌نویس‌ها برگشت`,

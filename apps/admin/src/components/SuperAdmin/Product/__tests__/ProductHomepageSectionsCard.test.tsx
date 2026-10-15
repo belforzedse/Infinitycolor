@@ -1,23 +1,16 @@
-/**
- * The card owns ONE product's membership in the curated homepage rails while
- * /products/homepage owns the whole list. Its correctness rests on three properties:
- * a check prepends (position 1, never buried past the 20-item carousel slice), an
- * untouched section never appears in the payload, and the payload is computed from a
- * save-time read rather than the mount-time snapshot — otherwise saving here silently
- * reverts whatever another admin reordered while the product page sat open.
- */
+/** Per-product homepage writes send boolean membership deltas; the server owns arrays and ordering. */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { apiClient } from "@/services";
+jest.mock("@/services", () => ({ apiClient: { put: jest.fn() } }));
 import ProductHomepageSectionsCard from "../ProductHomepageSectionsCard";
 import {
   getHomepageProductSettings,
-  updateHomepageProductSettings,
 } from "@/services/super-admin/settings/homepageProducts";
 import { getProductSummariesByIds } from "@/services/super-admin/product/get";
 import { defaultSettings } from "@/types/super-admin/settings";
 
 jest.mock("@/services/super-admin/settings/homepageProducts", () => ({
   getHomepageProductSettings: jest.fn(),
-  updateHomepageProductSettings: jest.fn(),
 }));
 
 jest.mock("@/services/super-admin/product/get", () => ({
@@ -32,9 +25,7 @@ jest.mock("react-hot-toast", () => {
 const mockedGet = getHomepageProductSettings as jest.MockedFunction<
   typeof getHomepageProductSettings
 >;
-const mockedUpdate = updateHomepageProductSettings as jest.MockedFunction<
-  typeof updateHomepageProductSettings
->;
+const mockedUpdate = apiClient.put as jest.Mock;
 const mockedSummaries = getProductSummariesByIds as jest.MockedFunction<
   typeof getProductSummariesByIds
 >;
@@ -56,9 +47,7 @@ const FAVORITE = "homepage-section-homeFavoriteProductIds";
 beforeEach(() => {
   jest.clearAllMocks();
   mockedSummaries.mockResolvedValue([{ id: 7, title: "محصول", isEligible: true }]);
-  mockedUpdate.mockImplementation(async (payload) =>
-    ({ ...settingsWith({}), ...payload }) as Awaited<ReturnType<typeof updateHomepageProductSettings>>,
-  );
+  mockedUpdate.mockResolvedValue({ data: { id: 1, attributes: settingsWith({}) }, meta: { editRevision: 2 } });
 });
 
 async function renderCard(settings: ReturnType<typeof settingsWith>) {
@@ -68,14 +57,14 @@ async function renderCard(settings: ReturnType<typeof settingsWith>) {
 }
 
 describe("ProductHomepageSectionsCard", () => {
-  it("prepends the product and pushes the existing list down", async () => {
+  it("sends only the product membership change for backend ordering", async () => {
     await renderCard(settingsWith({ newest: [11, 12, 13] }));
 
     fireEvent.click(screen.getByTestId(NEWEST));
     fireEvent.click(screen.getByTestId("homepage-sections-save"));
 
     await waitFor(() => expect(mockedUpdate).toHaveBeenCalled());
-    expect(mockedUpdate).toHaveBeenCalledWith({ homeNewestProductIds: [7, 11, 12, 13] });
+    expect(mockedUpdate).toHaveBeenCalledWith("/products/7/editor/homepage", { data: { homeNewestProductIds: true } }, { retries: 0 });
   });
 
   it("omits sections the operator did not touch", async () => {
@@ -85,7 +74,7 @@ describe("ProductHomepageSectionsCard", () => {
     fireEvent.click(screen.getByTestId("homepage-sections-save"));
 
     await waitFor(() => expect(mockedUpdate).toHaveBeenCalled());
-    const payload = mockedUpdate.mock.calls[0][0];
+    const payload = mockedUpdate.mock.calls[0][1].data;
     expect(Object.keys(payload)).toEqual(["homeNewestProductIds"]);
     expect(payload.homeFavoriteProductIds).toBeUndefined();
     expect(payload.homeDiscountedProductIds).toBeUndefined();
@@ -98,10 +87,10 @@ describe("ProductHomepageSectionsCard", () => {
     fireEvent.click(screen.getByTestId("homepage-sections-save"));
 
     await waitFor(() => expect(mockedUpdate).toHaveBeenCalled());
-    expect(mockedUpdate).toHaveBeenCalledWith({ homeFavoriteProductIds: [11, 12] });
+    expect(mockedUpdate).toHaveBeenCalledWith("/products/7/editor/homepage", { data: { homeFavoriteProductIds: false } }, { retries: 0 });
   });
 
-  it("builds the payload from a save-time read, keeping a concurrent reorder", async () => {
+  it("never resends arrays from a stale page or a concurrent reorder", async () => {
     await renderCard(settingsWith({ newest: [11, 12] }));
 
     // Another admin reorders and adds a product while this page sits open.
@@ -111,21 +100,14 @@ describe("ProductHomepageSectionsCard", () => {
     fireEvent.click(screen.getByTestId("homepage-sections-save"));
 
     await waitFor(() => expect(mockedUpdate).toHaveBeenCalled());
-    expect(mockedUpdate).toHaveBeenCalledWith({ homeNewestProductIds: [7, 12, 99, 11] });
+    expect(mockedUpdate.mock.calls[0][1]).toEqual({ data: { homeNewestProductIds: true } });
+    expect(mockedGet).toHaveBeenCalledTimes(1);
   });
 
-  it("writes nothing when the save-time read already matches the checkboxes", async () => {
-    await renderCard(settingsWith({ newest: [11] }));
-
-    // Someone else added this product in the meantime — our delta is already applied.
-    mockedGet.mockResolvedValue(settingsWith({ newest: [7, 11] }));
-
-    fireEvent.click(screen.getByTestId(NEWEST));
+  it("writes nothing when the checkboxes have not changed", async () => {
+    await renderCard(settingsWith({ newest: [7, 11] }));
     fireEvent.click(screen.getByTestId("homepage-sections-save"));
-
-    await waitFor(() => expect(mockedGet).toHaveBeenCalledTimes(2));
     expect(mockedUpdate).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByTestId(NEWEST)).toBeChecked());
   });
 
   it("warns that the first pick takes the section off automatic", async () => {

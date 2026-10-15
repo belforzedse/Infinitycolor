@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import OrderPrintPermissionGate from "@/components/SuperAdmin/Order/OrderPrintPermissionGate";
 import "../print/print.css";
 import "./print.css";
 
@@ -7,10 +8,10 @@ export const metadata: Metadata = {
   description: "صفحه چاپ بارکد آنیپو",
 };
 
-export default function AnipoBarcodePrintLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <html lang="fa" dir="rtl">
-      <body className="bg-white">{children}</body>
-    </html>
-  );
+export default function AnipoBarcodePrintLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return <OrderPrintPermissionGate>{children}</OrderPrintPermissionGate>;
 }
