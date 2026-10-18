@@ -23,6 +23,11 @@ import {
   CatalogTransportError,
   type CatalogRequestShape,
 } from "@/lib/catalog-transport";
+import {
+  buildStorefrontMenuTaxonomy,
+  isSyntheticStorefrontMenuCategory,
+} from "@/utils/storefrontMenuTaxonomy";
+import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
 
 export interface PLPProduct {
   id: number;
@@ -355,6 +360,52 @@ export async function getPLPCategoryContext(
     title: categoryData.attributes.Title || resolvedSlug,
     allCategories,
     categorySlugs: descendantSlugs.length > 0 ? descendantSlugs : [resolvedSlug],
+  };
+}
+
+export async function getPLPMenuGroupContext(groupKey: string) {
+  const allCategories = await getProductCategoriesForRender({
+    revalidate: 3600,
+  });
+
+  const menuCategories = withHeaderExtraCategories(allCategories);
+
+  const taxonomy = buildStorefrontMenuTaxonomy(menuCategories);
+
+  const group = taxonomy.find((item) => item.type === "group" && item.key === groupKey);
+
+  if (!group || group.type !== "group") {
+    return null;
+  }
+
+  const categorySlugs = new Set<string>();
+
+  const collectCategory = (category: (typeof menuCategories)[number]) => {
+    if (isSyntheticStorefrontMenuCategory(category)) {
+      for (const child of category.children ?? []) {
+        collectCategory(child);
+      }
+      return;
+    }
+
+    const descendants = getCategoryAndDescendantSlugs(allCategories, category.slug);
+
+    if (descendants.length > 0) {
+      descendants.forEach((slug) => categorySlugs.add(slug));
+    } else if (category.slug) {
+      categorySlugs.add(category.slug);
+    }
+  };
+
+  group.categories.forEach(collectCategory);
+
+  if (categorySlugs.size === 0) {
+    return null;
+  }
+
+  return {
+    title: group.label,
+    categorySlugs: [...categorySlugs],
   };
 }
 
