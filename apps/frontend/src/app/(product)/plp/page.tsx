@@ -4,6 +4,7 @@ import {
   buildInvalidPLPMetadata,
   buildPLPMetadata,
   getPLPCategoryContext,
+  getPLPMenuGroupContext,
   parsePLPQuery,
 } from "@/services/product/plp";
 
@@ -22,10 +23,33 @@ export async function generateMetadata({ searchParams }: PLPPageProps): Promise<
   const params = await searchParams;
   const query = parsePLPQuery(params);
 
+  // Handle regular category pages
   if (query.category) {
     const category = await getPLPCategoryContext(query.category);
+
     return category ? buildPLPMetadata(query, category) : buildInvalidPLPMetadata();
   }
 
+  // Handle mobile menu category groups
+  if (params.menuGroup !== undefined) {
+    const groupKey = typeof params.menuGroup === "string" ? params.menuGroup : "";
+
+    const group = await getPLPMenuGroupContext(groupKey);
+
+    if (!group) {
+      return buildInvalidPLPMetadata();
+    }
+
+    return {
+      ...buildPLPMetadata(query),
+      title: group.title,
+      robots: {
+        index: false,
+        follow: true,
+      },
+    };
+  }
+
+  // Default products listing
   return buildPLPMetadata(query);
 }
