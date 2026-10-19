@@ -857,3 +857,25 @@ test("a changed identity can acquire immediately without an old result overwriti
   assert.deepEqual(await pending, { state: "invalidated" });
   assert.equal(manager.peek(), newToken);
 });
+
+
+test("return validation preserves only explicitly trusted HTTP loopback targets", () => {
+  const fallback = "https://infinitycolor.co";
+  for (const origin of ["http://localhost:2891", "http://127.0.0.1:2891", "http://[::1]:2891"]) {
+    const target = origin + "/orders?page=2#details";
+    assert.equal(resolveReturnTarget(target, [fallback, origin], fallback), target);
+    assert.equal(resolveReturnTarget(target, [fallback], fallback), fallback + "/");
+  }
+  const allowed = [fallback, "http://localhost:2891", "http://internal.example", "http://192.168.1.2"];
+  for (const target of [
+    "http://localhost:2892/orders",
+    "http://localhost.evil.example:2891/orders",
+    "http://localhost:2891@evil.example/orders",
+    "http://internal.example/orders",
+    "http://192.168.1.2/orders",
+    "http://infinitycolor.co/orders",
+    "ftp://localhost:2891/orders",
+  ]) {
+    assert.equal(resolveReturnTarget(target, allowed, fallback), fallback + "/");
+  }
+});
