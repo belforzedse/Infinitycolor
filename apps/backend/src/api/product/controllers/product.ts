@@ -6,7 +6,11 @@
 import { factories } from "@strapi/strapi";
 import { validateProductOwnedRelations } from "../../../utils/catalogOwnership";
 import { productEditorActions, saveProductEditor } from "./product-editor";
-import { afterCatalogCommit, CatalogEditError, sendCatalogEditError } from "../../../utils/catalogEdit";
+import {
+  afterCatalogCommit,
+  CatalogEditError,
+  sendCatalogEditError,
+} from "../../../utils/catalogEdit";
 import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import {
   buildCacheKey,
@@ -70,7 +74,7 @@ import {
   sanitizeProductPreviewOverlay,
   type ProductPreviewOverlay,
 } from "../services/product-preview-draft";
-
+import { validateColorGalleriesInput } from "../services/product-color-galleries";
 const OPERATIONAL_PRODUCT_FIELDS = [
   "Title",
   "Slug",
@@ -80,6 +84,7 @@ const OPERATIONAL_PRODUCT_FIELDS = [
   "ProductType",
   "IsSimpleProduct",
   "Media",
+  "ColorGalleries",
   "product_main_category",
   "product_tags",
   "product_attribute_assignments",
@@ -379,8 +384,8 @@ function getProductPopulateForView(view: unknown) {
 
 function isUnrestrictedAdminUser(user: any): boolean {
   return (
-    normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name)
-  ) === "superadmin";
+    (normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name)) === "superadmin"
+  );
 }
 
 async function loadProductById(
@@ -722,10 +727,20 @@ async function runSingleLifecycleCommand(
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
   ...productEditorActions(strapi),
   async editor(ctx) {
-    await validateProductOwnedRelations(strapi, Number(ctx.params.id), ctx.request?.body?.data || {});
+    await validateProductOwnedRelations(
+      strapi,
+      Number(ctx.params.id),
+      ctx.request?.body?.data || {},
+    );
     if (rejectPublicationFields(ctx) || rejectLifecycleFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     if (await rejectInvalidManualSlug(ctx, strapi)) return;
+    const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
+
+    if (colorGalleries !== undefined) {
+      await validateColorGalleriesInput(strapi, colorGalleries);
+    }
+
     return saveProductEditor(ctx, strapi, () => super.update(ctx));
   },
   async create(ctx) {
@@ -740,16 +755,30 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     // race with the new product's media associations.
     return strapi.db.transaction(async () => {
       await validateProductOwnedRelations(strapi, null, ctx.request.body.data);
+      const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
+
+      if (colorGalleries !== undefined) {
+        await validateColorGalleriesInput(strapi, colorGalleries);
+      }
       return super.create(ctx);
     });
   },
 
   async update(ctx) {
-    await validateProductOwnedRelations(strapi, Number(ctx.params.id), ctx.request?.body?.data || {});
+    await validateProductOwnedRelations(
+      strapi,
+      Number(ctx.params.id),
+      ctx.request?.body?.data || {},
+    );
     if (rejectPublicationFields(ctx)) return;
     if (rejectLifecycleFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     if (await rejectInvalidManualSlug(ctx, strapi)) return;
+    const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
+
+    if (colorGalleries !== undefined) {
+      await validateColorGalleriesInput(strapi, colorGalleries);
+    }
     return super.update(ctx);
   },
 
@@ -761,8 +790,12 @@ export default factories.createCoreController("api::product.product", ({ strapi 
    * generic create/update path so no role can bypass these commands.
    */
   async softDelete(ctx) {
-    return runSingleLifecycleCommand(ctx, strapi, "trash", "product.softDelete", (productId, http) =>
-      trashProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    return runSingleLifecycleCommand(
+      ctx,
+      strapi,
+      "trash",
+      "product.softDelete",
+      (productId, http) => trashProduct(strapi, productId, { origin: "admin", actor: http.actor }),
     );
   },
 
@@ -786,8 +819,12 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   },
 
   async permanentDelete(ctx) {
-    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", "product.delete", (productId, http) =>
-      purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    return runSingleLifecycleCommand(
+      ctx,
+      strapi,
+      "permanent delete",
+      "product.delete",
+      (productId, http) => purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
     );
   },
 
@@ -802,8 +839,12 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     if (isTrustedWordPressMigrationRequest()) {
       return (super.delete as any)(ctx);
     }
-    return runSingleLifecycleCommand(ctx, strapi, "permanent delete", "product.delete", (productId, http) =>
-      purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    return runSingleLifecycleCommand(
+      ctx,
+      strapi,
+      "permanent delete",
+      "product.delete",
+      (productId, http) => purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
     );
   },
 
@@ -813,7 +854,9 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     const capability = BULK_ACTION_CAPABILITY[action];
     const reject = (status: number, code: string) => {
       ctx.status = status;
-      ctx.body = { error: { status, name: "ProductLifecycleError", message: code, details: { code } } };
+      ctx.body = {
+        error: { status, name: "ProductLifecycleError", message: code, details: { code } },
+      };
     };
     if (!capability) return reject(400, "LIFECYCLE_ACTION_INVALID");
 
@@ -840,7 +883,13 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         action,
         ids,
         { origin: "admin", actor: http.actor },
-        { publishAt: body.publishAt, timezone: body.timezone, undoToken: body.undoToken, canPublish: http.capabilities.includes("product.publish"), canSchedule: http.capabilities.includes("product.schedule") },
+        {
+          publishAt: body.publishAt,
+          timezone: body.timezone,
+          undoToken: body.undoToken,
+          canPublish: http.capabilities.includes("product.publish"),
+          canSchedule: http.capabilities.includes("product.schedule"),
+        },
       );
       ctx.set("Cache-Control", "private, no-store");
       ctx.body = { data: result };
@@ -854,7 +903,10 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     const trashedBefore = new Date(String(body.trashedBefore || ""));
     // The client sends when it loaded the Trash list; allow a little clock skew
     // but never a cut-off in the future that would sweep unseen products.
-    if (Number.isNaN(trashedBefore.getTime()) || trashedBefore.getTime() > Date.now() + 5 * 60 * 1000) {
+    if (
+      Number.isNaN(trashedBefore.getTime()) ||
+      trashedBefore.getTime() > Date.now() + 5 * 60 * 1000
+    ) {
       ctx.status = 400;
       ctx.body = {
         error: {
@@ -869,7 +921,11 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     const http = await authorizeLifecycle(ctx, strapi, "product.delete");
     if (!http) return;
     try {
-      const result = await emptyTrash(strapi, { origin: "admin", actor: http.actor }, { trashedBefore });
+      const result = await emptyTrash(
+        strapi,
+        { origin: "admin", actor: http.actor },
+        { trashedBefore },
+      );
       ctx.set("Cache-Control", "private, no-store");
       ctx.body = { data: result };
     } catch (error) {
@@ -1060,7 +1116,8 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         actor,
       });
       let queueState = "not-required";
-      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) queueState = "pending-reconciliation";
+      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt)
+        queueState = "pending-reconciliation";
       await afterCatalogCommit(strapi, async () => {
         if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) {
           try {
@@ -1082,8 +1139,11 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         }
 
         if (result.previousScheduleRevision) {
-          try { await removeScheduledProductPublication(productId, result.previousScheduleRevision); }
-          catch { queueState = "pending-reconciliation"; }
+          try {
+            await removeScheduledProductPublication(productId, result.previousScheduleRevision);
+          } catch {
+            queueState = "pending-reconciliation";
+          }
         }
 
         if (result.needsPublicationEffects) {
