@@ -1,5 +1,7 @@
-import type {
-  ProductDetail} from "@/services/product/product";
+"use client";
+
+import { useState } from "react";
+import type { ProductDetail } from "@/services/product/product";
 import {
   formatGalleryAssets,
   getDefaultProductVariation,
@@ -7,6 +9,7 @@ import {
   getProductColors,
   getProductSizes,
   getProductModels,
+  getInitialPdpSelection,
 } from "@/services/product/product";
 import PDPHeroGallery from "./Gallery";
 import PDPHeroInfo from "./Info";
@@ -18,9 +21,6 @@ type PDPHeroProps = {
 };
 
 export default function PDPHero({ productData, productId }: PDPHeroProps) {
-  // Format gallery assets from product data - return empty array if no product data
-  const assets = productData ? formatGalleryAssets(productData) : [];
-
   // Get product colors from helper function - only if productData exists
   let colors: { id: string; title: string; colorCode: string | null | undefined }[] = [];
 
@@ -70,6 +70,15 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
     }
   }
 
+  // Use the same initial selection as Info, including single-color products.
+  // Keep this state scoped to the product without remounting the cart controls.
+  const identity = `${productData?.id ?? productId}:${productData ? "ready" : "pending"}`;
+  const initialColor = getInitialPdpSelection(productData, colors, sizes, models).colorId;
+  const [gallerySelection, setGallerySelection] = useState({ identity, colorId: initialColor });
+  const selectedColor =
+    gallerySelection.identity === identity ? gallerySelection.colorId : initialColor;
+  const assets = productData ? formatGalleryAssets(productData, selectedColor) : [];
+
   // Get default variation for pricing - return 0 if no product data
   let price = 0;
   let discountPrice: number | undefined = undefined;
@@ -90,7 +99,9 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
           typeof discountPriceStr === "string" ? parseInt(discountPriceStr, 10) : discountPriceStr;
 
         // Calculate discount percentage
-        discount = hasStockForVariation(defaultVariation, 1) ? Math.round(((price - discountPrice) / price) * 100) : 0;
+        discount = hasStockForVariation(defaultVariation, 1)
+          ? Math.round(((price - discountPrice) / price) * 100)
+          : 0;
       }
     }
   }
@@ -115,7 +126,7 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
         <Main category={product.category} title={product.title} discount={product.discount} />
       </div>
 
-      <PDPHeroGallery assets={assets} />
+      <PDPHeroGallery key={`${identity}:${selectedColor}`} assets={assets} />
 
       <PDPHeroInfo
         colors={colors}
@@ -124,6 +135,7 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
         models={models}
         productData={productData}
         productId={productId}
+        onSelectedColorChange={(colorId) => setGallerySelection({ identity, colorId })}
       />
     </div>
   );

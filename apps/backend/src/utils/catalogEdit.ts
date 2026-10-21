@@ -20,6 +20,7 @@ type Writer =
   | { kind: "system"; command: "publication" | "scheduled-publication" | "catalog-import" | "catalog-lifecycle" | "catalog-initialization" | "category-reassignment" | "fixture" };
 type MutationContext = {
   ids: number[]; trx: any; writer: Writer; revisions: Map<number, number>; effects: Array<() => Promise<unknown>>;
+  colorGalleriesBefore?: Map<number, any[]>;
 };
 const mutationStorage = new AsyncLocalStorage<MutationContext>();
 const homepageWriteStorage = new AsyncLocalStorage<boolean>();

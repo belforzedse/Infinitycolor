@@ -7,7 +7,11 @@ import logger from "@/utils/logger";
 import { parseStockCount } from "@/utils/product";
 import { computeDiscountForVariation, parseNumber } from "@/utils/discounts";
 import { resolveAssetUrl } from "@/utils/resolveAssetUrl";
-import { readVideoDelivery, resolveVideoSource, type VideoSource } from "@repo/video-player/delivery";
+import {
+  readVideoDelivery,
+  resolveVideoSource,
+  type VideoSource,
+} from "@repo/video-player/delivery";
 import { PRODUCT_COLLECTION_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
 
 export interface ProductMedia {
@@ -133,6 +137,21 @@ export interface ProductDetail {
     Media: {
       data: ProductMedia[];
     };
+    ColorGalleries?: Array<{
+      id: number;
+      color: {
+        data: {
+          id: number;
+          attributes: {
+            Title: string;
+            ColorCode?: string | null;
+          };
+        } | null;
+      };
+      Images: {
+        data: ProductMedia[];
+      };
+    }>;
     product_variations: {
       data: Array<{
         id: number;
@@ -680,7 +699,9 @@ function toGalleryAsset(media: ProductMedia, fallbackAlt: string): GalleryAsset 
     : "";
 
   if (isVideo) {
-    const video = resolveVideoSource(readVideoDelivery(attributes), resolveAssetUrl) ?? { mp4: src };
+    const video = resolveVideoSource(readVideoDelivery(attributes), resolveAssetUrl) ?? {
+      mp4: src,
+    };
     return {
       id: media.id.toString(),
       type: "video",
@@ -700,21 +721,41 @@ function toGalleryAsset(media: ProductMedia, fallbackAlt: string): GalleryAsset 
     alt: attributes.alternativeText || fallbackAlt,
   };
 }
-
-export const formatGalleryAssets = (product: ProductDetail): GalleryAsset[] => {
+export const formatGalleryAssets = (
+  product: ProductDetail,
+  colorId?: string | number,
+): GalleryAsset[] => {
   const assets: GalleryAsset[] = [];
   const title = product.attributes.Title;
 
-  // Cover first, then the gallery.
+  if (colorId) {
+    const colorGallery = product.attributes.ColorGalleries?.find(
+      (gallery) => String(gallery.color?.data?.id) === String(colorId),
+    );
+
+    for (const media of colorGallery?.Images?.data ?? []) {
+      const asset = toGalleryAsset(media, title);
+
+      if (asset?.type === "image") {
+        assets.push(asset);
+      }
+    }
+
+    if (assets.length > 0) return assets;
+  }
+
   const cover = product.attributes.CoverImage?.data;
+
   if (cover) {
     const asset = toGalleryAsset(cover, title);
     if (asset) assets.push(asset);
   }
+
   for (const media of product.attributes.Media?.data ?? []) {
     const asset = toGalleryAsset(media, title);
     if (asset) assets.push(asset);
   }
+
   return assets;
 };
 
@@ -775,7 +816,9 @@ export const getGenericAttributeSelectors = (
           };
         })
         .filter((term) => term.id && term.title)
-        .sort((left, right) => left.position - right.position || left.title.localeCompare(right.title));
+        .sort(
+          (left, right) => left.position - right.position || left.title.localeCompare(right.title),
+        );
 
       if (options.length === 0) return null;
       return {
@@ -1133,7 +1176,9 @@ export const findProductVariation = (
       ([attributeId, termId]) => variationGenericSelection[attributeId] === termId,
     );
 
-    return variation.attributes.IsPublished && colorMatch && sizeMatch && modelMatch && genericMatch;
+    return (
+      variation.attributes.IsPublished && colorMatch && sizeMatch && modelMatch && genericMatch
+    );
   });
 };
 

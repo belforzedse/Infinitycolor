@@ -140,6 +140,21 @@ export interface IdentityStore extends Schema.Component {
   };
 }
 
+export interface ProductColorGallery extends Schema.Component {
+  collectionName: "components_product_color_galleries";
+  info: {
+    displayName: "Color gallery";
+  };
+  attributes: {
+    color: Attribute.Relation<
+      "product.color-gallery",
+      "manyToOne",
+      "api::product-variation-color.product-variation-color"
+    >;
+    Images: Attribute.Media<"images", true>;
+  };
+}
+
 export interface StoryStoryItem extends Schema.Component {
   collectionName: "components_story_story_items";
   info: {
@@ -189,6 +204,7 @@ declare module "@strapi/types" {
       "identity.phone": IdentityPhone;
       "identity.social-link": IdentitySocialLink;
       "identity.store": IdentityStore;
+      "product.color-gallery": ProductColorGallery;
       "story.story-item": StoryStoryItem;
     }
   }

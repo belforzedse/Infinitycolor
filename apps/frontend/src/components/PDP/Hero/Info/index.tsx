@@ -77,6 +77,7 @@ type Props = {
   // Minimal typed shape for productData used in this component
   productData?: ProductDetail | null;
   productId: string;
+  onSelectedColorChange?: (colorId: string) => void;
 };
 
 // Minimal types used by this component (narrowed from Strapi shape)
@@ -115,21 +116,30 @@ export default function PDPHeroInfo(props: Props) {
   );
 
   const selectionIdentity = `${productData?.id ?? productId}:${productData ? "ready" : "pending"}`;
-  const [selectionState, setSelectionState] = useState({ identity: selectionIdentity, ...initialSelection });
-  const selection = selectionState.identity === selectionIdentity
-    ? selectionState
-    : { identity: selectionIdentity, ...initialSelection };
+  const [selectionState, setSelectionState] = useState({
+    identity: selectionIdentity,
+    ...initialSelection,
+  });
+  const selection =
+    selectionState.identity === selectionIdentity
+      ? selectionState
+      : { identity: selectionIdentity, ...initialSelection };
   const selectedColor = selection.colorId;
   const selectedSize = selection.sizeId;
   const selectedModel = selection.modelId;
   const selectedGeneric = selection.generic;
   useEffect(() => {
-    setSelectionState((current) => current.identity === selectionIdentity
-      ? current : { identity: selectionIdentity, ...initialSelection });
+    setSelectionState((current) =>
+      current.identity === selectionIdentity
+        ? current
+        : { identity: selectionIdentity, ...initialSelection },
+    );
   }, [selectionIdentity, initialSelection]);
   const changeSelection = (change: Partial<typeof initialSelection>) => {
     setSelectionState((current) => ({
-      ...(current.identity === selectionIdentity ? current : { identity: selectionIdentity, ...initialSelection }),
+      ...(current.identity === selectionIdentity
+        ? current
+        : { identity: selectionIdentity, ...initialSelection }),
       ...change,
     }));
   };
@@ -214,18 +224,27 @@ export default function PDPHeroInfo(props: Props) {
 
   // Selection, price and cart identity are derived together in the same render.
   const currentVariation = productData
-    ? findProductVariation(productData, selectedColor ? Number(selectedColor) : undefined,
+    ? (findProductVariation(
+        productData,
+        selectedColor ? Number(selectedColor) : undefined,
         selectedSize ? Number(selectedSize) : undefined,
-        selectedModel ? Number(selectedModel) : undefined, selectedGeneric) ?? null
+        selectedModel ? Number(selectedModel) : undefined,
+        selectedGeneric,
+      ) ?? null)
     : null;
   const hasStock = Boolean(currentVariation && hasStockForVariation(currentVariation, 1));
   const currentPrice = Number(currentVariation?.attributes.Price ?? 0);
   const salePrice = Number(currentVariation?.attributes.DiscountPrice ?? 0);
   const currentDiscountPrice = salePrice > 0 && salePrice < currentPrice ? salePrice : 0;
-  const currentDiscount = currentDiscountPrice ? Math.round((1 - currentDiscountPrice / currentPrice) * 100) : 0;
+  const currentDiscount = currentDiscountPrice
+    ? Math.round((1 - currentDiscountPrice / currentPrice) * 100)
+    : 0;
   const currentVariationId = currentVariation ? String(currentVariation.id) : undefined;
   const handleSizeChange = (id: string) => changeSelection({ sizeId: id });
-  const handleColorChange = (id: string) => changeSelection({ colorId: id });
+  const handleColorChange = (id: string) => {
+    changeSelection({ colorId: id });
+    props.onSelectedColorChange?.(id);
+  };
   const handleModelChange = (id: string) => changeSelection({ modelId: id });
   const handleGenericChange = (attributeId: string, termId: string) =>
     changeSelection({ generic: { ...selectedGeneric, [attributeId]: termId } });
@@ -291,7 +310,11 @@ export default function PDPHeroInfo(props: Props) {
         </div>
       )}
       <div className="hidden md:block">
-        <Main category={product.category} title={product.title} discount={hasStock ? currentDiscount : 0} />
+        <Main
+          category={product.category}
+          title={product.title}
+          discount={hasStock ? currentDiscount : 0}
+        />
       </div>
 
       <div className="h-[1px] bg-slate-100" />
@@ -372,11 +395,7 @@ export default function PDPHeroInfo(props: Props) {
         />
 
         {productData?.attributes?.Description && (
-          <FAQItem
-            title="جزئیات محصول"
-            content={productData.attributes.Description}
-            defaultOpen
-          />
+          <FAQItem title="جزئیات محصول" content={productData.attributes.Description} defaultOpen />
         )}
 
         {productData?.attributes?.CleaningTips && (

@@ -41,6 +41,7 @@ SECRETS_REFERENCE.txt
 /out/
 apps/frontend/out/
 apps/frontend/.next/
+apps/frontend/.next-color-gallery-check/
 apps/auth/.next/
 apps/admin/.next/
 apps/auth/out/

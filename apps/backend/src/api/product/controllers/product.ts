@@ -288,6 +288,12 @@ async function findAllSearchwiseProducts(strapi: any) {
 const PRODUCT_POPULATE = {
   CoverImage: true,
   Media: true,
+  ColorGalleries: {
+    populate: {
+      color: true,
+      Images: true,
+    },
+  },
   Files: true,
   product_main_category: true,
   product_other_categories: true,
@@ -339,6 +345,12 @@ const PRODUCT_POPULATE = {
 const PRODUCT_SHELL_POPULATE = {
   CoverImage: true,
   Media: true,
+  ColorGalleries: {
+    populate: {
+      color: true,
+      Images: true,
+    },
+  },
   Files: true,
   product_main_category: true,
   product_other_categories: true,
@@ -727,6 +739,7 @@ async function runSingleLifecycleCommand(
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
   ...productEditorActions(strapi),
   async editor(ctx) {
+    if (ctx.request?.body?.data?.ColorGalleries !== undefined && !(await requireCapability(ctx, strapi, "product.media.manage"))) return;
     await validateProductOwnedRelations(
       strapi,
       Number(ctx.params.id),
@@ -738,12 +751,13 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
 
     if (colorGalleries !== undefined) {
-      await validateColorGalleriesInput(strapi, colorGalleries);
+      await validateColorGalleriesInput(strapi, colorGalleries, Number(ctx.params.id));
     }
 
     return saveProductEditor(ctx, strapi, () => super.update(ctx));
   },
   async create(ctx) {
+    if (ctx.request?.body?.data?.ColorGalleries !== undefined && !(await requireCapability(ctx, strapi, "product.media.manage"))) return;
     discardLegacyDraftStatusOnCreate(ctx);
     if (rejectPublicationFields(ctx)) return;
     if (rejectLifecycleFields(ctx)) return;
@@ -765,6 +779,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   },
 
   async update(ctx) {
+    if (ctx.request?.body?.data?.ColorGalleries !== undefined && !(await requireCapability(ctx, strapi, "product.media.manage"))) return;
     await validateProductOwnedRelations(
       strapi,
       Number(ctx.params.id),
@@ -777,7 +792,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
 
     if (colorGalleries !== undefined) {
-      await validateColorGalleriesInput(strapi, colorGalleries);
+      await validateColorGalleriesInput(strapi, colorGalleries, Number(ctx.params.id));
     }
     return super.update(ctx);
   },

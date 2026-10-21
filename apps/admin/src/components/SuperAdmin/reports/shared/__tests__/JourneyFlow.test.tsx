@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import type { JourneyNode, JourneyLink } from "../journeyFlow";
+import type { JourneyNode, JourneyLink } from "../buildJourneyFlow";
 
 let lastSankeyProps: { data?: { nodes: JourneyNode[]; links: JourneyLink[] } } | null = null;
 

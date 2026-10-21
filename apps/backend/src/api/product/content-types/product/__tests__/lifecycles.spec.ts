@@ -67,7 +67,12 @@ describe("product lifecycles - PDP cache invalidation", () => {
       });
 
       await productLifecycles.afterCreate({
-        result: { id: 4624, Title: "ست راحتی تدی", Slug: "fantasy-sleeping-set-n002", Status: "InActive" },
+        result: {
+          id: 4624,
+          Title: "ست راحتی تدی",
+          Slug: "fantasy-sleeping-set-n002",
+          Status: "InActive",
+        },
         params: { data: {} },
       } as any);
 
@@ -76,6 +81,79 @@ describe("product lifecycles - PDP cache invalidation", () => {
   });
 
   describe("afterUpdate", () => {
+    it("records an edit when color gallery images are reordered", async () => {
+      mockRecordAdminAudit.mockResolvedValue(true);
+
+      const previousGallery = [
+        {
+          id: 7,
+          color: { id: 2 },
+          Images: [{ id: 10 }, { id: 20 }],
+        },
+      ];
+
+      const currentGallery = [
+        {
+          id: 7,
+          color: { id: 2 },
+          Images: [{ id: 20 }, { id: 10 }],
+        },
+      ];
+
+      const previousProduct = {
+        Title: "My product",
+        Slug: "my-product",
+        Status: "Active",
+        ColorGalleries: previousGallery,
+      };
+
+      (global as any).strapi.entityService.findOne = jest.fn().mockResolvedValue({
+        ...previousProduct,
+        ColorGalleries: currentGallery,
+      });
+
+      await productLifecycles.afterUpdate({
+        params: {
+          data: {
+            ColorGalleries: [{ id: 7, color: 2, Images: [20, 10] }],
+          },
+        },
+        result: { id: 1, Slug: "my-product", Status: "Active" },
+        state: { previousProduct },
+      } as any);
+
+      expect((global as any).strapi.entityService.findOne).toHaveBeenCalledWith(
+        "api::product.product",
+        1,
+        expect.objectContaining({
+          populate: expect.objectContaining({
+            ColorGalleries: {
+              fields: ["id"],
+              populate: {
+                color: { fields: ["id"] },
+                Images: { fields: ["id"] },
+              },
+            },
+          }),
+        }),
+      );
+
+      expect(mockRecordAdminAudit).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          changes: {
+            ColorGalleries: {
+              from: previousGallery,
+              to: currentGallery,
+            },
+          },
+        }),
+      );
+
+      expect(mockMarkProductEditedByAdmin).toHaveBeenCalledWith(expect.anything(), 1);
+
+      expect(revalidatedSlugs()).toEqual(["my-product"]);
+    });
     it("still revalidates the slug when a product becomes Active (existing behavior)", async () => {
       (global as any).strapi.entityService.findOne = jest.fn().mockResolvedValue({
         Title: "My product",

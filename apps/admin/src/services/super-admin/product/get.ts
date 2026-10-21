@@ -63,7 +63,9 @@ export interface GenericRelationArray<T> {
 export interface ProductDataResponse {
   EditRevision?: number;
   LastEditedByAdminAt?: string | null;
-  product_size_helper?: { data: { id: number; attributes: { Helper?: unknown } } | null };
+  product_size_helper?: {
+    data: { id: number; attributes: { Helper?: unknown } } | null;
+  };
   Title: string;
   Slug?: string | null;
   Description: string;
@@ -85,6 +87,11 @@ export interface ProductDataResponse {
   removedAt: string | null;
   Files: MediaField;
   Media: MediaField;
+  ColorGalleries?: Array<{
+    id: number;
+    color: GenericRelation<{ id: number }>;
+    Images: MediaField;
+  }>;
   CoverImage: CoverImageField;
   product_main_category: GenericRelation<unknown>;
   product_tags: GenericRelationArray<TagAttributes>;
@@ -138,7 +145,9 @@ const PRODUCT_QUERY_MAX_LIMIT = 100;
  * missing exactly the largest id. Asking for more than `maxLimit` at once truncates
  * the same way, which is why this batches instead of sending one big limit.
  */
-export async function getProductSummariesByIds(ids: number[]): Promise<ProductSummary[]> {
+export async function getProductSummariesByIds(
+  ids: number[],
+): Promise<ProductSummary[]> {
   if (ids.length === 0) return [];
 
   const batches: number[][] = [];
@@ -149,7 +158,9 @@ export async function getProductSummariesByIds(ids: number[]): Promise<ProductSu
   const responses = await Promise.all(
     batches.map((batch) => {
       const params = new URLSearchParams();
-      batch.forEach((id, i) => params.set(`filters[id][$in][${i}]`, String(id)));
+      batch.forEach((id, i) =>
+        params.set(`filters[id][$in][${i}]`, String(id)),
+      );
       params.set("pagination[limit]", String(batch.length));
       params.set("pagination[withCount]", "false");
       // Object-key populate throughout (`populate[CoverImage]=true`), not the array-index
@@ -180,7 +191,8 @@ export async function getProductSummariesByIds(ids: number[]): Promise<ProductSu
   const withOrder = list.map((raw: any) => {
     const id = raw.id;
     const attrs = raw.attributes ?? {};
-    const title = typeof attrs.Title === "string" ? attrs.Title : `محصول #${id}`;
+    const title =
+      typeof attrs.Title === "string" ? attrs.Title : `محصول #${id}`;
     let image: string | undefined;
     const cover = attrs.CoverImage as CoverImageField | undefined;
     if (cover?.data?.attributes?.url) {
@@ -194,7 +206,9 @@ export async function getProductSummariesByIds(ids: number[]): Promise<ProductSu
     // fields, so eligibility and the DiscountPrice check below stay reliable for
     // every admin role.
     const variationsData = attrs.product_variations?.data;
-    const variations = (Array.isArray(variationsData) ? variationsData : []) as any[];
+    const variations = (
+      Array.isArray(variationsData) ? variationsData : []
+    ) as any[];
     const hasPublishedPricedVariation = variations.some((v) => {
       const vAttrs = v?.attributes ?? v ?? {};
       return Boolean(vAttrs.IsPublished) && Number(vAttrs.Price ?? 0) > 0;
@@ -216,16 +230,25 @@ export async function getProductSummariesByIds(ids: number[]): Promise<ProductSu
       return discountPrice > 0 && discountPrice < price;
     });
 
-    return { id, title, image, isEligible, isDiscounted, order: idToIndex.get(id) ?? 0 };
+    return {
+      id,
+      title,
+      image,
+      isEligible,
+      isDiscounted,
+      order: idToIndex.get(id) ?? 0,
+    };
   });
   withOrder.sort((a: any, b: any) => a.order - b.order);
-  return withOrder.map(({ id, title, image, isEligible, isDiscounted }: any) => ({
-    id,
-    title,
-    image,
-    isEligible,
-    isDiscounted,
-  }));
+  return withOrder.map(
+    ({ id, title, image, isEligible, isDiscounted }: any) => ({
+      id,
+      title,
+      image,
+      isEligible,
+      isDiscounted,
+    }),
+  );
 }
 
 export async function getGifPromoPreviewProducts(
@@ -242,12 +265,17 @@ export async function getGifPromoPreviewProducts(
   if (assignment.mode === "manual") {
     const ids = assignment.productIds.slice(0, 4);
     if (ids.length === 0) return [];
-    ids.forEach((id, index) => params.set(`filters[id][$in][${index}]`, String(id)));
+    ids.forEach((id, index) =>
+      params.set(`filters[id][$in][${index}]`, String(id)),
+    );
     params.set("pagination[limit]", String(Math.max(ids.length, 4)));
 
-    const res = (await apiClient.get(`${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`, {
-      cache: "no-store",
-    })) as any;
+    const res = (await apiClient.get(
+      `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+      {
+        cache: "no-store",
+      },
+    )) as any;
     const list = formatProductsToCardProps(res?.data ?? []);
     const order = new Map(ids.map((id, index) => [id, index]));
     return list
@@ -262,8 +290,11 @@ export async function getGifPromoPreviewProducts(
   params.set("sort[0]", "createdAt:desc");
   params.set("pagination[limit]", "4");
 
-  const res = (await apiClient.get(`${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`, {
-    cache: "no-store",
-  })) as any;
+  const res = (await apiClient.get(
+    `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+    {
+      cache: "no-store",
+    },
+  )) as any;
   return formatProductsToCardProps(res?.data ?? []).slice(0, 4);
 }

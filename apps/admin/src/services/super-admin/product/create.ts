@@ -9,7 +9,10 @@ type RawRelationValue =
   | undefined
   | number
   | string
-  | { id?: number | string; data?: { id?: number | string } | number | string | null };
+  | {
+      id?: number | string;
+      data?: { id?: number | string } | number | string | null;
+    };
 
 const normalizeRelationId = (value: RawRelationValue): number | null => {
   if (value === null || value === undefined) return null;
@@ -26,7 +29,9 @@ const normalizeRelationId = (value: RawRelationValue): number | null => {
     }
     if (value.data !== undefined) {
       if (typeof value.data === "object") {
-        return normalizeRelationId((value.data as { id?: RawRelationValue }).id ?? null);
+        return normalizeRelationId(
+          (value.data as { id?: RawRelationValue }).id ?? null,
+        );
       }
       return normalizeRelationId(value.data as RawRelationValue);
     }
@@ -34,7 +39,9 @@ const normalizeRelationId = (value: RawRelationValue): number | null => {
   return null;
 };
 
-const normalizeRelationIds = (values?: RawRelationValue[]): number[] | undefined => {
+const normalizeRelationIds = (
+  values?: RawRelationValue[],
+): number[] | undefined => {
   if (!Array.isArray(values) || values.length === 0) {
     return undefined;
   }
@@ -47,13 +54,24 @@ const normalizeRelationIds = (values?: RawRelationValue[]): number[] | undefined
 interface TransformedProductData
   extends Omit<
     ProductData,
-    "product_main_category" | "product_tags" | "product_other_categories" | "CoverImage" | "Media" | "Files" | "Status"
+    | "product_main_category"
+    | "product_tags"
+    | "product_other_categories"
+    | "CoverImage"
+    | "Media"
+    | "ColorGalleries"
+    | "Files"
+    | "Status"
   > {
   product_main_category: number | null;
   product_tags: number[];
   product_other_categories: number[];
   CoverImage?: number | null;
   Media?: number[];
+  ColorGalleries?: Array<{
+    color: number;
+    Images: number[];
+  }>;
   Files?: number[];
 }
 
@@ -77,7 +95,10 @@ function transformProductDataForApi(data: ProductData): TransformedProductData {
   const mediaIds = normalizeRelationIds(Media as unknown as RawRelationValue[]);
   const fileIds = normalizeRelationIds(Files as unknown as RawRelationValue[]);
 
-  const productType = rest.ProductType === "Simple" || rest.IsSimpleProduct ? "Simple" : "Variable";
+  const productType =
+    rest.ProductType === "Simple" || rest.IsSimpleProduct
+      ? "Simple"
+      : "Variable";
 
   return {
     ...rest,
@@ -85,10 +106,16 @@ function transformProductDataForApi(data: ProductData): TransformedProductData {
     IsSimpleProduct: productType === "Simple",
     CoverImage: coverImageId ?? undefined,
     Media: mediaIds,
+    ColorGalleries: data.ColorGalleries?.map((gallery) => ({
+      color: gallery.color,
+      Images: gallery.Images.map((image) => image.id),
+    })),
     Files: fileIds,
     product_main_category: rest.product_main_category?.id || null,
     product_tags: rest.product_tags.map((tag) => tag.id),
-    product_other_categories: rest.product_other_categories.map((category) => category.id),
+    product_other_categories: rest.product_other_categories.map(
+      (category) => category.id,
+    ),
   };
 }
 
@@ -97,19 +124,27 @@ export const createProduct = async (body: ProductData) => {
     const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}`;
     const transformedBody = transformProductDataForApi(body);
 
-    const response = await apiClient.post(endpoint, {
-      data: transformedBody,
-    }, { retries: 0 });
+    const response = await apiClient.post(
+      endpoint,
+      {
+        data: transformedBody,
+      },
+      { retries: 0 },
+    );
     const productId = (response.data as { id?: number } | undefined)?.id;
 
     if (productId) {
-      try { await syncSimpleProductVariation(Number(productId), body); }
-      catch { return { success: true, data: response.data, followupFailed: true }; }
+      try {
+        await syncSimpleProductVariation(Number(productId), body);
+      } catch {
+        return { success: true, data: response.data, followupFailed: true };
+      }
     }
 
     return { success: true, data: response.data };
   } catch (error: any) {
-    const errorMessage = error.response?.data?.error?.message || "ساخت محصول با خطا مواجه شد";
+    const errorMessage =
+      error.response?.data?.error?.message || "ساخت محصول با خطا مواجه شد";
     toast.error(errorMessage);
     return { success: false, error };
   }
