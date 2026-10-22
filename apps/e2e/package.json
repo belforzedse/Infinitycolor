@@ -40,8 +40,8 @@
     "@types/node": "20.17.30",
     "esbuild": "0.25.12",
     "jszip": "3.10.1",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
     "react-instagram-stories": "1.1.1",
     "typescript": "7.0.2"
   },
