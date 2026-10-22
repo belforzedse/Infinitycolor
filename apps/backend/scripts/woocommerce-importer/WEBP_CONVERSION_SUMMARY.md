@@ -11,7 +11,7 @@
 ```json
 // package.json
 "dependencies": {
-  "sharp": "^0.33.0"  // High-performance image processing
+  "sharp": "0.35.5"  // High-performance image processing
 }
 ```
 
