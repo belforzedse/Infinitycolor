@@ -1,5 +1,5 @@
 # syntax=docker.arvancloud.ir/docker/dockerfile:1.7
-FROM docker.arvancloud.ir/library/node:22-alpine AS builder
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS builder
 
 WORKDIR /repo
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -58,7 +58,7 @@ RUN --mount=type=cache,id=infinity-social-next-16.3.2-node22,target=/repo/apps/s
     --mount=type=cache,target=/root/.cache/node/corepack \
     pnpm run build
 
-FROM docker.arvancloud.ir/library/node:22-alpine AS runner
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS runner
 WORKDIR /app
 
 ARG FRONTEND_REDIS_URL=""

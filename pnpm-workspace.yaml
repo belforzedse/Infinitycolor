@@ -3,6 +3,7 @@ packages:
   - "packages/*"
   - "tools/*"
 overrides:
+  "axios@<1.20.0": 1.20.0
   # The browser applications are React 19. A transitive Strapi declaration
   # otherwise wins pnpm's shared type hoist and makes both deploy builds resolve
   # two incompatible ReactNode universes. These are declaration packages only;
