@@ -45,4 +45,13 @@ describe("worker Strapi instance", () => {
     expect(createStrapi).toHaveBeenCalledWith({ distDir: "./dist" });
     expect(app.load).toHaveBeenCalledTimes(1);
   });
+
+  it("destroys a partially loaded instance while preserving the startup failure", async () => {
+    const error = new Error("database unavailable");
+    app.load.mockRejectedValueOnce(error);
+    app.destroy.mockRejectedValueOnce(new Error("cleanup failed"));
+
+    await expect(createLoadedStrapi()).rejects.toBe(error);
+    expect(app.destroy).toHaveBeenCalledTimes(1);
+  });
 });
