@@ -11,6 +11,8 @@ jest.mock(
   { virtual: true },
 );
 
+jest.mock("../../jobs/dispatchShippingSms", () => ({ dispatchDueShippingSms: jest.fn() }));
+
 jest.mock("../../jobs/expireStockReservations", () => ({
   runExpireStockReservationsTick: jest.fn(),
 }));
@@ -141,6 +143,13 @@ function createMockStrapi() {
 }
 
 describe("queue processors", () => {
+  it("dispatches due shipping messages through the commerce worker", async () => {
+    const { dispatchDueShippingSms } = await import("../../jobs/dispatchShippingSms");
+    const strapi = createMockStrapi();
+    await processMaintenanceJob(strapi, { name: COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch, data: {} } as any);
+    expect(dispatchDueShippingSms).toHaveBeenCalledWith(strapi);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
   });

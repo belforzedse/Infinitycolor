@@ -19,6 +19,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   anipoRecipientSyncOne: "anipoRecipients.syncOne",
   edgeCachePurge: "edgeCache.purge",
   staffOrderAlert: "staffAlerts.orderStarted",
+  shippingSmsDispatch: "shippingSms.dispatch",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -76,6 +77,7 @@ export const MAINTENANCE_SCHEDULERS = {
   reserveOrderExpiry: "sched:reserveOrders.expire",
   scheduledProductReconcile: "sched:scheduledProducts.reconcile",
   cartCleanupReconcile: "sched:cartCleanup.reconcile",
+  shippingSmsDispatch: "sched:shippingSms.dispatch",
   viewCounterFlush: "sched:viewCounters.flush",
   analyticsDailyRollup: "sched:analyticsDailyRollup.run",
   analyticsOutboxRepair: "sched:analyticsOutboxRepair.run",

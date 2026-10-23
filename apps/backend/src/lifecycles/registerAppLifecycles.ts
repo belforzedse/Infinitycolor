@@ -194,6 +194,19 @@ function registerOrderLifecycle(strapi: Strapi) {
         }
       );
 
+      const data = (event as any).params?.data;
+      if (data) {
+        // Notification scheduling is server-owned, including generic admin edits.
+        delete data.ShippingSmsDueAt;
+        delete data.ShippingSmsCompletedAt;
+        delete data.ShippingSmsLastAttemptAt;
+        if (
+          ["Done", "Shipment"].includes(data.Status) &&
+          !["Done", "Shipment"].includes((previous as any)?.Status)
+        ) {
+          data.ShippingSmsDueAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+        }
+      }
       (event as any).state = { ...((event as any).state || {}), previousOrder: previous };
     },
 

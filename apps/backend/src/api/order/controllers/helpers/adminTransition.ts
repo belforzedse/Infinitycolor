@@ -53,6 +53,14 @@ async function applyOrderStatusTransition(
       );
       previous = toStatus;
     }
+    // Persist the customer notification alongside the successful completion.
+    // Later barcode updates must not restart the 48-hour clock.
+    await trx.raw(
+      `UPDATE orders
+       SET shipping_sms_due_at = COALESCE(shipping_sms_due_at, NOW() + INTERVAL '48 hours')
+       WHERE id = ? AND status = 'Shipment' AND shipping_sms_completed_at IS NULL`,
+      [orderId],
+    );
     if (queueAnipo) {
       await trx.raw(
         `UPDATE orders SET anipo_barcode_state = 'Pending'
