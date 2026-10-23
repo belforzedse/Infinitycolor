@@ -86,7 +86,7 @@ const SizeGuideEditor: React.FC<SizeGuideEditorProps> = ({
 
   const handleSave = () => {
     // Validate data
-    if (data.some((row) => !row.size)) {
+    if (data.length === 0 || data.some((row) => !String(row.size ?? "").trim())) {
       alert("لطفاً تمام مقادیر سایز را پر کنید");
       return;
     }
@@ -94,8 +94,8 @@ const SizeGuideEditor: React.FC<SizeGuideEditorProps> = ({
       alert("لطفاً حداقل یک ستون اندازه‌گیری اضافه کنید");
       return;
     }
-    if (data.some((row) => localColumns.some((col) => !row[col.key]))) {
-      alert("لطفاً تمام مقادیر اندازه‌گیری را پر کنید");
+    if (localColumns.some((column) => !column.title.trim())) {
+      alert("لطفاً نام ستون‌ها را وارد کنید");
       return;
     }
     onSave(data);

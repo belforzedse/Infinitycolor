@@ -40,11 +40,7 @@ export function sizeGuideDraftPayload(
     !Helper.length ||
     !draft.columns.length ||
     draft.columns.some((column) => !column.title.trim()) ||
-    draft.data.some(
-      (row) =>
-        !String(row.size ?? "").trim() ||
-        draft.columns.some((column) => !String(row[column.key] ?? "").trim()),
-    )
+    draft.data.some((row) => !String(row.size ?? "").trim())
   ) {
     throw new Error("لطفاً جدول راهنمای سایز را تکمیل کنید");
   }
