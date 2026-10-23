@@ -1,5 +1,5 @@
 # syntax=docker.arvancloud.ir/docker/dockerfile:1.7
-FROM docker.arvancloud.ir/library/node:20-alpine AS dependencies
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS dependencies
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -94,7 +94,7 @@ RUN mkdir -p /runtime \
     && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /runtime/public/uploads/ \
     && echo "backend runtime assembly complete"
 
-FROM docker.arvancloud.ir/library/node:20-alpine AS runner
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS runner
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true

@@ -4,7 +4,7 @@
 catalog importer. You do **not** need prior context — everything required is here.
 
 **Working dir:** `apps/backend/scripts/woocommerce-importer/`
-**Runtime:** Node ≥ 18 (CI uses Node 22). Deps already installed: `commander`, `axios`,
+**Runtime:** Node ≥ 20.9.0 (CI uses Node 22). Deps already installed: `commander`, `axios`,
 `sharp`, `form-data`. No new dependencies.
 
 ---

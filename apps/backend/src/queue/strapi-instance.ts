@@ -20,6 +20,11 @@ export async function createLoadedStrapi(): Promise<Strapi> {
     throw new Error("Strapi worker requires @strapi/strapi app.load()");
   }
 
-  await app.load();
-  return app;
+  try {
+    await app.load();
+    return app;
+  } catch (error) {
+    await app.destroy?.().catch(() => undefined);
+    throw error;
+  }
 }
