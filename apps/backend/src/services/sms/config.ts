@@ -2,7 +2,7 @@ import type { SmsNotificationType } from "./types";
 
 const DEFAULT_BASE_URL = "https://edge.ippanel.com/v1";
 const DEFAULT_PATTERN_ENDPOINT = "/api/send";
-const DEFAULT_TIMEOUT_MS = 4000;
+const DEFAULT_TIMEOUT_MS = 10_000;
 /**
  * The registered IPPanel template for the staff «در حال انجام» alert. Pinned in
  * code rather than left to the environment so the alert works on a fresh deploy;

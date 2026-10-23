@@ -35,6 +35,11 @@ describe("scheduler registration", () => {
     );
 
     expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.shippingSmsDispatch,
+      { every: 60_000 },
+      expect.objectContaining({ name: COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch, data: {} }),
+    );
+    expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.stockReservationExpiry,
       { pattern: "*/2 * * * *", tz: "Asia/Tehran" },
       expect.objectContaining({

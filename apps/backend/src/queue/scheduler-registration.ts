@@ -13,6 +13,16 @@ export async function registerMaintenanceSchedulers(
   settings: QueueSettings,
 ): Promise<void> {
   await queues.commerce.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.shippingSmsDispatch,
+    { every: 60_000 },
+    {
+      name: COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    },
+  );
+
+  await queues.commerce.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.stockReservationExpiry,
     {
       pattern: settings.crons.stockReservationExpiry,

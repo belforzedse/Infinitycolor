@@ -70,6 +70,10 @@ export async function processMaintenanceJob(
   token?: string,
 ): Promise<unknown> {
   switch (job.name) {
+    case COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch: {
+      const { dispatchDueShippingSms } = await import("../jobs/dispatchShippingSms");
+      return dispatchDueShippingSms(strapi);
+    }
     case COMMERCE_MAINTENANCE_JOBS.stockReservationExpiry:
       return runExpireStockReservationsTick(strapi);
     case COMMERCE_MAINTENANCE_JOBS.reserveOrderExpiry:

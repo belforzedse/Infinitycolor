@@ -1,7 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import MobileMenu from "../MobileMenu";
 import { useProductCategories } from "@/hooks/useProductCategories";
-
 const pushMock = jest.fn();
 
 jest.mock("next/navigation", () => ({
@@ -134,8 +133,11 @@ describe("MobileMenu", () => {
 
     expect(coatButton).toHaveAttribute("aria-expanded", "true");
     expect(
-      within(upperBodyGroup).queryByRole("link", { name: /مشاهده همه/ }),
-    ).not.toBeInTheDocument();
+      within(upperBodyGroup).getByRole("link", {
+        name: "مشاهده همه بالاتنه‌ها",
+      }),
+    ).toHaveAttribute("href", "/plp?menuGroup=upper-body");
+
     expect(within(upperBodyGroup).getByRole("link", { name: "پالتو" })).toHaveAttribute(
       "href",
       "/plp/category/coat",
@@ -149,7 +151,38 @@ describe("MobileMenu", () => {
       "/plp/category/coat-blazer",
     );
   });
+  it("shows view all links for lower body and sportswear", async () => {
+    render(<MobileMenu isOpen onClose={jest.fn()} />);
 
+    const groups = [
+      {
+        name: "پایین تنه",
+        label: "مشاهده همه پایین‌تنه‌ها",
+        href: "/plp?menuGroup=lower-body",
+      },
+      {
+        name: "لباس ورزشی",
+        label: "مشاهده همه لباس‌های ورزشی",
+        href: "/plp?menuGroup=sportswear",
+      },
+    ];
+
+    for (const group of groups) {
+      const button = screen.getByRole("button", {
+        name: group.name,
+      });
+
+      fireEvent.click(button);
+
+      expect(button).toHaveAttribute("aria-expanded", "true");
+
+      expect(
+        screen.getByRole("link", {
+          name: group.label,
+        }),
+      ).toHaveAttribute("href", group.href);
+    }
+  });
   it("adds کمربند as a standalone mobile category", async () => {
     render(<MobileMenu isOpen onClose={jest.fn()} />);
 
@@ -263,8 +296,9 @@ describe("MobileMenu", () => {
       const input = screen.getByLabelText("جستجوی محصولات");
       expect(input).not.toHaveFocus();
 
-      jest.advanceTimersByTime(150);
-
+      act(() => {
+        jest.advanceTimersByTime(150);
+      });
       expect(input).toHaveFocus();
 
       jest.useRealTimers();
