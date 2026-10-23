@@ -11,10 +11,11 @@ const FATAL_DATABASE_CODES = new Set([
   '3D000', // database does not exist
   '42501', // insufficient privilege
 ])
-const RETRYABLE_TIMEOUT_MESSAGES = new Set([
-  'timeout expired',
-  'Connection terminated due to connection timeout',
-  'Query read timeout',
+const RETRYABLE_ERROR_MESSAGES = new Map([
+  ['timeout expired', 'ETIMEDOUT'],
+  ['Connection terminated due to connection timeout', 'ETIMEDOUT'],
+  ['Query read timeout', 'ETIMEDOUT'],
+  ['Connection terminated unexpectedly', 'ECONNRESET'],
 ])
 
 function databaseConfigFromEnv(env) {
@@ -48,7 +49,7 @@ function errorCode(error) {
   if (typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code)) {
     return error.code
   }
-  return RETRYABLE_TIMEOUT_MESSAGES.has(error?.message) ? 'ETIMEDOUT' : 'unknown'
+  return RETRYABLE_ERROR_MESSAGES.get(error?.message) || 'unknown'
 }
 
 function isRetryable(error) {
@@ -96,9 +97,18 @@ async function waitForDatabase({
     })
 
     let attemptError
+    let emittedClientError
+    // pg 8.x emits client-level errors for dead sockets after it rejects any
+    // active query. Keep this listener for the client's lifetime so late
+    // teardown events cannot become uncaught EventEmitter errors.
+    client.on('error', (error) => {
+      if (!emittedClientError) emittedClientError = error
+    })
     try {
       await client.connect()
+      if (emittedClientError) throw emittedClientError
       await client.query('SELECT 1')
+      if (emittedClientError) throw emittedClientError
     } catch (error) {
       attemptError = error
     } finally {
@@ -108,6 +118,7 @@ async function waitForDatabase({
         if (!attemptError) attemptError = error
       }
     }
+    if (!attemptError && emittedClientError) attemptError = emittedClientError
 
     if (!attemptError) return
 
