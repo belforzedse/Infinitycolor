@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { randomUUID } from "node:crypto";
 import { getQueueSettings, toBullMqConnectionOptions } from "./env";
 import { QUEUE_NAMES, MELLAT_PAYMENT_JOBS } from "./contracts";
 import { defaultMaintenanceJobOptions } from "./queues";
@@ -13,8 +14,9 @@ export async function enqueueMellatAttempt(attemptId: number, delayMs = 0): Prom
     defaultJobOptions: { ...defaultMaintenanceJobOptions, attempts: 1 },
   });
   await queue.add(MELLAT_PAYMENT_JOBS.reconcile, { attemptId }, {
-    // A completed job must not prevent the durable sweep from scheduling recovery.
-    jobId: `mellat-${attemptId}-${Math.floor(Date.now() / 1000)}`,
+    // An active job must not deduplicate its own delayed retry. Database leases
+    // fence concurrent deliveries from callbacks and the durable sweep.
+    jobId: `mellat-${attemptId}-${randomUUID()}`,
     delay: Math.max(0, delayMs), attempts: 1,
   });
 }
