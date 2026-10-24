@@ -8,7 +8,8 @@ export const EDITOR_POPULATE = {
   product_attribute_assignments: { populate: { product_attribute: true, terms: true } },
   product_variations: { populate: {
     product_stock: true, product_variation_color: true, product_variation_size: true,
-    product_variation_model: true, selected_attribute_terms: true,
+    product_variation_model: true,
+    selected_attribute_terms: { populate: { product_attribute: true } },
   } },
 };
 
