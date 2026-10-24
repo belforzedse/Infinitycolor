@@ -12,6 +12,8 @@ import {
   formatCancellationReasonForSms,
   formatOrderStatusForSms,
   notifyOrderStatusSms,
+  notifyScheduledShippingSms,
+  notifyShipmentTrackingSms,
 } from "../notifications";
 import { normalizeIranMobile } from "../phone";
 import { maskPhone, maskSecret } from "../redaction";
@@ -467,6 +469,73 @@ describe("sms service", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["Done", "Shipment"])("defers %s instead of sending immediately", async (newStatus) => {
+    await expect(notifyOrderStatusSms({} as any, {
+      orderId: 11, oldStatus: "Started", newStatus,
+    })).resolves.toMatchObject({ skipped: true, reason: "scheduled_shipping_notification" });
+    await expect(notifyShipmentTrackingSms({} as any, {
+      orderId: 11, trackingCode: "NEW-CODE",
+    })).resolves.toMatchObject({ skipped: true, reason: "scheduled_shipping_notification" });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([["LATEST-CODE", "LATEST-CODE"], [null, "—"]])(
+    "loads the current tracking code (%s) when the scheduled SMS sends",
+    async (barcode, expected) => {
+      process.env.SMS_ENABLED = "true";
+      process.env.IP_PANEL_API_KEY = "secret-key";
+      process.env.IP_PANEL_PATTERN_SHIPPED = "shipping-pattern";
+      process.env.IP_PANEL_SENDER = "+983000505";
+      const redis: any = await RedisClient;
+      redis.set.mockResolvedValue("OK");
+      (global.fetch as jest.Mock).mockResolvedValue(createResponse(200, { meta: { status: true } }));
+      const strapi: any = {
+        entityService: { findOne: jest.fn().mockResolvedValue({
+          id: 11, Status: "Shipment", ShippingBarcode: barcode,
+          user: { id: 6, phone: "09123456789" }, contract: { Amount: 2000 },
+        }) },
+      };
+      await expect(notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"))
+        .resolves.toMatchObject({ ok: true });
+      expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toMatchObject({
+        code: "shipping-pattern", params: { orderId: "11", status: "ارسال شده", trackingCode: expected },
+      });
+      expect(redis.set.mock.calls[0][0]).toContain("scheduled-2026-10-25T10:00:00.000Z");
+    },
+  );
+
+  it("leaves a scheduled notification retryable when the idempotency store is down", async () => {
+    process.env.SMS_ENABLED = "true";
+    const redis: any = await RedisClient;
+    redis.set.mockRejectedValue(new Error("redis unavailable"));
+    const strapi: any = {
+      entityService: { findOne: jest.fn().mockResolvedValue({
+        id: 11, Status: "Shipment", user: { id: 6, phone: "09123456789" },
+      }) },
+    };
+    await expect(notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"))
+      .rejects.toThrow("redis unavailable");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("retains the scheduled idempotency claim after an uncertain submission", async () => {
+    process.env.SMS_ENABLED = "true";
+    process.env.IP_PANEL_API_KEY = "secret-key";
+    process.env.IP_PANEL_PATTERN_SHIPPED = "shipping-pattern";
+    process.env.IP_PANEL_SENDER = "+983000505";
+    const redis: any = await RedisClient;
+    redis.set.mockResolvedValue("OK");
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connection lost"));
+    const strapi: any = {
+      entityService: { findOne: jest.fn().mockResolvedValue({
+        id: 11, Status: "Shipment", user: { id: 6, phone: "09123456789" },
+      }) },
+    };
+    await expect(notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"))
+      .resolves.toMatchObject({ ok: false, reason: "request_failed" });
+    expect(redis.del).not.toHaveBeenCalled();
+  });
+
   it("persists a customer-visible notification outcome for operational follow-up", async () => {
     process.env.SMS_ENABLED = "false";
     const createOrderLog = jest.fn().mockResolvedValue({ id: 1 });
@@ -486,12 +555,7 @@ describe("sms service", () => {
     };
 
     await expect(
-      notifyOrderStatusSms(strapi, {
-        orderId: 11,
-        oldStatus: "Started",
-        newStatus: "Shipment",
-        trackingCode: "TRACK-11",
-      }),
+      notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"),
     ).resolves.toMatchObject({
       ok: false,
       skipped: true,

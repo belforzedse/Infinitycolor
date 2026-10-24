@@ -16,13 +16,14 @@ export function buildSmsIdempotencyKey(parts: {
     .slice(0, 240);
 }
 
-export async function claimSmsIdempotency(key?: string | null): Promise<boolean> {
+export async function claimSmsIdempotency(key?: string | null, failOnError = false): Promise<boolean> {
   if (!key) return true;
   try {
     const client = await RedisClient;
     const result = await client.set(key, "1", { NX: true, EX: SMS_MARKER_TTL_SEC });
     return result === "OK";
-  } catch {
+  } catch (error) {
+    if (failOnError) throw error;
     return false;
   }
 }
