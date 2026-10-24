@@ -58,9 +58,9 @@ const Sizes = forwardRef<SizeGuideHandle, SizeProps>(({ productId }, ref) => {
       if (helper) {
         setHelperId(helper.id);
         const helperData = helper.attributes.Helper || [];
-        const { rows, headers } = normalizeSizeGuideData(helperData);
-        if (rows.length > 0 || headers.length > 0) {
-          setColumns(headers.map((header) => ({ key: header, title: header })));
+        const { rows, columns: guideColumns } = normalizeSizeGuideData(helperData);
+        if (rows.length > 0 || guideColumns.length > 0) {
+          setColumns(guideColumns);
           setSizeData(rows);
         } else {
           setDefaultData();

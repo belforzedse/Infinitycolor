@@ -39,7 +39,6 @@ export function sizeGuideDraftPayload(
   if (
     !Helper.length ||
     !draft.columns.length ||
-    draft.columns.some((column) => !column.title.trim()) ||
     draft.data.some((row) => !String(row.size ?? "").trim())
   ) {
     throw new Error("لطفاً جدول راهنمای سایز را تکمیل کنید");
@@ -49,12 +48,11 @@ export function sizeGuideDraftPayload(
 function helperDraft(
   helper?: { id: number; attributes: { Helper?: unknown } } | null,
 ): SizeGuideDraft {
-  const { rows, headers } = normalizeSizeGuideData(
+  const { rows, columns } = normalizeSizeGuideData(
     (helper?.attributes?.Helper || []) as Parameters<
       typeof normalizeSizeGuideData
     >[0],
   );
-  const columns = headers.map((header) => ({ key: header, title: header }));
   return {
     data: rows,
     columns,
