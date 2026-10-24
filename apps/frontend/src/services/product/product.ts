@@ -758,7 +758,25 @@ export const formatGalleryAssets = (
 
   return assets;
 };
+export const formatAllGalleryAssets = (product: ProductDetail): GalleryAsset[] => {
+  const assets = new Map<string, GalleryAsset>();
 
+  for (const asset of formatGalleryAssets(product)) {
+    assets.set(asset.id, asset);
+  }
+
+  for (const gallery of product.attributes.ColorGalleries ?? []) {
+    for (const media of gallery.Images?.data ?? []) {
+      const asset = toGalleryAsset(media, product.attributes.Title);
+
+      if (asset?.type === "image") {
+        assets.set(asset.id, asset);
+      }
+    }
+  }
+
+  return Array.from(assets.values());
+};
 const getRelationNode = (relation: any) => {
   if (!relation) return null;
   if (Object.prototype.hasOwnProperty.call(relation, "data")) return relation.data;

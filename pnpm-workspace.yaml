@@ -11,6 +11,9 @@ overrides:
   "@types/react": 19.2.14
   "@types/react-dom": 19.2.3
   "sharp@<0.35.5": 0.34.5
+  # The upload plugin and our backend extension must load the same native
+  # libvips version; mixing them fails to load the Windows DLLs.
+  "@strapi/plugin-upload>sharp": 0.35.5
 peerDependencyRules:
   allowedVersions:
     # react-iran-maps -> react-simple-maps@3 declares peer caps at React 18

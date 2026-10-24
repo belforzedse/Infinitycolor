@@ -5,15 +5,13 @@ import ThumbnailList from "./ThumbnailList";
 import SingleImage from "./SingleImage";
 import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
 import type { GalleryAsset } from "@/services/product/product";
-
 type Props = {
   assets: GalleryAsset[];
+  initialImageId?: string;
 };
-
 export default function PDPHeroGallery(props: Props) {
-  const { assets } = props;
-
-  const [selectedImage, setSelectedImage] = useState<string>(assets[0]?.id ?? "");
+  const { assets, initialImageId } = props;
+  const [selectedImage, setSelectedImage] = useState<string>(initialImageId ?? assets[0]?.id ?? "");
   const quality = useAdaptiveQuality();
 
   // Memoize a lookup map to avoid repeated finds
@@ -131,7 +129,7 @@ export default function PDPHeroGallery(props: Props) {
         video={selectedAsset?.video}
         thumb={selectedAsset?.thumbnail || ""}
         alt={selectedAsset?.alt || ""}
-        priority={selectedImage === assets[0]?.id}
+        priority={selectedImage === (initialImageId ?? assets[0]?.id)}
         goToNextImage={goToNextImage}
         goToPreviousImage={goToPreviousImage}
       />

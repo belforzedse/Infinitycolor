@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import Hero from "../index";
 import {
   formatGalleryAssets,
+  formatAllGalleryAssets,
   type ProductDetail,
   type ProductMedia,
 } from "@/services/product/product";
@@ -153,73 +154,127 @@ function fixture(): ProductDetail {
 }
 
 const active = () => screen.getByTestId("active-photo").getAttribute("src");
-
-it("opens on the initial color, switches to the first photo and keeps navigation/thumbnails in sync", () => {
+it("shows cover first and keeps all photos when selecting a color", () => {
   render(<Hero productData={fixture()} productId="1" />);
-  expect(active()).toContain("photo-20.jpg");
-  fireEvent.click(screen.getByText("next photo"));
-  expect(active()).toContain("photo-30.jpg");
+
+  expect(active()).toContain("photo-1.jpg");
+
+  for (const id of [1, 2, 20, 30, 40]) {
+    expect(screen.getAllByRole("button", { name: `photo ${id}` })[0]).toBeInTheDocument();
+  }
+
   fireEvent.click(screen.getByText("آبی"));
   expect(active()).toContain("photo-30.jpg");
+
   expect(screen.getAllByRole("button", { name: "photo 30" })[0]).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+
   fireEvent.click(screen.getByText("next photo"));
   expect(active()).toContain("photo-40.jpg");
-  expect(screen.getAllByRole("button", { name: "photo 40" })[0]).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  fireEvent.click(screen.getAllByRole("button", { name: "photo 30" })[0]);
-  expect(active()).toContain("photo-30.jpg");
+
+  fireEvent.click(screen.getByText("next photo"));
+  expect(active()).toContain("photo-1.jpg");
+
+  fireEvent.click(screen.getAllByRole("button", { name: "photo 20" })[0]);
+  expect(active()).toContain("photo-20.jpg");
+
   expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "211");
   expect(screen.getByTestId("cart")).toHaveAttribute("data-sku", "SKU-211");
   expect(screen.getByTestId("price")).toHaveTextContent("21100");
+
+  for (const id of [1, 2, 20, 30, 40]) {
+    expect(screen.getAllByRole("button", { name: `photo ${id}` })[0]).toBeInTheDocument();
+  }
 });
 
 it("leaves the chosen gallery photo alone when size or model changes", () => {
   render(<Hero productData={fixture()} productId="1" />);
+
+  fireEvent.click(screen.getByText("قرمز"));
+
   fireEvent.click(screen.getByText("next photo"));
+  expect(active()).toContain("photo-30.jpg");
+
   fireEvent.click(screen.getByText("M"));
   fireEvent.click(screen.getByText("B"));
+
   expect(active()).toContain("photo-30.jpg");
+
   expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "122");
+  expect(screen.getByTestId("cart")).toHaveAttribute("data-sku", "SKU-122");
   expect(screen.getByTestId("price")).toHaveTextContent("12200");
 });
 
-it("falls back to the product gallery for a color without photos, never the preceding color", () => {
+it("falls back to the product cover while keeping all thumbnails", () => {
   render(<Hero productData={fixture()} productId="1" />);
+
   fireEvent.click(screen.getByText("آبی"));
+  expect(active()).toContain("photo-30.jpg");
+
   fireEvent.click(screen.getByText("سبز"));
   expect(active()).toContain("photo-1.jpg");
-  expect(screen.queryByRole("button", { name: "photo 40" })).not.toBeInTheDocument();
+
+  expect(screen.getAllByRole("button", { name: "photo 40" })[0]).toBeInTheDocument();
+
+  expect(screen.getAllByRole("button", { name: "photo 1" })[0]).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
   fireEvent.click(screen.getByText("next photo"));
   expect(active()).toContain("photo-2.jpg");
+
+  expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "311");
 });
 
-it("uses a single color's photos even when the color selector is hidden", () => {
+it("shows the cover and allows photo selection for a single-color product", () => {
   const product = fixture();
+
   product.attributes.product_variations.data = [product.attributes.product_variations.data[0]];
+
   render(<Hero productData={product} productId="1" />);
-  expect(active()).toContain("photo-20.jpg");
+
+  expect(active()).toContain("photo-1.jpg");
+
   expect(screen.queryByRole("button", { name: "قرمز" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getAllByRole("button", { name: "photo 20" })[0]);
+  expect(active()).toContain("photo-20.jpg");
+
+  expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "111");
+  expect(screen.getByTestId("price")).toHaveTextContent("11100");
 });
 
-it("uses the same initial in-stock color as cart selection and resets on product navigation", () => {
+it("keeps the in-stock cart selection and resets the gallery on product navigation", () => {
   const product = fixture();
+
   for (const variation of product.attributes.product_variations.data) {
-    if (variation.attributes.product_variation_color?.data.id === 1)
+    if (variation.attributes.product_variation_color?.data.id === 1) {
       variation.attributes.product_stock!.data.attributes.Count = 0;
+    }
   }
+
   const { rerender } = render(<Hero productData={product} productId="1" />);
-  expect(active()).toContain("photo-30.jpg");
+
+  expect(active()).toContain("photo-1.jpg");
   expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "211");
+
+  fireEvent.click(screen.getByText("آبی"));
+  fireEvent.click(screen.getByText("next photo"));
+  expect(active()).toContain("photo-40.jpg");
+
   const second = fixture();
   second.id = 2;
+  second.attributes.CoverImage = { data: photo(50) };
+
   rerender(<Hero productData={second} productId="2" />);
-  expect(active()).toContain("photo-20.jpg");
+
+  expect(active()).toContain("photo-50.jpg");
+
   expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "111");
+  expect(screen.getByTestId("price")).toHaveTextContent("11100");
 });
 
 it("normalizes raw and REST-shaped color mappings without changing order", () => {
@@ -244,4 +299,27 @@ it("normalizes raw and REST-shaped color mappings without changing order", () =>
   expect(formatGalleryAssets(rest, 3).map((asset) => asset.id)).toEqual(["1", "2"]);
   rest.attributes.ColorGalleries![0].Images.data = [];
   expect(formatGalleryAssets(rest, 1).map((asset) => asset.id)).toEqual(["1", "2"]);
+});
+
+it("updates the cover when fresh data arrives for the same product", () => {
+  const product = fixture();
+
+  const { rerender } = render(<Hero productData={product} productId="1" />);
+
+  expect(active()).toContain("photo-1.jpg");
+
+  const updatedProduct = fixture();
+  updatedProduct.attributes.CoverImage = { data: photo(50) };
+
+  rerender(<Hero productData={updatedProduct} productId="1" />);
+
+  expect(active()).toContain("photo-50.jpg");
+
+  expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "111");
+  expect(screen.getByTestId("price")).toHaveTextContent("11100");
+});
+it("deduplicates shared photos while preserving gallery order", () => {
+  const assets = formatAllGalleryAssets(fixture());
+
+  expect(assets.map((asset) => asset.id)).toEqual(["1", "2", "20", "30", "40"]);
 });

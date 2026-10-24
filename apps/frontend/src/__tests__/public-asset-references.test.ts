@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -14,27 +14,45 @@ import path from "node:path";
 const APP_ROOT = path.resolve(__dirname, "../..");
 const SRC = path.join(APP_ROOT, "src");
 const PUBLIC = path.join(APP_ROOT, "public");
-
 function referencedImagePaths(): string[] {
-  const out = execSync(
-    `grep -rhoE '"/images/[^"]+\\.(jpg|jpeg|png|svg|webp|gif)"' ${JSON.stringify(SRC)} ` +
-      `--include='*.ts' --include='*.tsx' ` +
-      `--exclude-dir=__tests__ --exclude='*.test.ts' --exclude='*.test.tsx' ` +
-      `--exclude='*.spec.ts' --exclude='*.spec.tsx' || true`,
-    { encoding: "utf8" },
-  );
+  const references = new Set<string>();
 
-  return Array.from(
-    new Set(
-      out
-        .split("\n")
-        .map((line) => line.trim().replace(/^"|"$/g, ""))
-        .filter((line) => line.startsWith("/images/"))
-        // A few call sites build comma-joined lists; check each member.
-        .flatMap((line) => line.split(",").map((part) => part.trim()))
-        .filter(Boolean),
-    ),
-  );
+  function visit(directory: string): void {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+
+      if (entry.isDirectory()) {
+        if (entry.name !== "__tests__") {
+          visit(fullPath);
+        }
+        continue;
+      }
+
+      if (
+        !entry.isFile() ||
+        !/\.tsx?$/.test(entry.name) ||
+        /\.(test|spec)\.tsx?$/.test(entry.name)
+      ) {
+        continue;
+      }
+
+      const content = readFileSync(fullPath, "utf8");
+      const pattern = /"(\/images\/[^"\r\n]+\.(?:jpg|jpeg|png|svg|webp|gif))"/g;
+
+      for (const match of content.matchAll(pattern)) {
+        for (const part of match[1].split(",")) {
+          const reference = part.trim();
+
+          if (reference) {
+            references.add(reference);
+          }
+        }
+      }
+    }
+  }
+
+  visit(SRC);
+  return Array.from(references);
 }
 
 describe("public asset references", () => {

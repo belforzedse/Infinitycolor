@@ -106,30 +106,48 @@ for (const quality of ["safe", "automatic"] as const) {
     }
     await expect(mainPhoto(page)).toHaveAttribute(
       "src",
-      /gallery-photo-20\.png/,
+      /gallery-photo-1\.png/,
     );
     await expect(thumb(page, 0)).toHaveAttribute("aria-pressed", "true");
+
     await page.getByRole("button", { name: "تصویر بعدی", exact: true }).click();
+
     await expect(mainPhoto(page)).toHaveAttribute(
       "src",
-      /gallery-photo-30\.png/,
+      /gallery-photo-2\.png/,
     );
     const blue = page
       .getByTestId("pdp-color-option")
       .filter({ hasText: "آبی" });
-    await blue.focus();
+
+    await blue.evaluate((element) => {
+      element.focus({ preventScroll: true });
+    });
     await page.keyboard.press("Enter");
+
     await expect(mainPhoto(page)).toHaveAttribute(
       "src",
       /gallery-photo-30\.png/,
     );
-    await expect(thumb(page, 0)).toHaveAttribute("aria-pressed", "true");
-    await thumb(page, 1).focus();
+
+    await expect(thumb(page, 3)).toHaveAttribute("aria-pressed", "true");
+
+    await thumb(page, 4).evaluate((element) => {
+      element.focus({ preventScroll: true });
+    });
+
+    const pageScrollBefore = await page.evaluate(() => window.scrollY);
+
     await page.keyboard.press("Space");
+
     await expect(mainPhoto(page)).toHaveAttribute(
       "src",
       /gallery-photo-40\.png/,
     );
+
+    await page.waitForTimeout(500);
+
+    expect(await page.evaluate(() => window.scrollY)).toBe(pageScrollBefore);
     const media = page.locator('[data-aq-pdp-gallery-media="image"]');
     await expect(media).toHaveAttribute("data-aq-pdp-zoom", "available");
     if (info.project.name === "desktop") {
@@ -164,8 +182,8 @@ for (const quality of ["safe", "automatic"] as const) {
       /gallery-photo-1\.png/,
     );
     await expect(
-      page.getByTestId("pdp-hero").locator('img[src*="gallery-photo-40"]'),
-    ).toHaveCount(0);
+      page.getByTestId("pdp-hero").locator("[data-thumbnail-index]:visible"),
+    ).toHaveCount(5);
     await page.getByRole("button", { name: "تصویر بعدی", exact: true }).click();
     await expect(mainPhoto(page)).toHaveAttribute(
       "src",
@@ -196,11 +214,16 @@ for (const quality of ["safe", "automatic"] as const) {
     expect(errors).toEqual([]);
   });
 }
-
-test("single-color product starts on its assigned photos", async ({ page }) => {
+test("single-color product starts on the cover and allows photo selection", async ({
+  page,
+}) => {
   await page.goto("/pdp/gallery-single");
-  await expect(mainPhoto(page)).toHaveAttribute("src", /gallery-photo-20\.png/);
+
+  await expect(mainPhoto(page)).toHaveAttribute("src", /gallery-photo-1\.png/);
+
   await expect(page.getByTestId("pdp-color-option")).toHaveCount(0);
-  await thumb(page, 1).click();
-  await expect(mainPhoto(page)).toHaveAttribute("src", /gallery-photo-30\.png/);
+
+  await thumb(page, 2).click();
+
+  await expect(mainPhoto(page)).toHaveAttribute("src", /gallery-photo-20\.png/);
 });

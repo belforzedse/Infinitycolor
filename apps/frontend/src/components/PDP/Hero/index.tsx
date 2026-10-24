@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ProductDetail } from "@/services/product/product";
 import {
   formatGalleryAssets,
+  formatAllGalleryAssets,
   getDefaultProductVariation,
   hasStockForVariation,
   getProductColors,
@@ -74,11 +75,18 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
   // Keep this state scoped to the product without remounting the cart controls.
   const identity = `${productData?.id ?? productId}:${productData ? "ready" : "pending"}`;
   const initialColor = getInitialPdpSelection(productData, colors, sizes, models).colorId;
-  const [gallerySelection, setGallerySelection] = useState({ identity, colorId: initialColor });
+  const [gallerySelection, setGallerySelection] = useState({
+    identity,
+    colorId: initialColor,
+    hasPickedColor: false,
+  });
+  const hasPickedColor = gallerySelection.identity === identity && gallerySelection.hasPickedColor;
   const selectedColor =
     gallerySelection.identity === identity ? gallerySelection.colorId : initialColor;
-  const assets = productData ? formatGalleryAssets(productData, selectedColor) : [];
-
+  const assets = productData ? formatAllGalleryAssets(productData) : [];
+  const initialImageId = productData
+    ? formatGalleryAssets(productData, hasPickedColor ? selectedColor : undefined)[0]?.id
+    : undefined;
   // Get default variation for pricing - return 0 if no product data
   let price = 0;
   let discountPrice: number | undefined = undefined;
@@ -126,8 +134,11 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
         <Main category={product.category} title={product.title} discount={product.discount} />
       </div>
 
-      <PDPHeroGallery key={`${identity}:${selectedColor}`} assets={assets} />
-
+      <PDPHeroGallery
+        key={`${identity}:${selectedColor}:${initialImageId ?? "empty"}`}
+        assets={assets}
+        initialImageId={initialImageId}
+      />
       <PDPHeroInfo
         colors={colors}
         product={product}
@@ -135,7 +146,13 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
         models={models}
         productData={productData}
         productId={productId}
-        onSelectedColorChange={(colorId) => setGallerySelection({ identity, colorId })}
+        onSelectedColorChange={(colorId) =>
+          setGallerySelection({
+            identity,
+            colorId,
+            hasPickedColor: true,
+          })
+        }
       />
     </div>
   );

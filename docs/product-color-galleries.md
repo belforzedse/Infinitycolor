@@ -6,7 +6,7 @@ In the custom admin, create the product's variations first. Open **کلی → ت
 
 The guarded editor snapshot reads and writes the mapping. Writes retain lease/revision checks, attachment locks and `product.media.manage`; component IDs from another product are rejected. The media library includes color-only attachments in product search/usage and prevents deleting or replacing in-use files.
 
-The storefront uses the same initial color selection as the variation controls. A color change resets only the existing gallery to that color's first image. Size/model changes preserve the current photo and keep existing stock, price, SKU and cart behavior. Missing/empty color galleries use only the product-wide gallery. Public full and shell product responses include both nested relations.
+The storefront opens on the product cover, including single-color products. The thumbnail rail keeps product-wide media and all color photos, deduplicated by upload ID. Selecting a color displays its first assigned photo, or the product-wide fallback when no photos are assigned. Manual photo selection does not change the purchase variation. Size/model changes preserve the displayed photo. Selection scrolls only the thumbnail container. Public full and shell product responses include both nested relations.
 
 ## Focused verification
 
