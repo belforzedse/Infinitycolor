@@ -23,6 +23,8 @@ type FinalizeGatewaySettlementInput = {
   paymentAttemptId?: number;
   contractTransactionId?: number;
   gateway: "SamanKish" | "Mellat";
+  /** Only the Mellat coordinator may supply its fenced, bank-confirmed recovery lease. */
+  mellatLeaseVersion?: number;
   orderData?: Record<string, unknown>;
   contractData?: Record<string, unknown>;
   contractTransactionData: Record<string, unknown> & { Amount: number };
@@ -67,12 +69,24 @@ export async function finalizeGatewaySettlement(
     }
 
     if (input.paymentAttemptId) {
-      const claimed = await claimPaymentAttemptForSettlement(
-        strapi,
-        input.paymentAttemptId,
-        "Succeeded",
-        trx,
-      );
+      const mellatRecovery = input.gateway === "Mellat" && Number.isInteger(input.mellatLeaseVersion);
+      const mellatClaim = mellatRecovery ? await trx.raw(
+        `UPDATE payment_attempts SET status = 'Succeeded', updated_at = ?,
+           lease_until = NULL, next_action = NULL, next_action_at = NULL,
+           resolved_at = ?, provider_status = 'SETTLED',
+           provider_response = jsonb_set(jsonb_set(provider_response,
+             '{mellat,stockProtected}', 'false'::jsonb), '{mellat,phase}', '"completed"'::jsonb)
+         WHERE id = ? AND lower(gateway) = 'mellat'
+           AND status IN ('Pending', 'Redirected', 'Unknown') AND lease_version = ?
+           AND lease_until > ? AND provider_response->'mellat'->>'phase' = 'settled'
+           AND provider_response->'mellat'->>'stockProtected' = 'true'
+           AND provider_response->'mellat'->>'saleReferenceId' = ?
+           AND (provider_response->'mellat'->>'amountIrr')::numeric = ? RETURNING id`,
+        [new Date(), new Date(), input.paymentAttemptId, input.mellatLeaseVersion, new Date(),
+          String(input.contractTransactionData.external_id), input.contractTransactionData.Amount],
+      ) : null;
+      const claimed = mellatRecovery ? mellatClaim?.rows?.length === 1 :
+        await claimPaymentAttemptForSettlement(strapi, input.paymentAttemptId, "Succeeded", trx);
       if (!claimed) {
         const current: any = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
           where: { id: input.paymentAttemptId },
@@ -86,6 +100,12 @@ export async function finalizeGatewaySettlement(
           "PAYMENT_ATTEMPT_NOT_CLAIMABLE",
           `Payment attempt ${input.paymentAttemptId} is ${String(current?.Status || "missing")}`,
         );
+      }
+      if (mellatRecovery) {
+        // The durable processing phase retained the reservation while the bank
+        // was uncertain. Refresh only this proven reservation before consuming it.
+        await trx.raw("UPDATE orders SET reserved_until = ? WHERE id = ? AND reservation_status = 'Reserved'",
+          [new Date(Date.now() + 60_000), input.orderId]);
       }
     }
 

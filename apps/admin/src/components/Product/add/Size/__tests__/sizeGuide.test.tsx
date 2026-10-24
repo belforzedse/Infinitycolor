@@ -21,6 +21,11 @@ const draft = (overrides: Partial<SizeGuideDraft> = {}): SizeGuideDraft => ({
 });
 
 describe("size guide product payload", () => {
+  it("allows blank headers in a combined product save", () => {
+    expect(sizeGuideDraftPayload(draft({ columns: [{ key: "height", title: "   " }] }))?.Helper)
+      .toEqual([["سایز", "---"], ["M", "50"], ["L", ""]]);
+  });
+
   it("allows missing measurements and serializes them as empty cells", () => {
     expect(sizeGuideDraftPayload(draft())).toEqual({
       id: 15,
@@ -41,9 +46,8 @@ describe("size guide product payload", () => {
     { data: [], saved: "previous guide" },
     { data: [{ size: "   ", height: "50" }] },
     { columns: [] },
-    { columns: [{ key: "height", title: "   " }] },
   ])(
-    "still rejects a guide without sizes or named measurement columns: %j",
+    "still rejects a guide without sizes or measurement columns: %j",
     (invalid) => {
       expect(() => sizeGuideDraftPayload(draft(invalid))).toThrow(
         "لطفاً جدول راهنمای سایز را تکمیل کنید",
@@ -79,10 +83,6 @@ describe("size guide editor", () => {
   it.each([
     { rows: [{ size: "   ", height: "50", chest: "60" }], columns },
     { rows: partialRows, columns: [] },
-    {
-      rows: [{ size: "M", height: "50" }],
-      columns: [{ key: "height", title: "   " }],
-    },
   ])(
     "keeps required guide structure validation: %j",
     ({ rows, columns: guideColumns }) => {
@@ -108,5 +108,35 @@ describe("size guide editor", () => {
     expect(screen.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(
       ["M", "50", "-", "L", "-", "-"],
     );
+  });
+
+  it("turns a cleared header into dashes without removing its measurements", () => {
+    const onSave = jest.fn();
+    const onColumnTitleEdit = jest.fn();
+    const onDataChange = jest.fn();
+    const rows = [{ size: "M", height: "50", chest: "60" }];
+    render(<SizeGuideEditor initialData={rows} columns={columns}
+      onColumnTitleEdit={onColumnTitleEdit} onDataChange={onDataChange} onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "قد", exact: true }));
+    const header = screen.getByPlaceholderText("نام ستون");
+    fireEvent.change(header, { target: { value: "   " } });
+    fireEvent.blur(header);
+    expect(onColumnTitleEdit).toHaveBeenCalledWith("height", "---");
+    expect(onDataChange).toHaveBeenLastCalledWith(rows, [
+      { key: "height", title: "---" }, { key: "chest", title: "دور سینه" },
+    ]);
+    expect(screen.getByText("---")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "ذخیره راهنما" }));
+    expect(onSave).toHaveBeenCalledWith(rows);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it("saves a newly added unnamed header", () => {
+    const onSave = jest.fn();
+    render(<SizeGuideEditor initialData={[{ size: "M", height: "50" }]}
+      columns={[{ key: "height", title: "" }]} onColumnTitleEdit={jest.fn()} onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "ذخیره راهنما" }));
+    expect(onSave).toHaveBeenCalledWith([{ size: "M", height: "50" }]);
+    expect(alert).not.toHaveBeenCalled();
   });
 });

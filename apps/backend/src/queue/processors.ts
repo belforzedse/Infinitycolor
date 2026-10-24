@@ -8,6 +8,7 @@ import {
   MEDIA_JOBS,
   SNAPPAY_PAYMENT_JOBS,
   WALLET_TOPUP_PAYMENT_JOBS,
+  MELLAT_PAYMENT_JOBS,
   type EdgeCachePurgeJobData,
   type MaintenanceJobData,
   type MaintenanceJobName,
@@ -70,6 +71,14 @@ export async function processMaintenanceJob(
   token?: string,
 ): Promise<unknown> {
   switch (job.name) {
+    case MELLAT_PAYMENT_JOBS.reconcile: {
+      const { processMellatAttempt } = await import("../api/payment-gateway/services/mellat-coordinator");
+      return processMellatAttempt(strapi, Number((job.data as any).attemptId));
+    }
+    case MELLAT_PAYMENT_JOBS.sweep: {
+      const { sweepMellatAttempts } = await import("../api/payment-gateway/services/mellat-coordinator");
+      return sweepMellatAttempts(strapi);
+    }
     case COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch: {
       const { dispatchDueShippingSms } = await import("../jobs/dispatchShippingSms");
       return dispatchDueShippingSms(strapi);

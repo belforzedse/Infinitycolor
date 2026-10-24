@@ -5,6 +5,7 @@ import { getQueueSettings, toBullMqConnectionOptions } from "./env";
 import { processMaintenanceJob } from "./processors";
 import { closeMediaQueues } from "./media";
 import { closeSnappayQueues } from "./snappay";
+import { closeMellatQueue } from "./mellat";
 import { closeAnipoRecipientQueues } from "./anipo-recipient";
 import { closeAnipoRegistrationQueues } from "./anipo-registration";
 import { closeStaffOrderAlertQueues } from "./staff-order-alert";
@@ -64,6 +65,7 @@ async function closeAll(strapi: Strapi | undefined, workers: Closable[]) {
   await Promise.allSettled(workers.map((worker) => worker.close()));
   // The SnappPay producer keeps a cached queue connection open for reuse.
   await closeSnappayQueues().catch(() => undefined);
+  await closeMellatQueue().catch(() => undefined);
   await closeAnipoRecipientQueues().catch(() => undefined);
   await closeAnipoRegistrationQueues().catch(() => undefined);
   await closeStaffOrderAlertQueues().catch(() => undefined);

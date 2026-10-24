@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { reconcileMellatOrder } from "../../payment-gateway/services/mellat-coordinator";
 import { captureOrderDeliverySnapshot, effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
 import { parseOrderAddressInput, OrderAddressValidationError } from "./helpers/adminUpdateAddress";
 /**
@@ -781,6 +782,9 @@ export default factories.createCoreController(
         } else {
           await orchestrator.reconcileOrder(orderId, "customer_request");
         }
+      }
+      if (String(order.PaymentGateway).toLowerCase() === "mellat") {
+        await reconcileMellatOrder(strapi, orderId);
       }
       const response = await this.checkPaymentStatus(ctx);
       // Only ever reported for a claim that was actually recorded. A shopper

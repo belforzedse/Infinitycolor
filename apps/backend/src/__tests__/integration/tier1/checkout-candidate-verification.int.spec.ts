@@ -2,12 +2,26 @@
  * Remaining checkout-candidate verification against a real Strapi + Postgres.
  * Provider HTTP is mocked; claim/persist/callback SQL is not.
  */
+jest.mock("../../../queue/mellat", () => ({
+  enqueueMellatAttempt: jest.fn(async () => undefined),
+}));
+jest.mock("../../../../dist/src/queue/mellat", () => ({
+  enqueueMellatAttempt: jest.fn(async () => undefined),
+}));
+
 import axios from "axios";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createCheckoutQuote } from "../../../api/cart/services/lib/checkout-quote";
 import { checkCartStockOp } from "../../../api/cart/services/ops/checkCartStock";
 import { verifyPaymentHandler } from "../../../api/order/controllers/helpers/payment";
+import { claimPaymentAttemptForInitiation } from "../../../api/payment-attempt/services/payment-attempt";
+import {
+  prepareMellatInitiation,
+  processMellatAttempt,
+  recordMellatInitiation,
+} from "../../../api/payment-gateway/services/mellat-coordinator";
+import { enqueueMellatAttempt } from "../../../queue/mellat";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
 
@@ -293,10 +307,10 @@ describe("issue 5 overlapping SnappPay initiation", () => {
 });
 
 describe("issue 2 cross-order payment isolation", () => {
-  it("keeps card order B unchanged when SnappPay order A receives callback and recovery activity", async () => {
+  it("isolates SnappPay activity, forged card references and a stale decline from other checkouts", async () => {
     installSnappayHttp();
     await ensureSnappayGateway();
-    const seeded = await seedCart({ stockCount: 2, quantity: 1 });
+    const seeded = await seedCart({ stockCount: 3, quantity: 1 });
     const snapp = await placeGatewayOrder(seeded.user.id, "snappay");
     expect(snapp.result.success).toBe(true);
 
@@ -313,9 +327,17 @@ describe("issue 2 cross-order payment isolation", () => {
     expect(card.result.order.id).not.toBe(snapp.result.order.id);
 
     const mellatRef = `MELLAT-B-${card.result.order.id}`;
-    await strapi.db.query("api::payment-attempt.payment-attempt").update({
-      where: { id: card.result.paymentAttempt.id },
-      data: { providerReference: mellatRef, Status: "Redirected" },
+    const cardAttemptId = Number(card.result.paymentAttempt.id);
+    const cardOrderId = Number(card.result.order.id);
+    const amountIrr = Number(card.result.paymentAttempt.Amount);
+    expect(await claimPaymentAttemptForInitiation(strapi, cardAttemptId)).toBe(true);
+    const prepared = await prepareMellatInitiation(strapi, cardAttemptId, cardOrderId, amountIrr);
+    expect(prepared).toMatchObject({ saleOrderId: String(cardOrderId), amountIrr, phase: "initiating" });
+    await recordMellatInitiation(strapi, cardAttemptId, {
+      success: true, ambiguous: false, resCode: 0, rawResCode: "0", refId: mellatRef,
+      saleOrderId: String(cardOrderId), requestedAmountIrr: amountIrr,
+      terminalFingerprint: prepared!.terminalFingerprint,
+      redirectUrl: "https://gateway.test.invalid/startpay",
     });
 
     const beforeB = await snapshotPurchase(card.result.order.id);
@@ -332,6 +354,15 @@ describe("issue 2 cross-order payment isolation", () => {
     await orchestrator.reconcileOrder(Number(snapp.result.order.id), "verification-recovery");
 
     expect(await snapshotPurchase(card.result.order.id)).toEqual(beforeB);
+
+    // A new attempt is created through the real checkout path; B's later decline
+    // must release only B's reservation and leave this newer purchase intact.
+    const newer = await placeGatewayOrder(seeded.user.id, "mellat");
+    expect(newer.result.success).toBe(true);
+    expect(newer.result.order.id).not.toBe(cardOrderId);
+    expect(newer.result.order.id).not.toBe(snapp.result.order.id);
+    const beforeC = await snapshotPurchase(newer.result.order.id);
+    expect(stockReserved(await f.getStock(seeded.variation.stockId))).toBe(3);
 
     const ctx = {
       request: {
@@ -351,10 +382,53 @@ describe("issue 2 cross-order payment isolation", () => {
     };
     const beforeA = await snapshotPurchase(snapp.result.order.id);
     await verifyPaymentHandler(strapi, ctx);
-    const afterA = await snapshotPurchase(snapp.result.order.id);
-    expect(afterA.status).toBe(beforeA.status);
-    expect(afterA.reservation).toBe(beforeA.reservation);
-    expect(afterA.attemptIds).toEqual(beforeA.attemptIds);
+    expect(ctx.badRequest).toHaveBeenCalledWith("Invalid payment reference");
+    expect(ctx.redirect).not.toHaveBeenCalled();
+    expect(await snapshotPurchase(snapp.result.order.id)).toEqual(beforeA);
+    expect(await snapshotPurchase(cardOrderId)).toEqual(beforeB);
+    expect(await snapshotPurchase(newer.result.order.id)).toEqual(beforeC);
+    expect(stockReserved(await f.getStock(seeded.variation.stockId))).toBe(3);
+
+    // The valid decline is evidence for the worker, not synchronous cancellation.
+    ctx.request.body.OrderId = String(cardOrderId);
+    ctx.request.body.SaleOrderId = String(cardOrderId);
+    await verifyPaymentHandler(strapi, ctx);
+    expect(ctx.redirect).toHaveBeenCalledTimes(1);
+    expect(await snapshotPurchase(cardOrderId)).toEqual(beforeB);
+    const pendingDecline = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
+      where: { id: cardAttemptId },
+    });
+    expect(pendingDecline).toMatchObject({
+      nextAction: "mellat_reconcile", providerResponse: { mellat: { callbackCode: "17" } },
+    });
+    expect(enqueueMellatAttempt).toHaveBeenCalledWith(cardAttemptId, 0);
+
+    await Promise.all([
+      processMellatAttempt(strapi, cardAttemptId),
+      processMellatAttempt(strapi, cardAttemptId),
+    ]);
+    expect(await snapshotPurchase(cardOrderId)).toMatchObject({
+      status: "Cancelled", reservation: "Released", attemptStatuses: ["Cancelled"],
+    });
+    expect(await f.getContract(Number(card.result.contract.id))).toMatchObject({ Status: "Cancelled" });
+    const closed = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
+      where: { id: cardAttemptId },
+    });
+    expect(closed).toMatchObject({ nextAction: null, leaseUntil: null, leaseVersion: 1 });
+    const stock = await f.getStock(seeded.variation.stockId);
+    expect(Number(stock.Count)).toBe(3);
+    expect(stockReserved(stock)).toBe(2);
+    expect(await snapshotPurchase(snapp.result.order.id)).toEqual(beforeA);
+    expect(await snapshotPurchase(newer.result.order.id)).toEqual(beforeC);
+    expect((await f.getOrderLogs(cardOrderId)).filter(
+      (entry: { Description?: string }) => entry.Description === "Mellat checkout declined",
+    )).toHaveLength(1);
+
+    // Both workers have released their order/attempt locks after the atomic close.
+    await strapi.db.transaction(async ({ trx }: any) => {
+      await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE NOWAIT", [cardOrderId]);
+      await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE NOWAIT", [cardAttemptId]);
+    });
   });
 });
 

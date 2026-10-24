@@ -341,6 +341,10 @@ async function expireStockReservationsBatch(
         });
       }
     } catch (orderErr) {
+      if ((orderErr as any)?.code === "MELLAT_PAYMENT_IN_PROGRESS") {
+        skipped += 1;
+        continue;
+      }
       failed += 1;
       if (stage === "order_log") logsFailed += 1;
       incrementMetric(strapi, "expire_stock_reservations_failures_total");
