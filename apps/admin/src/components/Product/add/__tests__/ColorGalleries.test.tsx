@@ -24,25 +24,29 @@ jest.mock("@/hooks/product/ProductEditorContext", () => ({
 jest.mock(
   "@/components/MediaLibrary/MediaLibraryModal",
   () =>
-    ({ isOpen, onConfirm }: any) =>
-      isOpen ? (
+    function MockMediaLibraryModal({ isOpen, onConfirm }: any) {
+      return isOpen ? (
         <button onClick={() => onConfirm(mockPicked)}>confirm library</button>
-      ) : null,
+      ) : null;
+    },
 );
+
 jest.mock(
   "../PhotoUploader/ImageGrid",
   () =>
-    ({ items, onRemoveFile, onReorder }: any) => (
-      <div>
-        <output>{items.map((item: any) => item.fileId).join(",")}</output>
-        <button type="button" onClick={() => onRemoveFile(0)}>
-          remove first photo
-        </button>
-        <button type="button" onClick={() => onReorder?.(0, 1)}>
-          reorder photos
-        </button>
-      </div>
-    ),
+    function MockImageGrid({ items, onRemoveFile, onReorder }: any) {
+      return (
+        <div>
+          <output>{items.map((item: any) => item.fileId).join(",")}</output>
+          <button type="button" onClick={() => onRemoveFile(0)}>
+            remove first photo
+          </button>
+          <button type="button" onClick={() => onReorder?.(0, 1)}>
+            reorder photos
+          </button>
+        </div>
+      );
+    },
 );
 
 const item = (id: number): MediaLibraryItem => ({

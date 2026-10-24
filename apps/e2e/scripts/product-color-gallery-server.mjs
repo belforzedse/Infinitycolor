@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { cp } from "node:fs/promises";
+import { createRequire } from "node:module";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const frontend = path.join(root, "apps/frontend");
@@ -58,6 +59,11 @@ for (const signal of ["SIGINT", "SIGTERM"])
   });
 process.on("exit", cleanup);
 if (process.env.GALLERY_E2E_SKIP_BUILD !== "true") {
+  const versionGenerator = createRequire(import.meta.url)(
+    path.join(frontend, "scripts/generate-build-version.js"),
+  );
+
+  versionGenerator.generateBuildVersion();
   const build = run(["build"]);
   const code = await new Promise((resolve) => build.once("exit", resolve));
   if (code !== 0) {

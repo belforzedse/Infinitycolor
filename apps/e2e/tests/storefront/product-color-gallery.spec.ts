@@ -1,15 +1,4 @@
 import { test, expect, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
-
-const { BUILD_VERSION: buildVersion } = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../frontend/src/constants/build-version.json",
-      import.meta.url,
-    ),
-    "utf8",
-  ),
-);
 
 const mainPhoto = (page: Page) =>
   page.getByTestId("pdp-hero").locator("[data-aq-pdp-placeholder] ~ img");
@@ -43,6 +32,11 @@ for (const quality of ["safe", "automatic"] as const) {
     page,
   }, info) => {
     if (quality === "safe") {
+      const versionResponse = await page.request.get("/build-version.json");
+      expect(versionResponse.ok()).toBe(true);
+      const { BUILD_VERSION: buildVersion } = await versionResponse.json();
+      expect(typeof buildVersion).toBe("string");
+      expect(buildVersion.length).toBeGreaterThan(0);
       await page.emulateMedia({ reducedMotion: "reduce" });
       await page.addInitScript((version) => {
         Object.defineProperty(navigator, "deviceMemory", {
@@ -83,7 +77,7 @@ for (const quality of ["safe", "automatic"] as const) {
             lastReason: "session-constraint",
           }),
         );
-      }, buildVersion || "dev");
+      }, buildVersion);
     }
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
