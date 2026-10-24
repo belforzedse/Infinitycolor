@@ -1,4 +1,4 @@
-import { afterCatalogCommit } from "../../../../utils/catalogEdit";
+import { afterCatalogCommit, catalogMutationContext } from "../../../../utils/catalogEdit";
 import { resolveAuditActor } from "../../../../utils/audit";
 import {
   recordAdminAudit,
@@ -55,6 +55,13 @@ const PRODUCT_DIFF_SNAPSHOT_SPEC = {
     // (an edit) without picking up unrelated metadata drift on the related records.
     CoverImage: { fields: ["id"] },
     Media: { fields: ["id"] },
+    ColorGalleries: {
+      fields: ["id"],
+      populate: {
+        color: { fields: ["id"] },
+        Images: { fields: ["id"] },
+      },
+    },
     Files: { fields: ["id"] },
     product_other_categories: { fields: ["id"] },
     product_faqs: { fields: ["id"] },
@@ -74,7 +81,9 @@ const PRODUCT_DIFF_SNAPSHOT_SPEC = {
  * cache with its own bearer token.
  */
 async function triggerProductRevalidation(slug: string) {
-  await afterCatalogCommit(strapi, () => triggerFrontendRevalidation({ path: slug, type: "product" }, "Product Lifecycle"));
+  await afterCatalogCommit(strapi, () =>
+    triggerFrontendRevalidation({ path: slug, type: "product" }, "Product Lifecycle"),
+  );
 }
 
 /**
@@ -98,9 +107,7 @@ async function enqueueProductVideoNormalizationCommitted(productId: number) {
     const files = collectVideoUploads(product ?? {});
     if (files.length === 0) return;
 
-    const { enqueueProductVideoNormalization: enqueue } = await import(
-      "../../../../queue/media"
-    );
+    const { enqueueProductVideoNormalization: enqueue } = await import("../../../../queue/media");
     for (const file of files) {
       await enqueue(productId, file.id);
     }
@@ -118,22 +125,11 @@ async function enqueueProductVideoNormalizationCommitted(productId: number) {
  * @param current - The new state of the record (field name → value).
  * @returns An object mapping each changed field name to an object with `from` (previous value) and `to` (current value). The fields `"updatedAt"`, `"createdAt"`, `"id"`, and `"documentId"` are ignored.
  */
-function diffChanges(
-  previous: Record<string, any>,
-  current: Record<string, any>
-) {
+function diffChanges(previous: Record<string, any>, current: Record<string, any>) {
   const changes: Record<string, { from: any; to: any }> = {};
-  const keys = new Set([
-    ...Object.keys(previous || {}),
-    ...Object.keys(current || {}),
-  ]);
+  const keys = new Set([...Object.keys(previous || {}), ...Object.keys(current || {})]);
   for (const key of keys) {
-    if (
-      key === "updatedAt" ||
-      key === "createdAt" ||
-      key === "id" ||
-      key === "documentId"
-    )
+    if (key === "updatedAt" || key === "createdAt" || key === "id" || key === "documentId")
       continue;
     const beforeVal = previous?.[key];
     const afterVal = current?.[key];
@@ -166,7 +162,9 @@ export default {
     if (!data.Slug && data.Title) {
       try {
         data.Slug = await generateUniqueProductSlug(strapi, data.Title);
-        strapi.log.info(`[Product Lifecycle] Auto-generated Persian slug for new product: "${data.Title}" -> "${data.Slug}"`);
+        strapi.log.info(
+          `[Product Lifecycle] Auto-generated Persian slug for new product: "${data.Title}" -> "${data.Slug}"`,
+        );
       } catch (error) {
         strapi.log.error("[Product Lifecycle] Failed to generate product slug:", error);
         // Fallback to timestamp-based slug
@@ -243,13 +241,20 @@ export default {
       PRODUCT_DIFF_SNAPSHOT_SPEC as any,
     );
 
+    const previousGalleries = catalogMutationContext()?.colorGalleriesBefore?.get(Number(id));
+    if (previous && previousGalleries !== undefined) {
+      (previous as Record<string, unknown>).ColorGalleries = previousGalleries;
+    }
+
     // Auto-generate slug if product doesn't have one and has a title
     // Also regenerate if Title changed and we want to update the slug
     if (!previous?.Slug && !data.Slug && (data.Title || previous?.Title)) {
       try {
         const title = data.Title || previous?.Title;
         data.Slug = await generateUniqueProductSlug(strapi, title, id as number);
-        strapi.log.info(`[Product Lifecycle] Auto-generated Persian slug for product ${id}: "${title}" -> "${data.Slug}"`);
+        strapi.log.info(
+          `[Product Lifecycle] Auto-generated Persian slug for product ${id}: "${title}" -> "${data.Slug}"`,
+        );
       } catch (error) {
         strapi.log.error(`[Product Lifecycle] Failed to generate slug for product ${id}:`, error);
       }
@@ -426,7 +431,7 @@ export default {
       // log a warning but don't fail the deletion
       if (error?.message?.includes("relation") || error?.message?.includes("do not exist")) {
         strapi.log.warn(
-          `Product log creation skipped for deleted product ${id}: relation validation failed (expected)`
+          `Product log creation skipped for deleted product ${id}: relation validation failed (expected)`,
         );
       } else {
         // Re-throw unexpected errors

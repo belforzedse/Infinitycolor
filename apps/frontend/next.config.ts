@@ -32,6 +32,8 @@ const DEPLOYMENT_ID = process.env.NEXT_DEPLOYMENT_ID?.trim() || "";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Allow isolated production checks alongside a running development server.
+  distDir: process.env.NEXT_BUILD_DIR || ".next",
   cacheComponents: true,
   partialPrefetching: true,
   reactCompiler: true,

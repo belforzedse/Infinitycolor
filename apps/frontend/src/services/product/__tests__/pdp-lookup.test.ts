@@ -9,6 +9,32 @@ beforeEach(() => {
   global.fetch = jest.fn();
   jest.clearAllMocks();
 });
+
+it("loads numeric product URLs by ID only after a genuine slug 404", async () => {
+  jest
+    .mocked(fetch)
+    .mockResolvedValueOnce(new Response("", { status: 404 }))
+    .mockResolvedValueOnce(new Response('{"data":{"id":42}}'));
+  const product = { id: 42 } as any;
+  jest.mocked(normalizeProductDetail).mockReturnValueOnce(product);
+  expect(await fetchPdpProduct("42", 30)).toEqual({ product });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const url = new URL(String(jest.mocked(fetch).mock.calls[1][0]));
+  expect(url.pathname).toMatch(/\/products\/42$/);
+  expect([...url.searchParams.values()]).toEqual(
+    expect.arrayContaining(["ColorGalleries.color", "ColorGalleries.Images"]),
+  );
+});
+
+it("does not mask a numeric slug service failure with an ID lookup", async () => {
+  jest.mocked(fetch).mockResolvedValue(new Response("", { status: 503 }));
+  expect(await fetchPdpProduct("42", 30)).toMatchObject({
+    errorDetails: { failure: "unavailable", status: 503 },
+  });
+  expect(jest.mocked(fetch).mock.calls.every(([url]) => String(url).includes("/by-slug/42"))).toBe(
+    true,
+  );
+});
 it("preserves a genuine 404 without parsing or retrying", async () => {
   jest
     .mocked(fetch)

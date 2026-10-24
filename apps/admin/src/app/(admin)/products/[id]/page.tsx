@@ -48,6 +48,8 @@ import {
 import ProductEditorFields from "@/components/Product/add/ProductEditorFields";
 import Modal from "@/components/Kits/Modal";
 import type { ProductPublicationAction } from "@/services/super-admin/product/publication";
+import ProductColorGalleries from "@/components/Product/add/PhotoUploader/ProductColorGalleries";
+import type { ProductVariable } from "@/components/Product/add/Details/Variable/types";
 
 const loadingEditorState: ProductEditorState = {
   phase: "loading",
@@ -106,9 +108,23 @@ function ProductEditorPage({ id }: { id: string }) {
   // Bumped when the variations tab adds, removes or re-colours variations, so the
   // published/total count on the side card does not go stale.
   const [publishCardRefreshKey, setPublishCardRefreshKey] = useState(0);
+  const [galleryVariations, setGalleryVariations] = useState<ProductVariable[]>([]);
+  const galleryReadGeneration = useRef(0);
   const handleVariationsChanged = useCallback(
-    () => setPublishCardRefreshKey((key) => key + 1),
-    [],
+    () => {
+      setPublishCardRefreshKey((key) => key + 1);
+      const generation = ++galleryReadGeneration.current;
+      // Read only the color list; do not replace an unsaved product/gallery draft.
+      void apiClient.get<ProductEditSnapshot>(`/products/${id}/edit-snapshot`, {
+        cache: "no-store", retries: 0,
+      }).then((response) => {
+        if (generation !== galleryReadGeneration.current) return;
+        setGalleryVariations((response.data.product.attributes.product_variations?.data ?? []) as ProductVariable[]);
+      }).catch(() => {
+        if (generation === galleryReadGeneration.current) toast.error("دریافت رنگ‌های محصول انجام نشد");
+      });
+    },
+    [id],
   );
   const [previewLoading, setPreviewLoading] = useState(false);
   // `editProductDataAtom` is module-level and shared by every product page, so nothing
@@ -141,6 +157,8 @@ function ProductEditorPage({ id }: { id: string }) {
   const installSnapshot = useCallback(
     (snapshot: ProductEditSnapshot) => {
       const fresh = transformToProductData(snapshot.product.attributes);
+      galleryReadGeneration.current += 1;
+      setGalleryVariations((snapshot.product.attributes.product_variations?.data ?? []) as ProductVariable[]);
       setProductData(fresh);
       baseProductRef.current = fresh;
       savedSnapshotRef.current = JSON.stringify(fresh);
@@ -163,7 +181,10 @@ function ProductEditorPage({ id }: { id: string }) {
     const session = new ProductEditorSession(id, installSnapshot);
     setEditor(session);
     void session.open(mayEdit);
-    return () => session.dispose();
+    return () => {
+      galleryReadGeneration.current += 1;
+      session.dispose();
+    };
   }, [id, installSnapshot, mayEdit, resetProductData]);
 
   const captureLeaseConfirmation = useCallback(
@@ -334,7 +355,11 @@ function ProductEditorPage({ id }: { id: string }) {
     void editor?.release();
     router.push("/products");
   };
+  const galleryColors = galleryVariations.flatMap((variation) => {
+    const color = variation.attributes.product_variation_color?.data;
 
+    return color ? [{ id: color.id, title: color.attributes.Title }] : [];
+  });
   const isSimpleProduct = productData.ProductType === "Simple";
 
   const handlePreview = async () => {
@@ -582,6 +607,9 @@ function ProductEditorPage({ id }: { id: string }) {
                   disabled={!loaded || !canUpdate}
                 >
                   <Overall productData={productData} isEditMode />
+                  <div className="mt-4">
+                    <ProductColorGalleries colors={galleryColors} />
+                  </div>
                 </ProductEditorFields>,
                 ...(!isSimpleProduct
                   ? [

@@ -345,3 +345,25 @@ test("client clamps Retry-After without exposing response details", async () => 
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("local admin OTP entry retains its destination in the sealed login flow", async () => {
+  setTestEnvironment();
+  let cookie = "";
+  const returnTo = "http://localhost:2891/orders?page=2";
+  const ctx = {
+    body: { phone: "09123456789", purpose: "login" as const, returnTo },
+    headers: new Headers({ origin: "http://localhost:2889" }),
+    context: { isTrustedOrigin: () => true },
+    getCookie: () => cookie,
+    setCookie: (_name: string, value: string) => { cookie = value; },
+  };
+  await startInfinityOtpFlow(ctx, {
+    requestOtp: async () => {
+      assert.equal(unsealFlowState(cookie)?.returnTo, returnTo);
+      return { challengeId: "isolated.challenge" };
+    },
+  });
+  assert.equal(unsealFlowState(cookie)?.returnTo, returnTo);
+  assert.equal(unsealFlowState(cookie)?.challengeId, "isolated.challenge");
+});

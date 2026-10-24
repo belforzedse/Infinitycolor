@@ -6,6 +6,7 @@ import {
 import { apiTokenCredentials } from "../utils/adminAuthorization";
 import { isTrustedWordPressMigrationRequest } from "../utils/migration-context";
 import { loadEditorSnapshot } from "../api/product/services/product-editor-snapshot";
+import { captureColorGalleriesBefore } from "../api/product/services/product-color-galleries";
 
 const idOf = (value: any): number => Number(value?.id ?? value?.data?.id ?? value?.connect?.[0]?.id ?? value?.connect?.[0] ?? value);
 
@@ -71,6 +72,9 @@ export default (config: { resource: string; uid?: string }, { strapi }: any) => 
         : { kind: "human" as const, editor: editor = await staffEditor(ctx, strapi), proof: parseEditProof(ctx) };
     if (editor && !hasCapability(editor.actor.role, "product.update")) throw new CatalogEditError("PRODUCT_EDIT_FORBIDDEN", 403);
     const result = await runCatalogMutation(strapi, ids, writer, async () => {
+      if (config.resource === "product" && ctx.request?.body?.data?.ColorGalleries !== undefined) {
+        await captureColorGalleriesBefore(strapi, ids[0]);
+      }
       if (config.resource === "category-associations") {
         await catalogMutationCategoryLock(ctx, strapi, ids);
       }
