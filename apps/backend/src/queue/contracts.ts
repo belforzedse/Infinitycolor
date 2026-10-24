@@ -37,6 +37,11 @@ export const WALLET_TOPUP_PAYMENT_JOBS = {
   reconcile: "walletTopups.reconcile",
 } as const;
 
+export const MELLAT_PAYMENT_JOBS = {
+  reconcile: "mellat.reconcile",
+  sweep: "mellat.sweep",
+} as const;
+
 export const MEDIA_JOBS = {
   /** Transcode a story's video to web-safe progressive MP4 (see services/media). */
   normalizeStoryVideo: "media.normalizeStoryVideo",
@@ -83,6 +88,7 @@ export const MAINTENANCE_SCHEDULERS = {
   analyticsOutboxRepair: "sched:analyticsOutboxRepair.run",
   snappaySweep: "sched:snappay.sweep",
   walletTopupReconcile: "sched:walletTopups.reconcile",
+  mellatSweep: "sched:mellat.sweep",
   anipoBarcodeReconcile: "sched:anipoBarcodes.reconcile",
   productTrashRetention: "sched:productTrash.retention",
 } as const;

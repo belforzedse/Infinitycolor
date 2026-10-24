@@ -24,7 +24,7 @@ export default factories.createCoreController(
   ({ strapi }: { strapi: Strapi }) => ({
     async availableGateways(ctx) {
       try {
-        const gateways = await getAvailableCheckoutGateways(strapi);
+        const gateways = await getAvailableCheckoutGateways(strapi, Number(ctx.state?.user?.id));
         // Reported alongside the gateways so the storefront renders what the
         // server will actually accept, instead of inferring a feature flag from
         // a field that happens to be missing from a later response.
