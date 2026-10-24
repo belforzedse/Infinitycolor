@@ -37,6 +37,8 @@ export const cancelOrderAndRelease = async (
   reason?: string,
   options: {
     createAuditLogs?: boolean;
+    /** Existing order/attempt-locked transaction; caller runs returned effects after commit. */
+    transaction?: any;
     reservationStatus?: "Released" | "Expired";
     orderData?: Record<string, unknown>;
     contractData?: Record<string, unknown>;
@@ -53,7 +55,7 @@ export const cancelOrderAndRelease = async (
   };
   const createAuditLogs = options.createAuditLogs === true;
   const performedBy = Number.isFinite(Number(userId)) ? Number(userId) : undefined;
-  const previous = await strapi.db.transaction(async ({ trx }) => {
+  const applyCancellation = async ({ trx }: { trx: any }) => {
     const [currentOrder, currentContract] = await Promise.all([
       strapi.db.query("api::order.order").findOne({
         where: { id: orderId },
@@ -112,8 +114,12 @@ export const cancelOrderAndRelease = async (
       orderStatus: String(currentOrder.Status || ""),
       contractStatus: String(currentContract.Status || ""),
     };
-  });
+  };
+  const previous = options.transaction
+    ? await applyCancellation({ trx: options.transaction })
+    : await strapi.db.transaction(applyCancellation);
 
+  const afterCommit = async () => {
   // A failed or abandoned first payment must not leave a reserve window behind:
   // an unpaid group would otherwise keep occupying the customer's single
   // consolidation slot until its deadline lapsed.
@@ -170,6 +176,9 @@ export const cancelOrderAndRelease = async (
       });
     }
   }
+  };
+  if (options.transaction) return { afterCommit };
+  await afterCommit();
 };
 
 export const ensurePaymentGateway = async (

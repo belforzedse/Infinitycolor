@@ -512,6 +512,9 @@ importers:
       cross-env:
         specifier: 10.1.0
         version: 10.1.0
+      ioredis:
+        specifier: 5.10.1
+        version: 5.10.1
       istanbul-lib-coverage:
         specifier: 3.2.2
         version: 3.2.2

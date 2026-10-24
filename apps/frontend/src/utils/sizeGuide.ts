@@ -6,6 +6,8 @@ export type SizeGuideRow = {
 export interface NormalizedSizeGuideData {
   rows: SizeGuideRow[];
   headers: string[];
+  // Repeated placeholders share a visible title but keep distinct row keys.
+  columns: { key: string; title: string }[];
 }
 
 export type SizeGuideMatrix = Array<Array<string | number | null | undefined>>;
@@ -30,19 +32,20 @@ const getUniqueHeaderTitle = (title: string, used: Set<string>) => {
 
 const normalizeMatrixData = (matrix: SizeGuideMatrix): NormalizedSizeGuideData => {
   if (matrix.length === 0 || !Array.isArray(matrix[0])) {
-    return { rows: [], headers: [] };
+    return { rows: [], headers: [], columns: [] };
   }
 
   const headerRow = matrix[0];
   const usedHeaders = new Set<string>();
 
   const headerEntries = headerRow.map((cell, index) => {
-    const fallback = `ستون ${index + 1}`;
+    const fallback = "---";
     const headerTitle = sanitizeCell(cell) || fallback;
     const uniqueTitle = getUniqueHeaderTitle(headerTitle, usedHeaders) || fallback;
     return {
       index,
       title: uniqueTitle,
+      displayTitle: headerTitle === "---" ? "---" : uniqueTitle,
       rawTitle: sanitizeCell(cell).toLowerCase(),
     };
   });
@@ -66,7 +69,11 @@ const normalizeMatrixData = (matrix: SizeGuideMatrix): NormalizedSizeGuideData =
     return normalizedRow;
   });
 
-  return { rows, headers };
+  return {
+    rows,
+    headers,
+    columns: measurementEntries.map((entry) => ({ key: entry.title, title: entry.displayTitle })),
+  };
 };
 
 const normalizeObjectRows = (helperData: SizeGuideRow[]): NormalizedSizeGuideData => {
@@ -90,7 +97,11 @@ const normalizeObjectRows = (helperData: SizeGuideRow[]): NormalizedSizeGuideDat
     return normalizedRow;
   });
 
-  return { rows, headers };
+  return {
+    rows,
+    headers,
+    columns: headers.map((key) => ({ key, title: key.trim() || "---" })),
+  };
 };
 
 const coerceHelperPayload = (
@@ -112,7 +123,7 @@ export const normalizeSizeGuideData = (
 ): NormalizedSizeGuideData => {
   const helperData = coerceHelperPayload(rawHelperData);
   if (!helperData || helperData.length === 0) {
-    return { rows: [], headers: [] };
+    return { rows: [], headers: [], columns: [] };
   }
 
   if (Array.isArray(helperData[0])) {
@@ -144,7 +155,7 @@ export const serializeSizeGuideMatrix = (
           }, new Set<string>()),
         ).map((key) => ({ key, title: key }));
 
-  const headerRow = [DEFAULT_SIZE_HEADER, ...measurementColumns.map((col) => col.title || col.key)];
+  const headerRow = [DEFAULT_SIZE_HEADER, ...measurementColumns.map((col) => sanitizeCell(col.title) || "---")];
   const matrix: SizeGuideMatrix = [headerRow];
 
   rows.forEach((row) => {

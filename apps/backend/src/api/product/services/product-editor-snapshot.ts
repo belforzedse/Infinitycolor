@@ -23,7 +23,7 @@ export const EDITOR_POPULATE = {
       product_variation_color: true,
       product_variation_size: true,
       product_variation_model: true,
-      selected_attribute_terms: true,
+      selected_attribute_terms: { populate: { product_attribute: true } },
     },
   },
 };

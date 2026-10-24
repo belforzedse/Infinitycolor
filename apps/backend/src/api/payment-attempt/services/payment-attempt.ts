@@ -87,7 +87,7 @@ export async function reconcileOrderPaymentAttempt(strapi: Strapi, order: any) {
   const current = String(attempt.Status || "Created") as PaymentAttemptStatus;
   // SnappPay is reconciled only against the provider-backed orchestrator.
   // Never infer settlement from an order status written by the legacy flow.
-  if (isSnappayGatewayValue(attempt.Gateway)) {
+  if (isSnappayGatewayValue(attempt.Gateway) || String(attempt.Gateway).toLowerCase() === "mellat") {
     return attempt;
   }
   let next = current;

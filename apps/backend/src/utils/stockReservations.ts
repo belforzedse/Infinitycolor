@@ -12,6 +12,7 @@ import {
 import { runRawSql } from "./transactionExecutor";
 import { releaseOrderDiscountClaim } from "../api/cart/services/lib/discount-claim";
 import { releaseWalletHoldsForOrder } from "../api/local-user-wallet/services/wallet-holds";
+import { assertMellatReservationReleasable } from "../api/payment-gateway/services/mellat-state";
 
 type ReservationTransition = "Released" | "Expired" | "Consumed";
 
@@ -232,6 +233,7 @@ export async function releaseOrderReservation(
   }
 
   try {
+    await assertMellatReservationReleasable(strapi, orderId, trx);
     const { transitioned } = await transitionReservationStatus(
       strapi,
       orderId,

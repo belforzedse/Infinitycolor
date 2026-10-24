@@ -132,7 +132,7 @@ describe("consumeOrderReservation", () => {
 describe("releaseOrderReservation", () => {
   it("releases reserved stock for each item once", async () => {
     const { strapi, orderFindOne, trx } = createStrapi();
-    trx.raw.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    trx.raw.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ id: 1 }] });
     orderFindOne.mockResolvedValueOnce({
       id: 1,
       order_items: [{ Count: 3, product_variation: { product_stock: { id: 7 } } }],
@@ -150,7 +150,7 @@ describe("releaseOrderReservation", () => {
     const { strapi, orderFindOne, trx } = createStrapi();
     // A paid (Consumed) order, or a second expiry pass on an already-released order:
     // the guarded transition matches 0 rows, so no stock is added back.
-    trx.raw.mockResolvedValueOnce({ rows: [] });
+    trx.raw.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
 
     const res = await releaseOrderReservation(strapi, 1, "Released", trx);
 
@@ -161,7 +161,7 @@ describe("releaseOrderReservation", () => {
 
   it("throws a mid-loop release failure instead of allowing a partial commit", async () => {
     const { strapi, orderFindOne, trx } = createStrapi();
-    trx.raw.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    trx.raw.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ id: 1 }] });
     orderFindOne.mockResolvedValueOnce({
       id: 1,
       order_items: [7, 8, 9].map((stockId) => ({

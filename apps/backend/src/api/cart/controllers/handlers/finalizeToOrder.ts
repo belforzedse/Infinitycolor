@@ -1,3 +1,4 @@
+import { prepareMellatInitiation, recordMellatInitiation } from "../../../payment-gateway/services/mellat-coordinator";
 import { Strapi } from "@strapi/strapi";
 import { canonicalIranPhone } from "@repo/auth-core";
 import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../../utils/roles";
@@ -90,7 +91,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const normalizedQuoteHash = String(quoteHash || "").trim();
 
     if (managesPaymentAttempt) {
-      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway);
+      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway, Number(user.id));
       if (!gatewayEnabled) {
         return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
           data: {
@@ -636,7 +637,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     });
 
     if (!managesPaymentAttempt) {
-      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway);
+      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway, Number(user.id));
       if (!gatewayEnabled) {
         return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
           data: {
@@ -829,6 +830,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       });
       paymentResult = pr;
     } else {
+      await prepareMellatInitiation(strapi, Number(paymentAttempt.id), Number(order.id), Math.round(gatewayAmountToman * 10));
       paymentResult = await requestMellatPayment(strapi, {
         orderId: order.id,
         // Contract amounts are stored in toman; mellat-v3 performs the single
@@ -838,6 +840,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         callbackURL: callbackURL,
         contractId: contract.id,
       });
+      await recordMellatInitiation(strapi, Number(paymentAttempt.id), paymentResult);
     }
 
     strapi.log.info(`Payment result for Order ${order.id}:`, {
@@ -863,7 +866,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             Status: "Unknown",
             failureCode: classification.errorCode,
             failureMessage: errMsg,
-            providerResponse: detailed,
+            ...(selectedGateway === "mellat" ? {} : { providerResponse: detailed }),
             nextAction: "manual_review",
           }).catch(() => undefined);
         }
@@ -902,7 +905,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           Status: "Failed",
           failureCode: "PAYMENT_INITIATION_FAILED",
           failureMessage: errMsg,
-          providerResponse: detailed,
+          ...(selectedGateway === "mellat" ? {} : { providerResponse: detailed }),
           resolvedAt: new Date(),
         });
       }
@@ -961,10 +964,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           Status: "Redirected",
           providerReference: String(paymentResult.refId || paymentResult.requestId || ""),
           redirectUrl: paymentResult.redirectUrl,
-          providerResponse: {
+          ...(selectedGateway === "mellat" ? {} : { providerResponse: {
             requestId: paymentResult.requestId,
             hasProviderReference: Boolean(paymentResult.refId),
-          },
+          } }),
           redirectedAt: new Date(),
         });
       }

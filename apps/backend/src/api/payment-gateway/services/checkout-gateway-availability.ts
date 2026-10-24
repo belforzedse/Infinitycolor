@@ -39,6 +39,15 @@ const isZarinPalConfigured = (): boolean =>
 const hasNonEmptyEnv = (...keys: string[]): boolean =>
   keys.every((key) => Boolean(String(process.env[key] || "").trim()));
 
+export const isMellatCheckoutAllowed = (userId?: number): boolean => {
+  const mode = String(process.env.MELLAT_CHECKOUT_MODE || "off").trim().toLowerCase();
+  if (mode === "live") return true;
+  if (mode !== "pilot" || !Number.isSafeInteger(userId) || Number(userId) <= 0) return false;
+  const allowed = String(process.env.MELLAT_CHECKOUT_PILOT_USER_IDS || "")
+    .split(",").map((id) => id.trim()).filter((id) => /^[1-9]\d*$/.test(id));
+  return allowed.includes(String(userId));
+};
+
 const isGatewayConfigured = (code: CheckoutGatewayCode): boolean => {
   switch (code) {
     case "samankish":
@@ -137,10 +146,12 @@ const resolveGatewayAvailabilityMap = async (
 
 export const getAvailableCheckoutGateways = async (
   strapi: Strapi,
+  userId?: number,
 ): Promise<CheckoutGatewayItem[]> => {
   const availability = await resolveGatewayAvailabilityMap(strapi);
   return SUPPORTED_CHECKOUT_GATEWAYS.filter(
-    (gateway) => availability.get(gateway.code) === true,
+    (gateway) => availability.get(gateway.code) === true &&
+      (gateway.code !== "mellat" || isMellatCheckoutAllowed(userId)),
   );
 };
 
@@ -162,7 +173,9 @@ export const normalizeCheckoutGatewayCode = (
 export const isCheckoutGatewayEnabled = async (
   strapi: Strapi,
   gatewayCode: CheckoutGatewayCode,
+  userId?: number,
 ): Promise<boolean> => {
+  if (gatewayCode === "mellat" && !isMellatCheckoutAllowed(userId)) return false;
   const availability = await resolveGatewayAvailabilityMap(strapi);
   return availability.get(gatewayCode) === true;
 };

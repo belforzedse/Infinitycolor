@@ -10,6 +10,7 @@ process.env.DATABASE_CLIENT = 'sqlite';
 process.env.DATABASE_FILENAME = ':memory:';
 
 // Use staging/test endpoints for external services
+process.env.MELLAT_CHECKOUT_MODE = 'live'; // inert, mocked unit-test provider only
 process.env.MELLAT_TERMINAL_ID = 'test-terminal-id';
 process.env.MELLAT_USERNAME = 'test-username';
 process.env.MELLAT_PASSWORD = 'test-password';
