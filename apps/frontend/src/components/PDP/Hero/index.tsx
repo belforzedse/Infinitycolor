@@ -79,10 +79,13 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
     identity,
     colorId: initialColor,
     hasPickedColor: false,
+    clickRevision: 0,
   });
   const hasPickedColor = gallerySelection.identity === identity && gallerySelection.hasPickedColor;
   const selectedColor =
     gallerySelection.identity === identity ? gallerySelection.colorId : initialColor;
+  const galleryClickRevision =
+    gallerySelection.identity === identity ? gallerySelection.clickRevision : 0;
   const assets = productData ? formatAllGalleryAssets(productData) : [];
   const initialImageId = productData
     ? formatGalleryAssets(productData, hasPickedColor ? selectedColor : undefined)[0]?.id
@@ -135,7 +138,7 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
       </div>
 
       <PDPHeroGallery
-        key={`${identity}:${selectedColor}:${initialImageId ?? "empty"}`}
+        key={`${identity}:${selectedColor}:${initialImageId ?? "empty"}:${galleryClickRevision}`}
         assets={assets}
         initialImageId={initialImageId}
       />
@@ -147,11 +150,12 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
         productData={productData}
         productId={productId}
         onSelectedColorChange={(colorId) =>
-          setGallerySelection({
+          setGallerySelection((previous) => ({
             identity,
             colorId,
             hasPickedColor: true,
-          })
+            clickRevision: previous.identity === identity ? previous.clickRevision + 1 : 1,
+          }))
         }
       />
     </div>

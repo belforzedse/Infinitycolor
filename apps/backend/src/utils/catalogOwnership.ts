@@ -130,6 +130,24 @@ export async function validateProductOwnedRelations(
 
 /** Content Manager and future HTTP handlers cannot evade route coordination. */
 export function registerCatalogInteractiveAssertions(strapi: any) {
+  // Strapi writes repeatable components before the product's DB lifecycle.
+  // Reject interactive gallery updates before any component can be changed.
+  strapi.entityService.decorate((service: any) => ({
+    async update(uid: string, entityId: number | string, params: any) {
+      if (
+        uid === "api::product.product" &&
+        params?.data &&
+        Object.prototype.hasOwnProperty.call(params.data, "ColorGalleries") &&
+        strapi.requestContext?.get?.()?.state?.user
+      ) {
+        const guard = catalogMutationContext();
+        if (!guard) throw new CatalogEditError("EDIT_LEASE_LOST");
+        if (!guard.ids.includes(Number(entityId)))
+          throw new CatalogEditError("CATALOG_PARENT_CHANGE_FORBIDDEN", 400);
+      }
+      return service.update.call(this, uid, entityId, params);
+    },
+  }));
   const models = [
     "api::product.product",
     ...Object.values(OWNED),

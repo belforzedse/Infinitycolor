@@ -194,3 +194,72 @@ it("keeps color-only media in the library, deduplicates product usage and preven
     code: "PRODUCT_MEDIA_IN_USE",
   });
 });
+
+it.each(["replace", "clear", "append"])("preserves galleries and revision when a native %s edit lacks a lease", async (operation) => {
+  const { product } = await fixture();
+  await save(product.id, { ColorGalleries: mapping() });
+  const before = await snapshots.loadEditorSnapshot(strapi, product.id);
+  const rows = before.product.attributes.ColorGalleries;
+  const existing = rows.map((row: any) => ({
+    id: row.id, color: row.color.data.id, Images: row.Images.data.map((image: any) => image.id),
+  }));
+  const ColorGalleries = operation === "clear" ? []
+    : operation === "replace" ? existing.map((row: any, index: number) => index === 0 ? { ...row, Images: [files[2].id] } : row)
+    : [...existing, { color: colors[0], Images: [files[2].id] }];
+  const ctx = { state: { user: { id: 99999 } } };
+  await expect(strapi.requestContext.run(ctx, () => strapi.entityService.update(PRODUCT, product.id, {
+    data: { Title: "JEST_TEST__rejected edit", ColorGalleries },
+  }))).rejects.toMatchObject({ code: "EDIT_LEASE_LOST" });
+  expect(await snapshots.loadEditorSnapshot(strapi, product.id)).toEqual(before);
+});
+
+it("saves galleries through the human editor route and rejects stale revision proof", async () => {
+  const { product } = await fixture();
+  await save(product.id, { ColorGalleries: mapping() });
+  const before = await snapshots.loadEditorSnapshot(strapi, product.id);
+  const user = await f.createUser();
+  let role = await strapi.db.query("plugin::users-permissions.role").findOne({ where: { type: "seller-1" } });
+  if (!role) role = await strapi.db.query("plugin::users-permissions.role").create({ data: { name: "Seller 1", type: "seller-1", description: "Disposable test staff" } });
+  await strapi.db.query("plugin::users-permissions.user").update({ where: { id: user.id }, data: { role: role.id } });
+  const editor = { actor: { user: { id: user.id }, role: "seller1", capabilities: ["product.update", "product.media.manage"] }, sessionId: `test-gallery-staff-${user.id}` };
+  const acquired = await guard.changeEditLease(strapi, product.id, editor, "acquire", { editorInstanceId: randomUUID() });
+  const headers: Record<string, string> = {
+    "x-product-edit-token": acquired.lease.token,
+    "x-product-edit-instance": acquired.lease.editorInstanceId,
+    "x-product-edit-generation": String(acquired.lease.generation),
+    "x-product-expected-revision": String(before.revision),
+  };
+  const makeCtx = () => ({
+    params: { id: String(product.id) }, query: {}, status: 200, body: undefined as any,
+    state: { user: { id: user.id }, betterAuthSessionId: editor.sessionId },
+    request: { method: "PUT", headers, body: { data: { ColorGalleries: [] } } },
+    get: (key: string) => headers[key.toLowerCase()] || "", set: jest.fn(), is: () => false,
+    badRequest: (message: string) => { throw new Error(message); },
+    forbidden: (message: string) => { throw new Error(message); },
+    notFound: (message: string) => { throw new Error(message); },
+  });
+  const middleware = require(`${process.env.INTEGRATION_DIST_DIR}/src/middlewares/catalog-edit`).default({ resource: "product" }, { strapi });
+  const ctx = makeCtx();
+  await strapi.requestContext.run(ctx, () => middleware(ctx, () => strapi.controller(PRODUCT).editor(ctx)));
+  expect(ctx.status).toBe(200);
+  expect(ctx.body.data.product.attributes.ColorGalleries).toEqual([]);
+  expect(ctx.body.data.revision).toBe(before.revision + 1);
+  const after = await snapshots.loadEditorSnapshot(strapi, product.id);
+  const stale = makeCtx();
+  await strapi.requestContext.run(stale, () => middleware(stale, () => strapi.controller(PRODUCT).editor(stale)));
+  expect(stale.status).toBe(409);
+  expect(stale.body.error.details.code).toBe("PRODUCT_VERSION_CONFLICT");
+  expect(await snapshots.loadEditorSnapshot(strapi, product.id)).toEqual(after);
+});
+
+it("does not let one product's mutation context update another product's gallery", async () => {
+  const { product } = await fixture();
+  await save(product.id, { ColorGalleries: mapping() });
+  const other = await f.createProduct(); products.push(other.id);
+  const before = await snapshots.loadEditorSnapshot(strapi, product.id);
+  const ctx = { state: { user: { id: 99999 } } };
+  await expect(strapi.requestContext.run(ctx, () => guard.runCatalogSystemMutation(strapi, [other.id], "fixture", () =>
+    strapi.entityService.update(PRODUCT, product.id, { data: { ColorGalleries: [] } }),
+  ))).rejects.toMatchObject({ code: "CATALOG_PARENT_CHANGE_FORBIDDEN" });
+  expect(await snapshots.loadEditorSnapshot(strapi, product.id)).toEqual(before);
+});

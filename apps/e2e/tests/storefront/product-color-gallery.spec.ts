@@ -142,6 +142,18 @@ for (const quality of ["safe", "automatic"] as const) {
     await page.waitForTimeout(500);
 
     expect(await page.evaluate(() => window.scrollY)).toBe(pageScrollBefore);
+    await thumb(page, 2).click();
+    await expect(mainPhoto(page)).toHaveAttribute(
+      "src",
+      /gallery-photo-20\.png/,
+    );
+    await blue.click();
+    await expect(mainPhoto(page)).toHaveAttribute(
+      "src",
+      /gallery-photo-30\.png/,
+    );
+    await thumb(page, 4).click();
+
     const media = page.locator('[data-aq-pdp-gallery-media="image"]');
     await expect(media).toHaveAttribute("data-aq-pdp-zoom", "available");
     if (info.project.name === "desktop") {

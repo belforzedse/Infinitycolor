@@ -184,8 +184,29 @@ it("shows cover first and keeps all photos when selecting a color", () => {
   expect(screen.getByTestId("cart")).toHaveAttribute("data-sku", "SKU-211");
   expect(screen.getByTestId("price")).toHaveTextContent("21100");
 
+  fireEvent.click(screen.getByText("آبی"));
+  expect(active()).toContain("photo-30.jpg");
+
   for (const id of [1, 2, 20, 30, 40]) {
     expect(screen.getAllByRole("button", { name: `photo ${id}` })[0]).toBeInTheDocument();
+  }
+});
+
+it("returns to each selected color's first assigned photo after manual browsing", () => {
+  render(<Hero productData={fixture()} productId="1" />);
+
+  for (const { color, firstPhoto, browsedPhoto } of [
+    { color: "قرمز", firstPhoto: "photo-20.jpg", browsedPhoto: 40 },
+    { color: "آبی", firstPhoto: "photo-30.jpg", browsedPhoto: 20 },
+  ]) {
+    fireEvent.click(screen.getByText(color));
+    expect(active()).toContain(firstPhoto);
+
+    fireEvent.click(screen.getAllByRole("button", { name: `photo ${browsedPhoto}` })[0]);
+    expect(active()).toContain(`photo-${browsedPhoto}.jpg`);
+
+    fireEvent.click(screen.getByText(color));
+    expect(active()).toContain(firstPhoto);
   }
 });
 
