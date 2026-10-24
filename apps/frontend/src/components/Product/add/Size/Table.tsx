@@ -28,7 +28,7 @@ const SizeTable: React.FC<SizeTableProps> = ({ data, columns, title }) => {
                   key={column.key}
                   className="text-sm border-l border-slate-100 p-3 font-medium text-neutral-800"
                 >
-                  {column.title}
+                  {column.title.trim() || "---"}
                 </th>
               ))}
             </tr>

@@ -6,9 +6,9 @@ interface SpecTableProps {
 }
 
 const SpecTable: React.FC<SpecTableProps> = ({ specs = [] }) => {
-  const { rows, headers } = normalizeSizeGuideData(specs);
+  const { rows, columns } = normalizeSizeGuideData(specs);
 
-  if (!rows.length || headers.length === 0) {
+  if (!rows.length || columns.length === 0) {
     return (
       <div className="w-full p-5 text-center">
         <p className="text-foreground-primary">راهنمای سایز برای این محصول موجود نیست.</p>
@@ -24,12 +24,12 @@ const SpecTable: React.FC<SpecTableProps> = ({ specs = [] }) => {
             <th className="text-sm whitespace-nowrap border p-3 text-center text-foreground-primary">
               سایز
             </th>
-            {headers.map((header) => (
+            {columns.map((column) => (
               <th
-                key={header}
+                key={column.key}
                 className="text-sm whitespace-nowrap border p-3 text-center text-foreground-primary"
               >
-                {header}
+                {column.title}
               </th>
             ))}
           </tr>
@@ -38,9 +38,9 @@ const SpecTable: React.FC<SpecTableProps> = ({ specs = [] }) => {
           {rows.map((spec, index) => (
             <tr key={index} className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}>
               <td className="text-sm border p-3 text-right text-gray-700">{spec.size}</td>
-              {headers.map((header) => (
-                <td key={header} className="text-sm border p-3 text-right text-gray-700">
-                  {spec[header] || "-"}
+              {columns.map((column) => (
+                <td key={column.key} className="text-sm border p-3 text-right text-gray-700">
+                  {spec[column.key] || "-"}
                 </td>
               ))}
             </tr>
