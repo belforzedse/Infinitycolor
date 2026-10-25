@@ -134,3 +134,23 @@ it("reports the terminal unavailable outcome once while retaining retry UI", asy
   expect(Sentry.captureException).toHaveBeenCalledTimes(1);
   expect(updateRouteHint).not.toHaveBeenCalled();
 });
+
+it("keeps the token failure status and bounded reason in terminal diagnostics", async () => {
+  jest.mocked(centralAuth.tokenManager.getTokenOutcome).mockResolvedValueOnce({
+    state: "unavailable",
+    reasonCode: "http_failure",
+    status: 502,
+  });
+  render(<AuthCompleteClient returnPath="/checkout" attempt={0} />);
+
+  await screen.findByRole("alert");
+  expect(Sentry.captureException).toHaveBeenCalledWith(
+    expect.objectContaining({ status: 502 }),
+    expect.objectContaining({
+      tags: expect.objectContaining({ failure_stage: "token" }),
+      extra: expect.objectContaining({ http_status: 502, reasonCode: "http_failure" }),
+    }),
+  );
+  expect(centralAuth.tokenManager.expire).not.toHaveBeenCalled();
+  expect(updateRouteHint).not.toHaveBeenCalled();
+});

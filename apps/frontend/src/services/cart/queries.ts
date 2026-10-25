@@ -5,6 +5,7 @@ import type {
   CheckoutQuoteRequest,
   CheckoutQuoteResponse,
   CheckoutGatewayCode,
+  CheckoutAttemptLookup,
 } from "./types/cart";
 import { unwrap } from "./helpers/response";
 import { CHECKOUT_MAX_RETRIES, CHECKOUT_REQUEST_TIMEOUT_MS } from "@/constants/api";
@@ -67,6 +68,15 @@ export const checkCartStock = async (
       cart: error.data?.cart,
     };
   }
+};
+
+/** Owner-scoped recovery lookup; an unreadable response is never an absent attempt. */
+export const getCheckoutAttempt = async (attemptId: string): Promise<CheckoutAttemptLookup> => {
+  const response = await apiClient.get<CheckoutAttemptLookup>(
+    `/carts/checkout-attempt?attemptId=${encodeURIComponent(attemptId)}`,
+    { cache: "no-store" },
+  );
+  return unwrap<CheckoutAttemptLookup>(response);
 };
 
 export const getCheckoutQuote = async (

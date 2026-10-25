@@ -2,6 +2,7 @@ import { getUserCart } from "./base";
 import { addItemToCart, updateCartItem, removeCartItem, finalizeCart, mergeGuestCart } from "./mutations";
 import {
   checkCartStock,
+  getCheckoutAttempt,
   getAvailableGateways,
   getCheckoutPaymentOptions,
   getCheckoutQuote,
@@ -94,6 +95,7 @@ export {
   updateCartItem,
   removeCartItem,
   checkCartStock,
+  getCheckoutAttempt,
   getAvailableGateways,
   getCheckoutPaymentOptions,
   getCheckoutQuote,
@@ -111,6 +113,7 @@ const CartService = {
   updateCartItem,
   removeCartItem,
   checkCartStock,
+  getCheckoutAttempt,
   getAvailableGateways,
   getCheckoutPaymentOptions,
   getCheckoutQuote,

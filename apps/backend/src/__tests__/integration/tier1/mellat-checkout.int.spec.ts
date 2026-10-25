@@ -2,6 +2,10 @@
 jest.mock("../../../queue/mellat", () => ({
   enqueueMellatAttempt: jest.fn(async () => undefined),
 }));
+jest.mock("@sentry/node", () => ({
+  ...jest.requireActual("@sentry/node"),
+  captureMessage: jest.fn(),
+}));
 // Strapi boots compiled lifecycles; staff notification delivery is another external queue boundary.
 jest.mock("../../../../dist/src/queue/staff-order-alert", () => ({
   enqueueStaffOrderStartedAlert: jest.fn(async () => undefined),
@@ -15,6 +19,7 @@ import {
   reconcileMellatOrder,
   sweepMellatAttempts,
 } from "../../../api/payment-gateway/services/mellat-coordinator";
+import * as Sentry from "@sentry/node";
 import { adminAdjustItemsHandler } from "../../../api/order/controllers/helpers/adminAdjustItems";
 import { readMellatState } from "../../../api/payment-gateway/services/mellat-state";
 import { mellatTerminalFingerprint } from "../../../api/payment-gateway/services/mellat-v3";
@@ -65,6 +70,7 @@ beforeEach(() => {
   f = makeFactories(strapi);
   fixtures = [];
   jest.clearAllMocks();
+  jest.mocked(Sentry.captureMessage).mockReturnValue("integration-event");
   const service = strapi.service("api::payment-gateway.mellat-v3");
   provider = {
     verify: jest.spyOn(service, "verifyTransaction").mockResolvedValue(confirmed()),
@@ -507,26 +513,243 @@ describe("Mellat durable checkout recovery", () => {
     await expectStock(payment.order.id, payment.items[0].stockId, 10, 0, "Released", "Cancelled");
   });
 
-  it("retains an unknown outcome when the callback reference is completely missing", async () => {
-    const payment = await seedPayment();
+  it.each(["Pending", "Unknown"])("parks a %s browser-only waiter without financial conclusions or repeat delivery", async (status) => {
+    const payment = await seedPayment({ wallet: true });
+    const initial = await loadAttempt(payment.attempt.id);
+    const state = readMellatState(initial)!;
     await strapi.db.connection("payment_attempts").where({ id: payment.attempt.id }).update({
       created_at: new Date(Date.now() - 16 * 60_000), next_action_at: new Date(Date.now() - 1000),
+      status,
+      ...(status === "Unknown" ? {
+        failure_code: "MELLAT_CALLBACK_REFERENCE_UNAVAILABLE",
+        provider_response: { ...initial.providerResponse, mellat: {
+          ...state, retryCount: 4, lastError: "MELLAT_CALLBACK_REFERENCE_UNAVAILABLE",
+          alertedAt: new Date(Date.now() - 60_000).toISOString(),
+        } },
+      } : {}),
     });
+    const before = await loadAttempt(payment.attempt.id);
     const errorLog = jest.spyOn(strapi.log, "error").mockImplementation(() => undefined);
     jest.mocked(enqueueMellatAttempt).mockClear();
     expect(await sweepMellatAttempts(strapi)).toEqual({ processed: 1 });
     expect(enqueueMellatAttempt).toHaveBeenCalledWith(payment.attempt.id, 0);
     await processMellatAttempt(strapi, payment.attempt.id);
-    expect(await loadAttempt(payment.attempt.id)).toMatchObject({
-      Status: "Unknown", failureCode: "MELLAT_CALLBACK_REFERENCE_UNAVAILABLE", nextAction: "mellat_reconcile",
+    const parked = await loadAttempt(payment.attempt.id);
+    expect(parked).toMatchObject({
+      Status: status, nextAction: null, nextActionAt: null, leaseUntil: null, resolvedAt: null,
+      providerResponse: before.providerResponse, failureCode: before.failureCode,
     });
+    jest.mocked(enqueueMellatAttempt).mockClear();
+    // Existing queue jobs and repeated customer status refreshes cannot revive it.
+    await processMellatAttempt(strapi, payment.attempt.id);
+    await reconcileMellatOrder(strapi, payment.order.id);
+    expect(await sweepMellatAttempts(strapi)).toEqual({ processed: 0 });
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({
+      Status: status, nextAction: null, nextActionAt: null, leaseUntil: null, leaseVersion: parked.leaseVersion,
+    });
+    expect(enqueueMellatAttempt).not.toHaveBeenCalled();
     expect(provider.verify).not.toHaveBeenCalled();
     expect(provider.inquiry).not.toHaveBeenCalled();
     expect(provider.settle).not.toHaveBeenCalled();
-    expect(readMellatState(await loadAttempt(payment.attempt.id))?.stockProtected).toBe(false);
-    expect(readMellatState(await loadAttempt(payment.attempt.id))?.alertedAt).toEqual(expect.any(String));
+    expect(provider.reverse).not.toHaveBeenCalled();
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    expect(errorLog.mock.calls.filter(([message]) => String(message).includes("remains unresolved"))).toHaveLength(0);
+    await expectStock(payment.order.id, payment.items[0].stockId, 10, 2, "Reserved", "Paying");
+    expect(await walletState(payment.wallet!.id)).toEqual({ balanceIrr: INITIAL_WALLET_IRR, heldIrr: WALLET_IRR });
+  });
+
+  it.each([false, true])("revives a parked waiter for a late success callback with expired reservation=%s", async (expired) => {
+    const payment = await seedPayment({ expired, wallet: true });
     await processMellatAttempt(strapi, payment.attempt.id);
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({ Status: "Pending", nextAction: null });
+    jest.mocked(enqueueMellatAttempt).mockClear();
+
+    await acceptMellatCallback(strapi, payment.callback);
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({ Status: "Unknown", nextAction: "mellat_reconcile" });
+    expect(enqueueMellatAttempt).toHaveBeenCalledWith(payment.attempt.id, 0);
+    await processMellatAttempt(strapi, payment.attempt.id);
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({
+      Status: expired ? "Cancelled" : "Succeeded", nextAction: null,
+      WalletHoldStatus: expired ? "Released" : "Captured",
+    });
+    expect(provider.verify).toHaveBeenCalledTimes(expired ? 0 : 1);
+    expect(provider.settle).toHaveBeenCalledTimes(expired ? 0 : 1);
+    expect(provider.reverse).toHaveBeenCalledTimes(expired ? 1 : 0);
+    expect(await successfulLegs(payment.contract.id)).toHaveLength(expired ? 0 : 2);
+    await expectStock(payment.order.id, payment.items[0].stockId, expired ? 10 : 8, 0,
+      expired ? "Released" : "Consumed", expired ? "Cancelled" : "Started");
+  });
+
+  it.each([
+    { phase: "initiating" },
+    { phase: "review" },
+    { refId: undefined },
+    { responses: {} },
+    { responses: { pay: { at: new Date().toISOString(), resCode: 0, ambiguous: true } } },
+    { responses: { pay: { at: new Date().toISOString(), resCode: 21, ambiguous: false } } },
+    { callbackAt: new Date().toISOString() },
+    { callbackCode: "0" },
+    { stockProtected: true },
+    { pendingOperation: "inquiry" },
+    { processingStartedAt: new Date().toISOString() },
+    { phase: "verifying" },
+    { responses: { verify: { at: new Date().toISOString(), ambiguous: true } } },
+  ])("keeps recovery active for a non-waiter without a sale reference: %j", async (evidence) => {
+    const payment = await seedPayment();
+    const initial = await loadAttempt(payment.attempt.id);
+    await strapi.db.connection("payment_attempts").where({ id: payment.attempt.id }).update({
+      provider_response: { ...initial.providerResponse, mellat: {
+        ...readMellatState(initial), ...evidence,
+      } },
+    });
+    await processMellatAttempt(strapi, payment.attempt.id);
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({
+      Status: "Unknown", failureCode: "MELLAT_CALLBACK_REFERENCE_UNAVAILABLE",
+      nextAction: "mellat_reconcile", nextActionAt: expect.any(String), leaseUntil: null,
+    });
+    expect(enqueueMellatAttempt).toHaveBeenCalledWith(payment.attempt.id, 5_000);
+    expect(provider.verify).not.toHaveBeenCalled();
+    expect(provider.inquiry).not.toHaveBeenCalled();
+    expect(provider.settle).not.toHaveBeenCalled();
+    expect(provider.reverse).not.toHaveBeenCalled();
+  });
+
+  it("re-enqueues a success callback that arrives between the waiter claim and parking", async () => {
+    const payment = await seedPayment();
+    const parkingEntered = deferred<void>();
+    const resumeParking = deferred<void>();
+    const repository = strapi.db.query(ATTEMPT_UID);
+    const actualFindOne = repository.findOne.bind(repository);
+    let orderLookupCount = 0;
+    const lookup = jest.spyOn(repository, "findOne").mockImplementation(async (args: any) => {
+      if (args?.where?.id === payment.attempt.id && args?.where?.Gateway === "mellat") {
+        orderLookupCount += 1;
+        if (orderLookupCount === 2) {
+          parkingEntered.resolve();
+          await resumeParking.promise;
+        }
+      }
+      return actualFindOne(args);
+    });
+    const parkingWorker = processMellatAttempt(strapi, payment.attempt.id);
+    try {
+      await parkingEntered.promise;
+      await acceptMellatCallback(strapi, payment.callback);
+      // Deliver the callback job while the original worker still owns its lease.
+      await processMellatAttempt(strapi, payment.attempt.id);
+      expect(provider.verify).not.toHaveBeenCalled();
+      jest.mocked(enqueueMellatAttempt).mockClear();
+    } finally {
+      resumeParking.resolve();
+    }
+    await parkingWorker;
+    lookup.mockRestore();
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({
+      Status: "Unknown", nextAction: "mellat_reconcile", leaseUntil: null,
+    });
+    expect(readMellatState(await loadAttempt(payment.attempt.id))).toMatchObject({
+      callbackCode: "0", saleReferenceId: payment.saleReferenceId,
+    });
+    expect(enqueueMellatAttempt).toHaveBeenCalledTimes(1);
+    expect(enqueueMellatAttempt).toHaveBeenCalledWith(payment.attempt.id, 0);
+    await processMellatAttempt(strapi, payment.attempt.id);
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({ Status: "Succeeded", nextAction: null });
+    expect(provider.verify).toHaveBeenCalledTimes(1);
+    expect(provider.settle).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it("fences a stale parking worker after another lease parks and a callback revives the attempt", async () => {
+    const payment = await seedPayment();
+    const parkingEntered = deferred<void>();
+    const resumeParking = deferred<void>();
+    const repository = strapi.db.query(ATTEMPT_UID);
+    const actualFindOne = repository.findOne.bind(repository);
+    let orderLookupCount = 0;
+    const lookup = jest.spyOn(repository, "findOne").mockImplementation(async (args: any) => {
+      if (args?.where?.id === payment.attempt.id && args?.where?.Gateway === "mellat") {
+        orderLookupCount += 1;
+        if (orderLookupCount === 2) {
+          parkingEntered.resolve();
+          await resumeParking.promise;
+        }
+      }
+      return actualFindOne(args);
+    });
+    const oldWorker = processMellatAttempt(strapi, payment.attempt.id);
+    let revived: any;
+    try {
+      await parkingEntered.promise;
+      const oldVersion = Number((await loadAttempt(payment.attempt.id)).leaseVersion);
+      await strapi.db.connection("payment_attempts").where({ id: payment.attempt.id }).update({
+        lease_until: new Date(Date.now() - 1000),
+      });
+      await processMellatAttempt(strapi, payment.attempt.id);
+      expect(await loadAttempt(payment.attempt.id)).toMatchObject({
+        nextAction: null, leaseUntil: null, leaseVersion: oldVersion + 1,
+      });
+      await acceptMellatCallback(strapi, payment.callback);
+      revived = await loadAttempt(payment.attempt.id);
+      jest.mocked(enqueueMellatAttempt).mockClear();
+    } finally {
+      resumeParking.resolve();
+    }
+    await oldWorker;
+    lookup.mockRestore();
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({
+      Status: "Unknown", nextAction: "mellat_reconcile", nextActionAt: revived.nextActionAt,
+      leaseVersion: revived.leaseVersion, leaseUntil: null,
+    });
+    expect(enqueueMellatAttempt).not.toHaveBeenCalled();
+    await processMellatAttempt(strapi, payment.attempt.id);
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({ Status: "Succeeded", nextAction: null });
+    expect(provider.verify).toHaveBeenCalledTimes(1);
+    expect(provider.settle).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it.each(["verify", "reverse"] as const)("restarts the legacy alert clock at first %s and still alerts genuine ambiguity", async (method) => {
+    const payment = await seedPayment({ expired: method === "reverse", wallet: true });
+    const initial = await loadAttempt(payment.attempt.id);
+    const legacyState = {
+      ...readMellatState(initial)!, retryCount: 4,
+      lastError: "MELLAT_CALLBACK_REFERENCE_UNAVAILABLE",
+      alertedAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    await strapi.db.connection("payment_attempts").where({ id: payment.attempt.id }).update({
+      created_at: new Date(Date.now() - 60 * 60_000), status: "Unknown",
+      provider_response: { ...initial.providerResponse, mellat: legacyState },
+    });
+    await processMellatAttempt(strapi, payment.attempt.id);
+    provider[method].mockResolvedValue(unknown());
+    provider.inquiry.mockResolvedValue(unknown());
+    const errorLog = jest.spyOn(strapi.log, "error").mockImplementation(() => undefined);
+    await acceptMellatCallback(strapi, payment.callback);
+    await processMellatAttempt(strapi, payment.attempt.id);
+    const processing = await loadAttempt(payment.attempt.id);
+    const state = readMellatState(processing)!;
+    expect(state).toMatchObject({
+      processingStartedAt: expect.any(String), pendingOperation: "inquiry", stockProtected: method === "verify",
+    });
+    expect(state.alertedAt).toBeUndefined();
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    expect(processing).toMatchObject({ Status: "Unknown", nextAction: "mellat_reconcile", WalletHoldStatus: "Active" });
+
+    await strapi.db.connection("payment_attempts").where({ id: payment.attempt.id }).update({
+      provider_response: { ...processing.providerResponse, mellat: {
+        ...state, processingStartedAt: new Date(Date.now() - 16 * 60_000).toISOString(),
+      } },
+    });
+    await processMellatAttempt(strapi, payment.attempt.id);
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    expect(Sentry.captureMessage).toHaveBeenCalledWith("Mellat payment remains unresolved", expect.objectContaining({ level: "error" }));
+    expect(readMellatState(await loadAttempt(payment.attempt.id))?.alertedAt).toEqual(expect.any(String));
+    expect(await loadAttempt(payment.attempt.id)).toMatchObject({
+      Status: "Unknown", nextAction: "mellat_reconcile", nextActionAt: expect.any(String), leaseUntil: null,
+    });
+    await processMellatAttempt(strapi, payment.attempt.id);
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
     expect(errorLog.mock.calls.filter(([message]) => String(message).includes("remains unresolved"))).toHaveLength(1);
+    await expectStock(payment.order.id, payment.items[0].stockId, 10, 2, "Reserved", "Paying");
+    expect(await walletState(payment.wallet!.id)).toEqual({ balanceIrr: INITIAL_WALLET_IRR, heldIrr: WALLET_IRR });
   });
 
   it("enforces the native unique index for successful Mellat settlement references", async () => {

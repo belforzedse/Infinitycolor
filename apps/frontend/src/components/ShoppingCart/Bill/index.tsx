@@ -2,6 +2,7 @@
 import { checkoutFailureDiagnostics, type CheckoutOperation } from "@/lib/checkout-error-diagnostics";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { subscribeToAuthState } from "@repo/auth-core/browser";
 import { useForm, Controller } from "react-hook-form";
 import type { Option } from "@/components/Kits/Form/Select";
 import type { PaymentCapabilities } from "@repo/api/commerce";
@@ -32,13 +33,14 @@ import type {
   CheckoutGatewayCode,
   ReserveDeliveryAddress,
   ResumableCheckout,
+  FinalizeCartRequest,
 } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
 import WalletService, { type WalletHold } from "@/services/wallet";
 import { holdsAreReconciling } from "@/utils/walletHolds";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import { centralAuth, centralLoginUrl, readAuthStateVersion } from "@/lib/central-auth";
 import {
   checkoutFailureCategoryForCode,
   getAnalyticsCorrelationId,
@@ -52,10 +54,14 @@ import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { isExpectedCheckoutSentryCode } from "@/lib/expected-checkout-sentry";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 import { buildCartStockNoticeText } from "@/utils/cartStock";
-import { submitPaymentHandoff } from "@/utils/paymentHandoff";
+import { submitPaymentHandoff, watchPaymentHandoff } from "@/utils/paymentHandoff";
 import {
   clearCheckoutIdentity,
   clearContinuableCheckoutIdentity,
+  clearPendingCheckoutFinalization,
+  checkoutRequestFingerprint,
+  markPendingCheckoutFinalization,
+  readPendingCheckoutFinalization,
   persistCheckoutOrder,
   readCheckoutAttemptId,
   readCheckoutIdentity,
@@ -334,6 +340,11 @@ function ShoppingCartBillForm({}: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitInProgressRef = React.useRef(false);
+  const submissionGenerationRef = React.useRef(0);
+  const stopHandoffWatchdogRef = React.useRef<(() => void) | undefined>(undefined);
+  const finalizationRequestRef = React.useRef<{
+    ownerId: number; authVersion: number; body: FinalizeCartRequest; formFingerprint: string | null;
+  } | null>(null);
   const lastDiscountPreviewKeyRef = React.useRef<string | null>(null);
   const discountPreviewSeqRef = React.useRef(0);
   const lastSnappEligibilityKeyRef = React.useRef<string | null>(null);
@@ -344,6 +355,8 @@ function ShoppingCartBillForm({}: Props) {
   const [__, setOrderNumber] = useAtom(orderNumberAtom);
   const router = useRouter();
   const currentUser = useAtomValue(currentUserAtom);
+  const checkoutOwnerRef = React.useRef(currentUser?.id);
+  checkoutOwnerRef.current = currentUser?.id;
   const userLoading = useAtomValue(userLoadingAtom);
   const [hasRedirected, setHasRedirected] = useState(false);
   const [hasAccessToken, setHasAccessToken] = useState(false);
@@ -364,11 +377,28 @@ function ShoppingCartBillForm({}: Props) {
     if (typeof window === "undefined") return;
     const onPageShow = (event: PageTransitionEvent) => {
       if (!event.persisted) return;
+      submissionGenerationRef.current += 1;
+      stopHandoffWatchdogRef.current?.();
+      stopHandoffWatchdogRef.current = undefined;
       submitInProgressRef.current = false;
       setIsSubmitting(false);
     };
+    const unsubscribe = subscribeToAuthState(() => {
+      submissionGenerationRef.current += 1;
+      stopHandoffWatchdogRef.current?.();
+      stopHandoffWatchdogRef.current = undefined;
+      clearPendingCheckoutFinalization();
+      finalizationRequestRef.current = null;
+      submitInProgressRef.current = false;
+      setIsSubmitting(false);
+    });
     window.addEventListener("pageshow", onPageShow);
-    return () => window.removeEventListener("pageshow", onPageShow);
+    return () => {
+      submissionGenerationRef.current += 1;
+      stopHandoffWatchdogRef.current?.();
+      unsubscribe();
+      window.removeEventListener("pageshow", onPageShow);
+    };
   }, []);
 
   // Check authentication on mount - redirect to login if not authenticated.
@@ -410,6 +440,7 @@ function ShoppingCartBillForm({}: Props) {
     control,
     setValue,
     watch,
+    getValues,
     formState: { errors },
   } = useForm<FormData>({
     defaultValues: {
@@ -949,9 +980,9 @@ function ShoppingCartBillForm({}: Props) {
     const attributes = {
       area: "checkout",
       stage: "storefront",
-      reasonCode: errorCode,
       gateway: gateway || "none",
       ...diagnostics.attributes,
+      reasonCode: diagnostics.attributes.reasonCode ?? errorCode,
     };
     const disposition = checkoutDiagnosticDisposition(errorCode, response);
     if (disposition === "log") {
@@ -1138,10 +1169,15 @@ function ShoppingCartBillForm({}: Props) {
     // still merging the guest cart; running this alongside it evaluated (and raced) the
     // pre-merge cart. `isCartReady` also turns true when that init fails or times out.
     if (!canLoadProtectedCheckoutData || !isCartReady) return;
+    // An unanswered finalize may already own stock. Only its owner-scoped
+    // attempt lookup may resolve it; a stock correction cannot erase that fact.
+    if (readPendingCheckoutFinalization(checkoutOwnerRef.current)) return;
     if (stockReconcileInFlightRef.current) return;
     stockReconcileInFlightRef.current = true;
     try {
       const stockResult = await CartService.checkCartStock(readCheckoutAttemptId());
+      // A finalize may have started while this older stock read was in flight.
+      if (readPendingCheckoutFinalization(checkoutOwnerRef.current)) return;
       if (stockResult.errorCode === "RESERVATION_LOOKUP_FAILED") {
         return;
       }
@@ -1197,6 +1233,148 @@ function ShoppingCartBillForm({}: Props) {
   const submitOrder = async (data: FormData, continuation?: CheckoutIdentity) => {
     setError(null);
 
+    if (submitInProgressRef.current) {
+      toast("در حال پردازش سفارش قبلی هستیم. لطفاً چند لحظه صبر کنید.", { id: "checkout-error" });
+      return;
+    }
+    if (!checkoutOwnerRef.current) {
+      failPayment("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
+      return;
+    }
+    const authVersion = readAuthStateVersion();
+    const submissionGeneration = ++submissionGenerationRef.current;
+    const ownerId = checkoutOwnerRef.current;
+    const isCurrentIdentity = () =>
+      submissionGeneration === submissionGenerationRef.current &&
+      authVersion === readAuthStateVersion() && ownerId === checkoutOwnerRef.current;
+    let keepSubmissionLocked = false;
+    const openPaymentResult = (orderId: number, attemptId?: string) => {
+      if (!isCurrentIdentity()) return;
+      keepSubmissionLocked = true;
+      router.push(persistPendingPaymentResult(orderId, attemptId));
+    };
+    const buildFinalizeData = (supersedeCandidateId?: string, form = data): Record<string, unknown> => {
+      const selectedAddressId = form.address?.id ? Number(form.address.id) : undefined;
+      const cleanPhone = normalizeDigits(form.phoneNumber || "").replace(/\D/g, "");
+      const isMergeMode = mergeChoice === "merge";
+      const submittedGateway = walletContribution.coversTotal ? "wallet" : gateway;
+      const addressPayload =
+        isMergeMode || selectedAddressId
+          ? undefined
+          : {
+              shipping_city: Number(form.city?.id),
+              PostalCode: normalizeDigits(form.postalCode || "").replace(/\D/g, ""),
+              FullAddress: (form.fullAddress || "").trim(),
+              Description: form.addressDescription?.trim() || undefined,
+              save: form.saveAddress,
+              // Recipient info the shopper may have overridden (e.g. ordering on
+              // someone else's behalf) — kept separate from the account's own name.
+              FullName: (form.fullName || "").trim() || undefined,
+              Phone: cleanPhone || undefined,
+            };
+
+      const finalizeData: Record<string, unknown> = isMergeMode
+        ? {
+            reserveGroupId: activeReserve?.reserveGroupId,
+            callbackURL: "/orders/payment-callback",
+            gateway: submittedGateway,
+            walletAmountToman: walletContribution.walletToman || undefined,
+            supersedeAttemptId: supersedeCandidateId,
+            mobile: normalizeDigits(form.phoneNumber || "").replace(/\D/g, ""),
+            discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
+            note: form.notes || undefined,
+          }
+        : {
+            shipping: Number(form.shippingMethod?.id),
+            note: form.notes || undefined,
+            callbackURL: "/orders/payment-callback",
+            addressId: selectedAddressId,
+            addressPayload,
+            // Sent with a saved address too: the server gives the order its own
+            // copy when the recipient differs, instead of showing whoever the
+            // saved address was first used for.
+            recipient: {
+              FullName: (form.fullName || "").trim() || undefined,
+              Phone: cleanPhone || undefined,
+            },
+            gateway: submittedGateway,
+            walletAmountToman: walletContribution.walletToman || undefined,
+            supersedeAttemptId: supersedeCandidateId,
+            mobile: normalizeDigits(form.phoneNumber || "").replace(/\D/g, ""),
+            discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
+            reserveShipping: reserveShipping || undefined,
+          };
+
+      return finalizeData;
+    };
+    let verifiedReplayForm: string | undefined;
+    const sendFinalization = async (body: FinalizeCartRequest) => {
+      const frozen = JSON.parse(JSON.stringify(body)) as FinalizeCartRequest;
+      const requestFingerprint = await checkoutRequestFingerprint(frozen, cartSignature);
+      const formFingerprint = await checkoutRequestFingerprint(buildFinalizeData(), cartSignature);
+      if (!isCurrentIdentity()) throw new Error("Checkout identity changed");
+      if (verifiedReplayForm !== undefined && verifiedReplayForm !== JSON.stringify(buildFinalizeData(undefined, getValues())))
+        throw new Error("Checkout form changed during recovery");
+      finalizationRequestRef.current = { ownerId, authVersion, body: frozen, formFingerprint };
+      markPendingCheckoutFinalization(ownerId, requestFingerprint, frozen.supersedeAttemptId);
+      return CartService.finalizeCart(frozen);
+    };
+    let replayRequest: FinalizeCartRequest | undefined;
+    const unresolved = readPendingCheckoutFinalization(ownerId);
+    if (unresolved) {
+      submitInProgressRef.current = true;
+      setIsSubmitting(true);
+      try {
+        const lookup = await CartService.getCheckoutAttempt(unresolved.attemptId);
+        if (!isCurrentIdentity()) return;
+        if (lookup?.success === true && lookup.lookup === "found") {
+          const attempt = lookup.attempt;
+          if (attempt.attemptId !== unresolved.attemptId || attempt.quoteHash !== unresolved.quoteHash)
+            throw new Error("Checkout lookup identity mismatch");
+          if (Number.isInteger(attempt.orderId) && Number(attempt.orderId) > 0) {
+            openPaymentResult(Number(attempt.orderId), unresolved.attemptId);
+            return;
+          }
+        } else if (lookup?.success !== true || lookup.lookup !== "missing") {
+          throw new Error("Checkout lookup unavailable");
+        }
+        // Missing is only a point-in-time observation. The original POST may
+        // still commit, so an explicit retry must use its exact frozen request.
+        const retained = finalizationRequestRef.current;
+        const currentForm = buildFinalizeData(undefined, getValues());
+        verifiedReplayForm = JSON.stringify(currentForm);
+        const formFingerprint = await checkoutRequestFingerprint(currentForm, cartSignature);
+        if (!data.acceptTerms || !unresolved.requestFingerprint || !formFingerprint)
+          throw new Error("Checkout request cannot be verified");
+        if (retained && retained.ownerId === ownerId && retained.authVersion === authVersion &&
+            retained.body.attemptId === unresolved.attemptId && retained.body.quoteHash === unresolved.quoteHash) {
+          if (retained.formFingerprint !== formFingerprint)
+            throw new Error("Checkout form changed");
+          replayRequest = retained.body;
+        } else {
+          replayRequest = {
+            ...currentForm,
+            gateway: walletContribution.coversTotal ? "wallet" : gateway,
+            attemptId: unresolved.attemptId,
+            quoteHash: unresolved.quoteHash,
+            supersedeAttemptId: unresolved.supersedeAttemptId,
+            analyticsCorrelationId: getAnalyticsCorrelationId(),
+          } as FinalizeCartRequest;
+        }
+        if (await checkoutRequestFingerprint(replayRequest, cartSignature) !== unresolved.requestFingerprint)
+          throw new Error("Checkout request changed");
+        if (!isCurrentIdentity()) return;
+      } catch {
+        if (isCurrentIdentity()) failPayment("نتیجه پرداخت قبلی هنوز مشخص نیست. دوباره وضعیت سفارش را بررسی کنید.");
+        return;
+      } finally {
+        if (!keepSubmissionLocked && isCurrentIdentity()) {
+          submitInProgressRef.current = false;
+          setIsSubmitting(false);
+        }
+      }
+    }
+
     const pendingIdentity = continuation || readCheckoutIdentity();
     const continuableIdentity = continuation ? null : readContinuableCheckoutIdentity();
     const cartIsEmpty = totalItems <= 0 || cartItems.length === 0;
@@ -1228,6 +1406,8 @@ function ShoppingCartBillForm({}: Props) {
       !!watchProvince && !!watchCity && !!watchPostalCode && !!watchFullAddress;
     const isMergeMode = mergeChoice === "merge";
 
+    if (!replayRequest) {
+
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
     if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !continuationCandidate) {
@@ -1258,9 +1438,7 @@ function ShoppingCartBillForm({}: Props) {
     // Validate phone number format (basic check). Persian/Arabic-Indic digits
     // (common on Iranian keyboards) must be normalized before the ASCII-only
     // \D strip, or they're stripped as "non-digits" and the field reads empty.
-    const cleanPhone = continuationCandidate
-      ? ""
-      : normalizeDigits(data.phoneNumber || "").replace(/\D/g, "");
+    const cleanPhone = continuationCandidate ? "" : normalizeDigits(data.phoneNumber || "").replace(/\D/g, "");
     if (!continuationCandidate && cleanPhone.length < 10) {
       trackCheckoutError(undefined, "validation");
       failPayment("شماره تماس وارد شده معتبر نیست");
@@ -1294,14 +1472,17 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
+    }
+
     const resumeGateway = (
+      replayRequest ? replayRequest.gateway :
       continuationCandidate
         ? String(resumeIdentity?.gateway || gateway).toLowerCase()
         : gateway
     ) as typeof gateway;
 
     if (
-      !continuationCandidate &&
+      !replayRequest && !continuationCandidate &&
       !walletContribution.coversTotal &&
       (selectableGateways.length === 0 || !selectableGateways.includes(gateway))
     ) {
@@ -1321,12 +1502,6 @@ function ShoppingCartBillForm({}: Props) {
     // nothing moved instead of looking broken (the pageshow handler above is the
     // primary defense against this guard getting stuck; this is the fallback if
     // it still does).
-    if (submitInProgressRef.current) {
-      console.warn("Submit already in progress, ignoring duplicate submission");
-      toast("در حال پردازش سفارش قبلی هستیم. لطفاً چند لحظه صبر کنید.", { id: "checkout-error" });
-      return;
-    }
-
     try {
       submitInProgressRef.current = true;
       setIsSubmitting(true);
@@ -1343,12 +1518,20 @@ function ShoppingCartBillForm({}: Props) {
         },
       });
 
+      let checkoutAttemptId: string | undefined;
+      let cartResponse;
+      if (replayRequest) {
+        checkoutAttemptId = replayRequest.attemptId;
+        checkoutOperationRef.current = "finalize";
+        cartResponse = await sendFinalization(replayRequest);
+      } else {
       // Always re-checked: the shopper's previous attempt may itself be what
       // corrected the cart, and nothing is allowed to pay past this guard.
       checkoutOperationRef.current = "stock_check";
       const stockValid = await CartService.checkCartStock(
         continuationCandidate ? resumeIdentity?.attemptId : undefined,
       );
+      if (!isCurrentIdentity()) return;
 
       if (stockValid.errorCode === "RESERVATION_LOOKUP_FAILED") {
         trackCheckoutError("RESERVATION_LOOKUP_FAILED");
@@ -1383,16 +1566,13 @@ function ShoppingCartBillForm({}: Props) {
         return;
       }
 
-      let checkoutAttemptId: string | undefined;
-      let cartResponse;
-
       if (canContinuePendingCheckout && resumeIdentity) {
         if (resumeIdentity !== pendingIdentity) {
           writeCheckoutIdentity(resumeIdentity);
         }
         checkoutAttemptId = resumeIdentity.attemptId;
         checkoutOperationRef.current = "finalize";
-        cartResponse = await CartService.finalizeCart({
+        cartResponse = await sendFinalization({
           gateway: resumeGateway,
           attemptId: resumeIdentity.attemptId,
           quoteHash: resumeIdentity.quoteHash,
@@ -1420,55 +1600,11 @@ function ShoppingCartBillForm({}: Props) {
         ? readCheckoutIdentity()?.attemptId
         : undefined;
 
-      const addressPayload =
-        isMergeMode || selectedAddressId
-          ? undefined
-          : {
-              shipping_city: Number(watchCity?.id),
-              PostalCode: normalizeDigits(watchPostalCode || "").replace(/\D/g, ""),
-              FullAddress: (watchFullAddress || "").trim(),
-              Description: data.addressDescription?.trim() || undefined,
-              save: watchSaveAddress,
-              // Recipient info the shopper may have overridden (e.g. ordering on
-              // someone else's behalf) — kept separate from the account's own name.
-              FullName: (data.fullName || "").trim() || undefined,
-              Phone: cleanPhone || undefined,
-            };
-
-      const finalizeData: Record<string, unknown> = isMergeMode
-        ? {
-            reserveGroupId: activeReserve?.reserveGroupId,
-            callbackURL: "/orders/payment-callback",
-            gateway: submittedGateway,
-            walletAmountToman: walletContribution.walletToman || undefined,
-            supersedeAttemptId: supersedeCandidateId,
-            mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
-            discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
-            note: data.notes || undefined,
-          }
-        : {
-            shipping: Number(data.shippingMethod!.id),
-            note: data.notes || undefined,
-            callbackURL: "/orders/payment-callback",
-            addressId: selectedAddressId,
-            addressPayload,
-            // Sent with a saved address too: the server gives the order its own
-            // copy when the recipient differs, instead of showing whoever the
-            // saved address was first used for.
-            recipient: {
-              FullName: (data.fullName || "").trim() || undefined,
-              Phone: cleanPhone || undefined,
-            },
-            gateway: submittedGateway,
-            walletAmountToman: walletContribution.walletToman || undefined,
-            supersedeAttemptId: supersedeCandidateId,
-            mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
-            discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
-            reserveShipping: reserveShipping || undefined,
-          };
+      const finalizeData = buildFinalizeData(supersedeCandidateId);
 
       checkoutOperationRef.current = "quote";
       const quote = await CartService.getCheckoutQuote(finalizeData as never);
+      if (!isCurrentIdentity()) return;
 
       // The quote now succeeds even when SnappPay's eligibility check fails, so
       // one slow gateway no longer takes the whole checkout down. The shopper
@@ -1509,7 +1645,7 @@ function ShoppingCartBillForm({}: Props) {
       });
       checkoutAttemptId = resolvedAttempt.attemptId;
       checkoutOperationRef.current = "finalize";
-      cartResponse = await CartService.finalizeCart({
+      cartResponse = await sendFinalization({
         ...finalizeData,
         gateway: resolvedAttempt.gateway || submittedGateway,
         attemptId: checkoutAttemptId,
@@ -1526,12 +1662,24 @@ function ShoppingCartBillForm({}: Props) {
         analyticsCorrelationId: getAnalyticsCorrelationId(),
       } as never);
       }
+      }
+
+      if (!isCurrentIdentity()) return;
 
       if (!cartResponse.success) {
+        if (replayRequest) {
+          trackCheckoutError(String((cartResponse as any)?.errorCode || "FINALIZE_FAILED"), undefined, undefined, cartResponse);
+          const knownOrderId = orderIdFromCheckoutFailure(cartResponse);
+          if (knownOrderId) openPaymentResult(knownOrderId, checkoutAttemptId);
+          else failPayment("نتیجه پرداخت قبلی هنوز مشخص نیست. دوباره وضعیت سفارش را بررسی کنید.");
+          return;
+        }
         console.error("❌ Cart finalization failed:", cartResponse);
 
         // Extract detailed error information from response
         const errorCode = (cartResponse as any).errorCode;
+        if (cartResponse.success === false && errorCode && !isCheckoutStatusRecoveryCode(errorCode))
+          clearPendingCheckoutFinalization();
         const errorMessage = (cartResponse as any).message || cartResponse.message;
         const errorDetails = (cartResponse as any).details;
 
@@ -1559,6 +1707,7 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           if (recoverInFlightPayment(String(errorCode), cartResponse, checkoutAttemptId)) {
+            keepSubmissionLocked = true;
             return;
           }
           trackCheckoutError(String(errorCode), undefined, { details: errorDetails, telemetryOwner: (cartResponse as any).telemetryOwner });
@@ -1726,7 +1875,7 @@ function ShoppingCartBillForm({}: Props) {
           await clearCartSafely();
           clearCheckoutIdentity();
           setSubmitOrderStep(SubmitOrderStep.Success);
-          router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
+          openPaymentResult(cartResponse.orderId, checkoutAttemptId);
         } else {
           const redirectMethod =
             cartResponse.redirectMethod ||
@@ -1744,7 +1893,14 @@ function ShoppingCartBillForm({}: Props) {
             refId: cartResponse.refId,
           })) {
             trackCheckoutError("HANDOFF_FAILED", "handoff_failed");
-            failPayment("اطلاعات انتقال به درگاه کامل نیست. لطفاً دوباره تلاش کنید.");
+            openPaymentResult(cartResponse.orderId, checkoutAttemptId);
+          } else {
+            keepSubmissionLocked = true;
+            stopHandoffWatchdogRef.current?.();
+            stopHandoffWatchdogRef.current = watchPaymentHandoff(() => {
+              if (!isCurrentIdentity()) return;
+              openPaymentResult(cartResponse.orderId, checkoutAttemptId);
+            });
           }
         }
       } else {
@@ -1755,9 +1911,26 @@ function ShoppingCartBillForm({}: Props) {
           clearCheckoutIdentity();
         }
         setSubmitOrderStep(SubmitOrderStep.Success);
-        router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
+        openPaymentResult(cartResponse.orderId, checkoutAttemptId);
       }
     } catch (err: any) {
+      if (!isCurrentIdentity()) return;
+      if (replayRequest) {
+        const diagnostics = checkoutFailureDiagnostics(err, "finalize");
+        trackCheckoutError(err?.errorCode || diagnostics.errorCode, undefined, undefined, err);
+        const knownOrderId = orderIdFromCheckoutFailure(err);
+        if (knownOrderId) openPaymentResult(knownOrderId, replayRequest.attemptId);
+        else failPayment("نتیجه پرداخت قبلی هنوز مشخص نیست. دوباره وضعیت سفارش را بررسی کنید.");
+        return;
+      }
+      if (checkoutOperationRef.current === "handoff") {
+        const orderId = Number(readCheckoutIdentity()?.orderId);
+        if (Number.isInteger(orderId) && orderId > 0) {
+          trackCheckoutError("HANDOFF_FAILED", "handoff_failed");
+          openPaymentResult(orderId, readCheckoutAttemptId());
+          return;
+        }
+      }
       const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);
       console.error("Error creating order:", errorMsg, err);
 
@@ -1773,8 +1946,11 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId())) {
+            keepSubmissionLocked = true;
             return;
           }
+          if (err?.status >= 400 && err.status < 500 && !isCheckoutStatusRecoveryCode(errorCode))
+            clearPendingCheckoutFinalization();
           trackCheckoutError(String(errorCode), undefined, { details: responseData.details, telemetryOwner: responseData.telemetryOwner });
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
@@ -1889,8 +2065,10 @@ function ShoppingCartBillForm({}: Props) {
 
       failPayment(displayError);
     } finally {
-      submitInProgressRef.current = false;
-      setIsSubmitting(false);
+      if (!keepSubmissionLocked && isCurrentIdentity()) {
+        submitInProgressRef.current = false;
+        setIsSubmitting(false);
+      }
     }
   };
 

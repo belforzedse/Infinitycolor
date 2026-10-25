@@ -26,6 +26,8 @@ let strapi: any;
 let closing = false;
 const sessions = new Map<number, any>();
 const bank = new Map<string, any>();
+// Kept separately from receipts so a duplicate initiation cannot overwrite its evidence.
+const providerInitiations = new Map<number, number>();
 const bodyText = (request: http.IncomingMessage) => new Promise<string>((resolve, reject) => {
   let body = "";
   request.setEncoding("utf8");
@@ -47,13 +49,19 @@ async function snapshot(userId: number) {
     where: { user: { id: userId }, Gateway: "mellat" }, orderBy: { id: "desc" },
     populate: { order: true, contract: true },
   });
+  const attempts = await strapi.db.query("api::payment-attempt.payment-attempt").count({ where: { user: { id: userId } } });
+  const orders = await strapi.db.query("api::order.order").findMany({ where: { user: { id: userId } }, select: ["id", "ReservationStatus"] });
+  const contracts = await strapi.db.query("api::contract.contract").count({ where: { local_user: { id: userId } } });
   const wallet = await strapi.db.query("api::local-user-wallet.local-user-wallet").findOne({ where: { id: session.walletId } });
   const stock = await strapi.db.query("api::product-stock.product-stock").findOne({ where: { id: session.stockId } });
   const legs = attempt?.contract ? await strapi.db.query("api::contract-transaction.contract-transaction").findMany({
     where: { contract: { id: attempt.contract.id }, Status: "Success" },
   }) : [];
-  const receipt = attempt ? [...bank.values()].find((entry) => entry.orderId === String(attempt.order.id)) : undefined;
+  const receipt = attempt ? [...bank.values()].find((entry) => entry.orderId === String(attempt.order?.id)) : undefined;
   return {
+    attemptCount: attempts, orderCount: orders.length, contractCount: contracts,
+    reservationCount: orders.filter((order: any) => order.ReservationStatus === "Reserved").length,
+    providerInitiationCount: providerInitiations.get(userId) || 0,
     attemptId: attempt?.id, status: attempt?.Status, orderId: attempt?.order?.id,
     orderStatus: attempt?.order?.Status, reservationStatus: attempt?.order?.ReservationStatus,
     state: attempt?.providerResponse?.mellat, walletHoldStatus: attempt?.WalletHoldStatus,
@@ -83,6 +91,8 @@ const server = http.createServer(async (request, response) => {
         const order = await strapi.db.query("api::order.order").findOne({ where: { id: Number(orderId) }, populate: { user: true } });
         const session = sessions.get(Number(order.user.id));
         if (!session || field(body, "callBackUrl") !== `${API}/api/orders/payment-callback`) throw new Error("Non-local bank request refused");
+        const userId = Number(order.user.id);
+        providerInitiations.set(userId, (providerInitiations.get(userId) || 0) + 1);
         entry = { orderId, refId: `LoCaLRef${orderId}`, saleReferenceId: `${900000000000000000n + BigInt(orderId)}`,
           amountIrr: Number(field(body, "amount")), callbackUrl: field(body, "callBackUrl"),
           calls: [], mode: session.mode, settled: false };
@@ -196,7 +206,7 @@ try {
   ];
   const shopperActions = [...readActions,
     "api::auth.auth.self", "api::cart.cart.getMyCart", "api::cart.cart.checkStock",
-    "api::cart.cart.checkoutQuote", "api::cart.cart.finalizeToOrder", "api::cart.cart.shippingOptions",
+    "api::cart.cart.checkoutQuote", "api::cart.cart.checkoutAttempt", "api::cart.cart.finalizeToOrder", "api::cart.cart.shippingOptions",
     "api::payment-gateway.payment-gateway.availableGateways",
     "api::payment-gateway.payment-gateway.snappEligible",
     "api::local-user-wallet.local-user-wallet.getCurrentUserWallet",

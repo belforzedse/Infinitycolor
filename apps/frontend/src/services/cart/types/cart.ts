@@ -3,6 +3,7 @@ import type {
   CheckoutGatewayCode as SharedCheckoutGatewayCode,
   CheckoutQuoteRequest as SharedCheckoutQuoteRequest,
   CheckoutQuoteResponse as SharedCheckoutQuoteResponse,
+  CheckoutAttemptLookupResponse,
   FinalizeCartRequest as SharedFinalizeCartRequest,
   FinalizeCartResponse as SharedFinalizeCartResponse,
   GuestCartMergeResponse as SharedGuestCartMergeResponse,
@@ -129,6 +130,8 @@ export interface ResumableCheckout {
   gateway?: string;
   reservedUntil?: string;
 }
+
+export type CheckoutAttemptLookup = CheckoutAttemptLookupResponse;
 
 export interface AddItemRequest {
   productVariationId: number;

@@ -2,7 +2,8 @@
  * End-to-end pipeline runs against real ffmpeg on generated phone/browser fixtures.
  * Skipped when ffmpeg/ffprobe are not installed (e.g. the CI unit-test image).
  */
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import type { FileRow } from "../video-metadata";
@@ -36,6 +37,7 @@ import * as mediaProcess from "../media-process";
 import { parseMediaPlaylist } from "../hls-manifest";
 import { probeVideo } from "../video-normalization";
 import { processVideoFile } from "../video-pipeline";
+import { snapshotRow } from "../video-metadata";
 
 const describeWithFfmpeg = ffmpegAvailable() ? describe : describe.skip;
 
@@ -400,4 +402,87 @@ describeWithFfmpeg("video pipeline (real ffmpeg)", () => {
     } finally { spy.mockRestore(); }
   });
 
+});
+
+// Opt-in exact-byte regression; the public copy is deliberately never committed.
+const public113033Fixture = process.env.MEDIA_VIDEO_113033_FIXTURE_PATH;
+const describeWithPublic113033 = public113033Fixture && ffmpegAvailable() ? describe : describe.skip;
+
+describeWithPublic113033("public file 113033 normalization (real ffmpeg)", () => {
+  const sourceSha256 = "cb3fd1b35685c508f59efa433aba5215c5b9ea8e9206eee5201d8d31bd2cabdb";
+  const sha256 = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
+  const strapi = {
+    db: { connection: { raw: jest.fn(async () => ({ rows: [] })) }, query: jest.fn() },
+    log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  };
+  let uploads: string;
+
+  beforeAll(() => {
+    uploads = mkdtempSync(join(tmpdir(), "media-113033-proof-"));
+  });
+
+  afterAll(() => {
+    if (uploads) rmSync(uploads, { recursive: true, force: true });
+  });
+
+  it("normalizes the exact HEVC MOV to faststart H264/AAC MP4 with poster and rollback snapshot", async () => {
+    expect(sha256(public113033Fixture!)).toBe(sourceSha256);
+    const originalPath = join(uploads, "media_113033.mov");
+    copyFileSync(public113033Fixture!, originalPath);
+    const original: FileRow = {
+      id: 113033, name: "media_113033.mov", hash: "media_113033", ext: ".mov",
+      mime: "video/quicktime", size: statSync(originalPath).size / 1024,
+      url: "/uploads/media_113033.mov", previewUrl: null, width: 720, height: 1280, video: null,
+    };
+    mockStore = createMemoryVideoStore([original]);
+    const lease = jest.spyOn(mockStore, "claimLease");
+    const deps = { strapi, uploadsDir: uploads, hlsEnabled: false, webmEnabled: false, threads: 2, jobId: "local-proof-113033" };
+    const diskPath = (url: string) => join(uploads, url.replace(/^\/uploads\//, ""));
+    try {
+      const dryRun = await processVideoFile(113033, { ...deps, dryRun: true });
+      expect(dryRun).toMatchObject({ status: "would_process", probe: {
+        videoCodec: "hevc", audioCodec: "aac", displayWidth: 720, displayHeight: 1280, durationMs: 15_700,
+      } });
+      expect(mockStore.get(113033)).toEqual(original);
+      expect(readdirSync(uploads)).toEqual(["media_113033.mov"]);
+      expect(lease).not.toHaveBeenCalled();
+
+      expect(await processVideoFile(113033, deps)).toMatchObject({ status: "processed", stages: ["mp4"] });
+      expect(lease).toHaveBeenCalledTimes(1);
+      const row = mockStore.get(113033)!;
+      const output = await probeVideo(diskPath(row.url!));
+      expect(row).toMatchObject({ ext: ".mp4", mime: "video/mp4", width: 720, height: 1280 });
+      expect(output).toMatchObject({
+        videoCodec: "h264", audioCodec: "aac", pixelFormat: "yuv420p", fastStart: true,
+        displayWidth: 720, displayHeight: 1280, hasAudio: true, rotation: 0,
+      });
+      expect(Math.abs(output.durationMs! - 15_700)).toBeLessThan(100);
+      expect(row.video).toMatchObject({
+        status: "playback_ready", failure: null, lease: null,
+        source: { url: original.url, probe: { videoCodec: "hevc", audioCodec: "aac" } },
+        previous: snapshotRow(original),
+      });
+      expect(row.video!.previous).toEqual(snapshotRow(original));
+      expect(row.url).toBe(row.video!.output!.mp4.url);
+      expect(row.url).toBe(`/uploads/${row.hash}${row.ext}`);
+      expect(row.previewUrl).toBe(row.video!.output!.poster!.url);
+      const posterPath = diskPath(row.previewUrl!);
+      expect(statSync(posterPath).size).toBeGreaterThan(1000);
+      expect(readFileSync(posterPath).subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+      expect(sha256(originalPath)).toBe(sourceSha256);
+      expect(sha256(public113033Fixture!)).toBe(sourceSha256);
+      expect(await processVideoFile(113033, deps)).toMatchObject({ status: "up_to_date" });
+      expect(lease).toHaveBeenCalledTimes(1);
+      console.info("media-113033-local-proof", JSON.stringify({
+        sourceSha256, sourceBytes: statSync(originalPath).size,
+        videoCodec: output.videoCodec, audioCodec: output.audioCodec, pixelFormat: output.pixelFormat,
+        width: output.displayWidth, height: output.displayHeight, durationMs: output.durationMs,
+        fastStart: output.fastStart, mp4Bytes: statSync(diskPath(row.url!)).size,
+        posterBytes: statSync(posterPath).size, originalPreserved: true, rollbackSnapshotPreserved: true,
+        leaseReleased: row.video!.lease === null,
+      }));
+    } finally {
+      lease.mockRestore();
+    }
+  }, 120_000);
 });

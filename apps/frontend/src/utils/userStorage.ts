@@ -17,6 +17,7 @@ export function clearUserStorage(): void {
       "pendingCheckoutOrderId",
       "pendingCheckoutGateway",
       "pendingCheckoutCartSignature",
+      "pendingCheckoutFinalization",
       "continuableCheckoutAttemptId",
       "continuableCheckoutQuoteHash",
       "continuableCheckoutOrderId",

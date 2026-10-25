@@ -111,12 +111,28 @@ export async function getProductVariationColors(
   try {
     const items = await fetchCollectionPages(ENDPOINTS.PRODUCT.COLORS, options.revalidate);
     const colors: CatalogColor[] = [];
-    const seen = new Set<string>();
+    const byTitle = new Map<string, CatalogColor>();
     for (const item of items) {
       const title = readTitle(item);
-      if (!title || seen.has(title)) continue;
-      seen.add(title);
-      colors.push({ title, colorCode: readColorCode(item) });
+      if (!title) continue;
+      const rawTitle = item.attributes?.Title ?? item.Title;
+      const id = Number(item.id);
+      // Only replace exact-title matches with IDs. Unknown IDs or trimmed titles
+      // retain the existing title filter, including any duplicate relations.
+      const exactId = rawTitle === title && Number.isSafeInteger(id) && id > 0;
+      const existing = byTitle.get(title);
+      if (existing) {
+        if (!exactId) delete existing.ids;
+        else if (existing.ids && !existing.ids.includes(id)) existing.ids.push(id);
+        continue;
+      }
+      const color: CatalogColor = {
+        title,
+        colorCode: readColorCode(item),
+        ...(exactId ? { ids: [id] } : {}),
+      };
+      byTitle.set(title, color);
+      colors.push(color);
     }
     return colors;
   } catch (error) {

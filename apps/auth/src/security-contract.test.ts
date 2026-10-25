@@ -831,6 +831,89 @@ test("token timeout remains active while reading the response body", async () =>
   });
 });
 
+test("early refresh can retain a still-valid token only for temporary failures", async () => {
+  for (const failure of ["network", 503, 403, "invalid_response"] as const) {
+    let now = 1_700_000_000_000;
+    let calls = 0;
+    const token = jwt(1_700_000_060, "cached", 1_700_000_000);
+    const manager = createTokenManager({
+      authOrigin: "https://auth.test",
+      now: () => now,
+      fetchImpl: (async () => {
+        calls += 1;
+        if (calls === 1) return Response.json({ token });
+        if (failure === "network")
+          throw new TypeError("connection unavailable");
+        if (failure === "invalid_response") return Response.json({ token: "invalid" });
+        return new Response(null, { status: failure });
+      }) as typeof fetch,
+    });
+    assert.equal(await manager.getToken(), token);
+    now += 45_000;
+    const outcome = await manager.getTokenOutcome();
+    assert.equal(
+      outcome.state,
+      failure === 403 || failure === "invalid_response" ? "unavailable" : "authenticated",
+      `early refresh outcome for ${failure}`,
+    );
+    now += 10_000;
+    assert.equal((await manager.getTokenOutcome()).state, "unavailable");
+    now += 5_000;
+    assert.equal((await manager.getTokenOutcome()).state, "unavailable");
+  }
+});
+
+test("a forced refresh never shares the cached-token fallback with an ordinary caller", async () => {
+  let now = 1_700_000_000_000;
+  let resolveRefresh!: (response: Response) => void;
+  let calls = 0;
+  const token = jwt(1_700_000_060, "cached", 1_700_000_000);
+  const manager = createTokenManager({
+    authOrigin: "https://auth.test",
+    now: () => now,
+    fetchImpl: (async () => {
+      calls += 1;
+      if (calls === 1) return Response.json({ token });
+      return new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+    }) as typeof fetch,
+  });
+  assert.equal(await manager.getToken(), token);
+  now += 45_000;
+  const ordinary = manager.getTokenOutcome();
+  const forced = manager.getTokenOutcome({ forceRefresh: true });
+  assert.equal(calls, 2);
+  resolveRefresh(new Response(null, { status: 503 }));
+  assert.deepEqual(await ordinary, { state: "authenticated", token });
+  assert.deepEqual(await forced, { state: "unavailable", reasonCode: "http_failure", status: 503 });
+});
+
+test("logout invalidates an early-refresh fallback and a confirmed 401 clears it", async () => {
+  let now = 1_700_000_000_000;
+  let resolveRefresh!: (response: Response) => void;
+  let calls = 0;
+  const token = jwt(1_700_000_060, "cached", 1_700_000_000);
+  const manager = createTokenManager({
+    authOrigin: "https://auth.test",
+    now: () => now,
+    fetchImpl: (async () => {
+      calls += 1;
+      if (calls === 1) return Response.json({ token });
+      if (calls === 2)
+        return new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+      return new Response(null, { status: 401 });
+    }) as typeof fetch,
+  });
+  assert.equal(await manager.getToken(), token);
+  now += 45_000;
+  const pending = manager.getTokenOutcome();
+  manager.clearForLogout();
+  resolveRefresh(new Response(null, { status: 503 }));
+  assert.deepEqual(await pending, { state: "invalidated" });
+  assert.equal(manager.peek(), null);
+  assert.deepEqual(await manager.getTokenOutcome(), { state: "unauthenticated" });
+  assert.equal(manager.peek(), null);
+});
+
 test("a changed identity can acquire immediately without an old result overwriting it", async () => {
   const oldToken = jwt(Math.floor(Date.now() / 1000) + 120, "old");
   const newToken = jwt(Math.floor(Date.now() / 1000) + 121, "new");

@@ -198,12 +198,36 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
     if (!forceRefresh && cached && cached.expiresAtMs - refreshSkewMs > now()) {
       return { state: "authenticated", token: cached.value };
     }
-    if (acquisition) return acquisition;
-    const pending = acquire().finally(() => {
-      if (acquisition === pending) acquisition = null;
-    });
-    acquisition = pending;
-    return pending;
+    const acquisitionGeneration = generation;
+    let pending = acquisition;
+    if (!pending) {
+      const started = acquire().finally(() => {
+        if (acquisition === started) acquisition = null;
+      });
+      acquisition = started;
+      pending = started;
+    }
+    const outcome = await pending;
+    // Refresh starts before expiry. A temporary refresh failure must not discard
+    // a JWT that is still usable, but a 401-triggered forced refresh must never
+    // fall back to the rejected credential, even when it shares this acquisition.
+    const temporaryFailure =
+      outcome.state === "unavailable" &&
+      (outcome.reasonCode === "network" ||
+        outcome.reasonCode === "timeout" ||
+        (outcome.reasonCode === "http_failure" &&
+          outcome.status !== undefined &&
+          (outcome.status === 408 || outcome.status === 429 || outcome.status >= 500)));
+    if (
+      !forceRefresh &&
+      temporaryFailure &&
+      generation === acquisitionGeneration &&
+      cached &&
+      cached.expiresAtMs - now() > 5_000
+    ) {
+      return { state: "authenticated", token: cached.value };
+    }
+    return outcome;
   };
 
   const getToken: TokenManager["getToken"] = async (options) => {

@@ -25,6 +25,19 @@ describe("CartService", () => {
     mockDelete.mockClear();
   });
 
+  it("looks up the retained checkout attempt through a fresh owner-scoped GET", async () => {
+    const result = { success: true, lookup: "missing" };
+    mockGet.mockResolvedValueOnce({ data: result });
+    await expect(CartService.getCheckoutAttempt("attempt/1")).resolves.toEqual(result);
+    expect(mockGet).toHaveBeenCalledWith("/carts/checkout-attempt?attemptId=attempt%2F1", { cache: "no-store" });
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("does not turn an unavailable checkout lookup into a missing attempt", async () => {
+    mockGet.mockRejectedValueOnce({ status: 503 });
+    await expect(CartService.getCheckoutAttempt("attempt-1")).rejects.toEqual({ status: 503 });
+  });
+
   describe("getUserCart", () => {
     it("fetches user cart successfully", async () => {
       const mockCartData = {

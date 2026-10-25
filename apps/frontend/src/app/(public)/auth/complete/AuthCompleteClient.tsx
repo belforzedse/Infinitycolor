@@ -45,14 +45,18 @@ export default function AuthCompleteClient({
     const isCurrent = () => active && identity === readAuthStateVersion();
     let confirmedSessionLoss = false;
     let stage = "token";
-    const reportTerminal = (outcome: "unavailable" | "exhausted", status?: number) => {
+    const reportTerminal = (
+      outcome: "unavailable" | "exhausted",
+      status?: number,
+      reasonCode?: string,
+    ) => {
       const key = `${stage}:${outcome}`;
       if (reportedTerminal.current.has(key)) return;
       reportedTerminal.current.add(key);
       try {
         Sentry.captureException(new AuthHandoffError("Session recovery failed", status ?? 503), {
           tags: { area: "auth", operation: "complete", outcome, failure_stage: stage },
-          extra: { attempt, http_status: status },
+          extra: { attempt, http_status: status, reasonCode },
           fingerprint: ["auth", "complete", stage, outcome],
         });
       } catch {
@@ -65,7 +69,11 @@ export default function AuthCompleteClient({
         const outcome = await withTransientAuthRetry(async () => {
           const result = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
           if (result.state === "unavailable")
-            throw new AuthHandoffError("بازیابی حساب موقتاً ممکن نیست.", 503);
+            throw new AuthHandoffError(
+              "بازیابی حساب موقتاً ممکن نیست.",
+              result.status ?? 503,
+              result.reasonCode,
+            );
           return result;
         });
         if (!isCurrent() || outcome.state === "invalidated") return;
@@ -99,6 +107,7 @@ export default function AuthCompleteClient({
         window.location.replace(destination);
       } catch (cause) {
         if (!isCurrent()) return;
+        const reasonCode = cause instanceof AuthHandoffError ? cause.reasonCode : undefined;
         if (authErrorStatus(cause) === 401 && !confirmedSessionLoss) {
           const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh: true });
           if (!isCurrent() || outcome.state === "invalidated") return;
@@ -119,9 +128,10 @@ export default function AuthCompleteClient({
           operation: "complete",
           outcome: authErrorStatus(cause) === 401 ? "unauthenticated" : "unavailable",
           http_status: authErrorStatus(cause),
+          reasonCode,
         });
         if (authErrorStatus(cause) !== 401) {
-          reportTerminal("unavailable", authErrorStatus(cause));
+          reportTerminal("unavailable", authErrorStatus(cause), reasonCode);
           setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
           return;
         }
@@ -134,9 +144,13 @@ export default function AuthCompleteClient({
         try {
           stage = "route_hint";
           await updateRouteHint("POST");
-        } catch {
+        } catch (cause) {
           if (!isCurrent()) return;
-          reportTerminal("unavailable");
+          reportTerminal(
+            "unavailable",
+            authErrorStatus(cause),
+            cause instanceof AuthHandoffError ? cause.reasonCode : undefined,
+          );
           setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
           return;
         }

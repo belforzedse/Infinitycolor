@@ -144,11 +144,22 @@ export async function acceptMellatCallback(strapi: Strapi, body: Record<string, 
 
 type Lease = { attempt: any; state: MellatState; version: number; orderId: number };
 
+// A RefId alone cannot be inquired at the bank. Keep browser-only waiters
+// unresolved without treating abandonment as a bank-processing failure.
+const isCallbackWaiter = (state: MellatState): boolean =>
+  state.phase === "redirected" && typeof state.refId === "string" && state.refId.length > 0 &&
+  state.responses?.pay?.resCode === 0 && state.responses.pay.ambiguous === false &&
+  !state.saleReferenceId && !state.callbackAt && !state.callbackCode &&
+  !state.stockProtected && !state.pendingOperation && !state.processingStartedAt &&
+  !state.verifiedAt && !state.settledAt && !state.reversedAt &&
+  !(["verify", "settle", "inquiry", "reverse"] as const).some((operation) => state.responses?.[operation]);
+
 async function claim(strapi: Strapi, id: number): Promise<Lease | null> {
   return inAttemptTransaction(strapi, id, async (attempt, trx) => {
     const state = readMellatState(attempt);
     if (!state || attempt.Status === "Succeeded" || state.phase === "completed" ||
-        (["Failed", "Cancelled"].includes(attempt.Status) && !attempt.nextAction)) return null;
+        (["Failed", "Cancelled"].includes(attempt.Status) && !attempt.nextAction) ||
+        (isCallbackWaiter(state) && !attempt.nextAction)) return null;
     if (attempt.leaseUntil && new Date(attempt.leaseUntil).getTime() > Date.now()) return null;
     const version = Number(attempt.leaseVersion || 0) + 1;
     const nextState = { ...state };
@@ -159,6 +170,24 @@ async function claim(strapi: Strapi, id: number): Promise<Lease | null> {
     }, trx);
     return { attempt, state: nextState, version, orderId: idOf(attempt.order) };
   });
+}
+
+async function parkCallbackWaiter(strapi: Strapi, lease: Lease) {
+  const retry = await inAttemptTransaction(strapi, Number(lease.attempt.id), async (attempt, trx) => {
+    if (Number(attempt.leaseVersion) !== lease.version || !attempt.leaseUntil ||
+        new Date(attempt.leaseUntil).getTime() <= Date.now() || attempt.Status === "Succeeded") return false;
+    const state = readMellatState(attempt)!;
+    // A callback can commit after claim. Release the lease and deliver another
+    // job: the callback's original job may already have observed our live lease.
+    const needsRecovery = !isCallbackWaiter(state);
+    await save(strapi, attempt, state, {
+      nextAction: needsRecovery ? "mellat_reconcile" : null,
+      nextActionAt: needsRecovery ? new Date() : null,
+      leaseUntil: null, lastReconciledAt: new Date(),
+    }, trx);
+    return needsRecovery;
+  });
+  if (retry) await enqueueSafely(strapi, Number(lease.attempt.id));
 }
 
 async function persistLease(
@@ -208,7 +237,12 @@ async function protectStock(strapi: Strapi, lease: Lease): Promise<boolean> {
     if (order.Status !== "Paying" || order.ReservationStatus !== "Reserved" ||
         !order.ReservedUntil || new Date(order.ReservedUntil).getTime() <= Date.now()) return false;
     if (Number(attempt.WalletAmount || 0) > 0 && attempt.WalletHoldStatus !== "Active") return false;
-    const nextState: MellatState = { ...state, stockProtected: true, phase: "verifying", processingStartedAt: nowIso() };
+    const nextState: MellatState = {
+      ...state, stockProtected: true, phase: "verifying",
+      processingStartedAt: state.processingStartedAt || nowIso(),
+      // Old browser-only retries may have alerted before any bank processing.
+      alertedAt: state.processingStartedAt ? state.alertedAt : undefined,
+    };
     await save(strapi, attempt, nextState, { Status: "Unknown" }, trx);
     lease.state = nextState;
     return true;
@@ -285,6 +319,7 @@ async function finalize(strapi: Strapi, lease: Lease) {
 export async function processMellatAttempt(strapi: Strapi, attemptId: number): Promise<void> {
   const lease = await claim(strapi, attemptId);
   if (!lease) return;
+  if (isCallbackWaiter(lease.state)) { await parkCallbackWaiter(strapi, lease); return; }
   if (lease.state.terminalFingerprint !== mellatTerminalFingerprint()) {
     await defer(strapi, lease, "MELLAT_TERMINAL_CHANGED"); return;
   }
@@ -310,7 +345,10 @@ export async function processMellatAttempt(strapi: Strapi, attemptId: number): P
         await defer(strapi, lease, "MELLAT_SETTLEMENT_WITHOUT_STOCK_REFUSED"); return;
       }
       const phase = action === "verify" ? "verifying" : action === "settle" ? "settling" : action === "reverse" ? "reversing" : lease.state.phase;
-      if (!(await persistLease(strapi, lease, { phase, pendingOperation: action }, {
+      if (!(await persistLease(strapi, lease, {
+        phase, pendingOperation: action,
+        ...(!lease.state.processingStartedAt ? { processingStartedAt: nowIso(), alertedAt: undefined } : {}),
+      }, {
         leaseUntil: new Date(Date.now() + MELLAT_LEASE_MS),
       }))) return;
       const method = { verify: "verifyTransaction", settle: "settleTransaction", inquiry: "inquiryTransaction", reverse: "reverseTransaction" }[action];
@@ -354,7 +392,7 @@ export async function reconcileMellatOrder(strapi: Strapi, orderId: number) {
   if (!attempt) return;
   const queued = await inAttemptTransaction(strapi, Number(attempt.id), async (current, trx) => {
     const state = readMellatState(current);
-    if (!state || current.Status === "Succeeded" ||
+    if (!state || current.Status === "Succeeded" || isCallbackWaiter(state) ||
         (state.phase === "reversed" && state.reversedAt && current.Status === "Cancelled")) return false;
     await save(strapi, current, state, { nextAction: "mellat_reconcile", nextActionAt: new Date() }, trx);
     return true;
