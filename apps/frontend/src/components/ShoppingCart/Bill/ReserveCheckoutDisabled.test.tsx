@@ -20,6 +20,7 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/central-auth", () => ({
   centralAuth: { tokenManager: { getToken: jest.fn().mockResolvedValue("token") } },
   centralLoginUrl: jest.fn(() => "http://localhost:2889/auth"),
+  readAuthStateVersion: jest.fn(() => 0),
 }));
 
 jest.mock("@/contexts/CartContext", () => ({
