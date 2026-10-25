@@ -23,6 +23,18 @@ describe("color catalog relation identity", () => {
       { title: "قرمز", colorCode: "#f00", ids: [13] },
     ]);
     expect(fetchWithTimeout).toHaveBeenCalledTimes(2);
+    const params = new URL(String(jest.mocked(fetchWithTimeout).mock.calls[0][0])).searchParams;
+    expect(params.get("sort[1]")).toBe("id:asc");
+  });
+
+  it("retains title matching when the catalog exceeds the page cap", async () => {
+    jest.mocked(fetchWithTimeout).mockImplementation(async () => ({
+      ok: true, json: async () => ({
+        data: [{ id: 11, Title: "آبی" }], meta: { pagination: { pageCount: 9 } },
+      }),
+    }) as Response);
+    expect(await getProductVariationColors()).toEqual([{ title: "آبی", colorCode: null }]);
+    expect(fetchWithTimeout).toHaveBeenCalledTimes(8);
   });
 
   it("retains title semantics when any matching relation lacks a trustworthy ID", async () => {

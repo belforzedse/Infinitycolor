@@ -53,32 +53,22 @@ export async function updateRouteHint(
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<void> {
   const controller = new AbortController();
-  let rejectDeadline!: (error: AuthHandoffError) => void;
-  const deadline = new Promise<never>((_, reject) => {
-    rejectDeadline = reject;
-  });
-  const timeout = setTimeout(() => {
-    rejectDeadline(new AuthHandoffError("Route hint update timed out", 503, "timeout"));
-    controller.abort();
-  }, 5_000);
+  const timeout = setTimeout(() => controller.abort(), 5_000);
   try {
-    // The deadline must settle even if a browser fetch wrapper ignores abort.
-    // Promise.race also observes a later rejection from the cancelled fetch.
-    const response = await Promise.race([
-      fetchImpl("/api/auth/route-hint", {
-        method,
-        credentials: "same-origin",
-        cache: "no-store",
-        signal: controller.signal,
-      }),
-      deadline,
-    ]);
+    const response = await fetchImpl("/api/auth/route-hint", {
+      method,
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: controller.signal,
+    });
     if (!response.ok) {
       throw new AuthHandoffError("Route hint update failed", response.status);
     }
   } catch (error) {
     if (error instanceof AuthHandoffError) throw error;
-    throw new AuthHandoffError("Route hint update unavailable", 503, "network");
+    throw new AuthHandoffError(
+      "Route hint update unavailable", 503, controller.signal.aborted ? "timeout" : "network",
+    );
   } finally {
     clearTimeout(timeout);
   }

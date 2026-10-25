@@ -14,7 +14,6 @@ import { finalizeToOrderHandler } from "./handlers/finalizeToOrder";
 import { shippingPreviewHandler } from "./handlers/shippingPreview";
 import { shippingOptionsHandler } from "./handlers/shippingOptions";
 import { checkoutQuoteHandler } from "./handlers/checkoutQuote";
-import { checkoutAttemptHandler } from "./handlers/checkoutAttempt";
 import { mergeGuestCartHandler } from "./handlers/mergeGuestCart";
 import { findCartReportHandler } from "./handlers/findCartReport";
 import { requireCapability } from "../../../utils/adminAuthorization";
@@ -61,10 +60,6 @@ export default factories.createCoreController(
 
     async checkoutQuote(ctx) {
       return checkoutQuoteHandler(strapi)(ctx);
-    },
-
-    async checkoutAttempt(ctx) {
-      return checkoutAttemptHandler(strapi)(ctx);
     },
 
     async shippingPreview(ctx) {

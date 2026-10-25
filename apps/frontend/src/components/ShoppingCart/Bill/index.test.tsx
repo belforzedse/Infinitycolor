@@ -1,12 +1,9 @@
 import React from "react";
-import { webcrypto } from "node:crypto";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import ShoppingCartBillForm from ".";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { CartService } from "@/services";
-import { AUTH_STATE_EVENT } from "@repo/auth-core/contracts";
-import { readAuthStateVersion } from "@/lib/central-auth";
 import WalletService from "@/services/wallet";
 
 const mockPush = jest.fn();
@@ -38,7 +35,6 @@ jest.mock("@/lib/central-auth", () => ({
     },
   },
   centralLoginUrl: jest.fn(() => "http://localhost:2889/auth"),
-  readAuthStateVersion: jest.fn(() => 0),
 }));
 
 const mockedCentralAuth = jest.requireMock("@/lib/central-auth") as {
@@ -106,7 +102,6 @@ jest.mock("@/services", () => ({
     getSnappEligible: jest.fn().mockResolvedValue({ eligible: false }),
     applyDiscount: jest.fn(),
     checkCartStock: jest.fn().mockResolvedValue({ valid: true }),
-    getCheckoutAttempt: jest.fn().mockResolvedValue({ success: true, lookup: "missing" }),
     getCheckoutQuote: jest.fn(),
     finalizeCart: jest.fn(),
   },
@@ -145,8 +140,6 @@ jest.mock("./InformationForm", () => ({
       >
         select customer
       </button>
-      <button type="button" data-testid="change-checkout-notes" onClick={() => setValue("notes", "changed note")}>change notes</button>
-      <button type="button" data-testid="change-checkout-address" onClick={() => setValue("address", { id: 99, label: "Other address" })}>change address</button>
     </div>
   ),
 }));
@@ -297,8 +290,6 @@ describe("ShoppingCartBillForm auth gate", () => {
       ],
     };
     jest.clearAllMocks();
-    jest.mocked(readAuthStateVersion).mockReturnValue(0);
-    (CartService.getCheckoutAttempt as jest.Mock).mockReset().mockResolvedValue({ success: true, lookup: "missing" });
     mockRefreshCart.mockResolvedValue(undefined);
     mockPush.mockReset();
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
@@ -733,7 +724,6 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(localStorage.getItem("pendingOrderId")).toBe("91");
     expect(localStorage.getItem("pendingPaymentAttemptId")).toBe("attempt-resume");
     expect(localStorage.getItem("pendingCheckoutAttemptId")).toBeTruthy();
-    expect(screen.getByTestId("checkout-submit")).toBeDisabled();
   });
 
   it("on bfcache restore only unsticks پرداخت and does not auto-redirect to SnappPay", async () => {
@@ -1411,7 +1401,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(window.localStorage.getItem("pendingPaymentAttemptId")).toBeTruthy();
   });
 
-  it("checks an unknown checkout without replaying finalize when the attempt is not yet visible", async () => {
+  it("retries checkout from تلاش دوباره instead of only dismissing the banner", async () => {
     window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
     window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
     await submitCheckoutWithError("PAYMENT_UNKNOWN");
@@ -1423,10 +1413,9 @@ describe("ShoppingCartBillForm auth gate", () => {
 
     fireEvent.click(screen.getByTestId("checkout-error-retry"));
 
-    await waitFor(() => expect(CartService.getCheckoutAttempt).toHaveBeenCalledWith("live-attempt"));
-    expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-    expect(CartService.getCheckoutQuote).toHaveBeenCalledTimes(1);
-    expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe("sha256:failing-quote");
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("opens the payment result page when an in-progress SnapPay 409 names the order", async () => {
@@ -2120,7 +2109,6 @@ describe("ShoppingCartBillForm auth gate", () => {
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: false,
       message: "stop-after-request",
-      errorCode: "SHIPPING_VALIDATION_FAILED",
     });
 
     const store = createStore();
@@ -2223,7 +2211,6 @@ describe("ShoppingCartBillForm auth gate", () => {
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: false,
       message: "stop-after-request",
-      errorCode: "SHIPPING_VALIDATION_FAILED",
     });
 
     const store = createStore();
@@ -2274,277 +2261,6 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(express.attemptId).not.toBe(first.attemptId);
     expect(express.quoteHash).toBe("sha256:express-shipping");
     expect(express.shipping).toBe(8);
-  });
-
-  describe("payment navigation and unanswered finalize recovery", () => {
-    const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
-    beforeEach(() => {
-      Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
-      jest.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => undefined);
-      (CartService.getCheckoutQuote as jest.Mock).mockReset().mockResolvedValue({
-        quoteHash: "sha256:handoff",
-        financialSummary: { total: 120_000 },
-      });
-      (CartService.finalizeCart as jest.Mock).mockReset().mockResolvedValue({
-        success: true, orderId: 91, redirectUrl: "https://bank.example/pay", redirectMethod: "POST", formFields: { RefId: "opaque-reference" },
-      });
-    });
-    afterEach(() => {
-      if (originalCrypto) Object.defineProperty(globalThis, "crypto", originalCrypto);
-      jest.requireMock("@/lib/analytics").getAnalyticsCorrelationId.mockReturnValue("guest-test-correlation");
-      jest.restoreAllMocks();
-      jest.useRealTimers();
-    });
-    async function prepareCheckout() {
-      const store = createStore();
-      store.set(currentUserAtom, { id: 1 });
-      store.set(userLoadingAtom, false);
-      const view = render(<Provider store={store}><ShoppingCartBillForm /></Provider>);
-      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
-      fireEvent.click(screen.getByTestId("select-checkout-customer"));
-      fireEvent.click(screen.getByTestId("select-shipping"));
-      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
-      return { ...view, store };
-    }
-    const foundAttempt = () => ({
-      success: true, lookup: "found", attempt: {
-        attemptId: localStorage.getItem("pendingCheckoutAttemptId"), quoteHash: "sha256:handoff", orderId: 91, status: "Redirected",
-      },
-    });
-
-    it("holds the submit guard after POST handoff, ordinary pageshow and pagehide", async () => {
-      const view = await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await waitFor(() => expect(HTMLFormElement.prototype.submit).toHaveBeenCalledTimes(1));
-      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
-      window.dispatchEvent(new Event("pageshow"));
-      window.dispatchEvent(new Event("pagehide"));
-      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
-      fireEvent.submit(view.container.querySelector("form")!);
-      await act(async () => { await Promise.resolve(); });
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-    });
-
-    it("sends a stalled navigation to the known order after ten visible seconds without finalizing again", async () => {
-      jest.useFakeTimers();
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await waitFor(() => expect(HTMLFormElement.prototype.submit).toHaveBeenCalledTimes(1));
-      await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
-      expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=91");
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
-    });
-
-    it("unlocks a persisted pageshow and checks the old order before another payment", async () => {
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await waitFor(() => expect(HTMLFormElement.prototype.submit).toHaveBeenCalled());
-      (CartService.getCheckoutAttempt as jest.Mock).mockResolvedValue(foundAttempt());
-      const restored = new Event("pageshow");
-      Object.defineProperty(restored, "persisted", { value: true });
-      act(() => { window.dispatchEvent(restored); });
-      expect(screen.getByTestId("checkout-submit")).toBeEnabled();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=91"));
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-    });
-
-    it.each(["incomplete", "blocked"])("opens the known order when the POST handoff is %s", async (failure) => {
-      if (failure === "incomplete") {
-        (CartService.finalizeCart as jest.Mock).mockResolvedValue({ success: true, orderId: 91, redirectUrl: "https://bank.example/pay", redirectMethod: "POST", formFields: {} });
-      } else {
-        jest.mocked(HTMLFormElement.prototype.submit).mockImplementationOnce(() => { throw new Error("navigation blocked"); });
-      }
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=91"));
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
-    });
-
-    it("reconstructs only an identical request after reload and replays the same attempt after a missing lookup", async () => {
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      const first = await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      const attemptId = localStorage.getItem("pendingCheckoutAttemptId");
-      first.unmount();
-      jest.requireMock("@/lib/analytics").getAnalyticsCorrelationId.mockReturnValue("reloaded-correlation");
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      expect(CartService.getCheckoutAttempt).toHaveBeenCalledWith(attemptId);
-      expect(CartService.getCheckoutQuote).toHaveBeenCalledTimes(1);
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(2);
-      expect((CartService.finalizeCart as jest.Mock).mock.calls[1][0]).toEqual({
-        ...(CartService.finalizeCart as jest.Mock).mock.calls[0][0], analyticsCorrelationId: "reloaded-correlation",
-      });
-      expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(attemptId);
-      expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe("sha256:handoff");
-      (CartService.getCheckoutAttempt as jest.Mock).mockResolvedValue(foundAttempt());
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=91"));
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(2);
-    });
-
-    it.each([
-      { success: true, lookup: "found", attempt: { attemptId: "mismatch", quoteHash: "sha256:handoff", status: "Unknown" } },
-      { success: false, lookup: "unavailable" },
-    ])("blocks another finalize for an unresolved lookup %j", async (lookup) => {
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      (CartService.getCheckoutAttempt as jest.Mock).mockResolvedValue(lookup);
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("نتیجه پرداخت قبلی هنوز مشخص نیست"));
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-      expect(localStorage.getItem("pendingCheckoutFinalization")).toBeTruthy();
-    });
-
-    it.each(["change-checkout-notes", "change-checkout-address"])("keeps a locally cancelled unresolved attempt when %s changes", async (control) => {
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      const attemptId = localStorage.getItem("pendingCheckoutAttemptId");
-      (CartService.getCheckoutAttempt as jest.Mock).mockResolvedValue({ success: true, lookup: "found", attempt: {
-        attemptId, quoteHash: "sha256:handoff", status: "Cancelled",
-      } });
-      fireEvent.click(screen.getByTestId(control));
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("نتیجه پرداخت قبلی هنوز مشخص نیست"));
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-      expect(CartService.getCheckoutQuote).toHaveBeenCalledTimes(1);
-      expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(attemptId);
-      expect(localStorage.getItem("pendingCheckoutFinalization")).toBeTruthy();
-    });
-
-    it("fails closed when a reload changes the recipient or cryptographic hashing is unavailable", async () => {
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      const first = await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      const marker = localStorage.getItem("pendingCheckoutFinalization")!;
-      expect(marker).not.toContain("09123456789");
-      expect(marker).not.toContain("حدیث");
-      first.unmount();
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("change-checkout-address"));
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-      Object.defineProperty(globalThis, "crypto", { configurable: true, value: {} });
-      fireEvent.click(screen.getByTestId("select-checkout-customer"));
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("نتیجه پرداخت قبلی هنوز مشخص نیست"));
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-    });
-
-    it("discards a late lookup and marker after logout", async () => {
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      let resolve!: (value: unknown) => void;
-      (CartService.getCheckoutAttempt as jest.Mock).mockImplementation(() => new Promise((r) => { resolve = r; }));
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(CartService.getCheckoutAttempt).toHaveBeenCalled());
-      const result = foundAttempt();
-      act(() => {
-        jest.mocked(readAuthStateVersion).mockReturnValue(1);
-        window.dispatchEvent(new CustomEvent(AUTH_STATE_EVENT, { detail: { type: "logout", at: Date.now() } }));
-      });
-      await act(async () => resolve(result));
-      expect(mockPush).not.toHaveBeenCalled();
-      expect(localStorage.getItem("pendingCheckoutFinalization")).toBeNull();
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-    });
-
-    it("retains the original identity after replay 409 and never re-quotes a new attempt", async () => {
-      (CartService.finalizeCart as jest.Mock)
-        .mockRejectedValueOnce(new TypeError("response lost while original is still running"))
-        .mockRejectedValue({ status: 409, errorCode: "CHECKOUT_QUOTE_CHANGED", data: {
-          errorCode: "CHECKOUT_QUOTE_CHANGED", quote: { quoteHash: "sha256:new", financialSummary: { total: 130_000 } },
-        } });
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      const original = (CartService.finalizeCart as jest.Mock).mock.calls[0][0];
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalledTimes(2));
-      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeEnabled());
-      expect(localStorage.getItem("pendingCheckoutFinalization")).toBeTruthy();
-      expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(original.attemptId);
-      expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe(original.quoteHash);
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalledTimes(3));
-      expect((CartService.finalizeCart as jest.Mock).mock.calls.map(([body]) => body)).toEqual([original, original, original]);
-      expect(CartService.getCheckoutQuote).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not replay a form changed while its lookup is pending", async () => {
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      await prepareCheckout();
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      let resolve!: (value: unknown) => void;
-      (CartService.getCheckoutAttempt as jest.Mock).mockImplementation(() => new Promise((r) => { resolve = r; }));
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(CartService.getCheckoutAttempt).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("change-checkout-notes"));
-      await act(async () => resolve({ success: true, lookup: "missing" }));
-      await waitFor(() => expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("نتیجه پرداخت قبلی هنوز مشخص نیست"));
-      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
-      expect(localStorage.getItem("pendingCheckoutFinalization")).toBeTruthy();
-    });
-
-    it("restores a wallet replacement with the same predecessor after reload", async () => {
-      (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({ gateways: ["wallet", "mellat"], paymentCapabilities: {
-        walletEnabled: true, splitEnabled: true, splitDisabledReason: null, splitGateways: ["mellat"], gatewayMinimumsToman: { mellat: 1_000 },
-      } });
-      (WalletService.getMyWallet as jest.Mock).mockResolvedValue({ success: true, data: {
-        balance: 1_200_000, heldBalance: 1_200_000, availableBalance: 0, reusableBalance: 1_200_000,
-      } });
-      localStorage.setItem("pendingCheckoutAttemptId", "original-wallet-attempt");
-      localStorage.setItem("pendingCheckoutQuoteHash", "sha256:old-wallet");
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      const first = await prepareCheckout();
-      await waitFor(() => expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible());
-      fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      const original = (CartService.finalizeCart as jest.Mock).mock.calls[0][0];
-      expect(original.supersedeAttemptId).toBe("original-wallet-attempt");
-      first.unmount();
-      await prepareCheckout();
-      await waitFor(() => expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible());
-      fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalledTimes(2));
-      expect((CartService.finalizeCart as jest.Mock).mock.calls[1][0]).toEqual(original);
-      expect(CartService.getCheckoutQuote).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not let an older stock poll erase a newer unanswered finalize", async () => {
-      let resolveStock!: (value: unknown) => void;
-      (CartService.checkCartStock as jest.Mock)
-        .mockImplementationOnce(() => new Promise((resolve) => { resolveStock = resolve; }))
-        .mockResolvedValue({ valid: true });
-      (CartService.finalizeCart as jest.Mock).mockRejectedValue(new TypeError("connection lost"));
-      await prepareCheckout();
-      await waitFor(() => expect(CartService.checkCartStock).toHaveBeenCalledTimes(1));
-      fireEvent.click(screen.getByTestId("checkout-submit"));
-      await screen.findByTestId("checkout-form-error");
-      const attemptId = localStorage.getItem("pendingCheckoutAttemptId");
-      await act(async () => resolveStock({ valid: true, reservationOutcome: "expired" }));
-      expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(attemptId);
-      expect(localStorage.getItem("pendingCheckoutFinalization")).toBeTruthy();
-      fireEvent.click(screen.getByTestId("checkout-error-retry"));
-      await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalledTimes(2));
-      expect((CartService.finalizeCart as jest.Mock).mock.calls[1][0]).toEqual((CartService.finalizeCart as jest.Mock).mock.calls[0][0]);
-    });
   });
 
   describe("analytics", () => {
@@ -2617,4 +2333,42 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(captureCheckoutMessage).not.toHaveBeenCalled();
     });
   });
+
+  describe("payment handoff submit guard", () => {
+    beforeEach(() => {
+      jest.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => undefined);
+      (CartService.getCheckoutQuote as jest.Mock).mockReset().mockResolvedValue({
+        quoteHash: "sha256:handoff", financialSummary: { total: 120_000 },
+      });
+      (CartService.finalizeCart as jest.Mock).mockReset().mockResolvedValue({
+        success: true, orderId: 91, redirectUrl: "https://bank.example/pay",
+        redirectMethod: "POST", formFields: { RefId: "opaque-reference" },
+      });
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it("blocks another finalize during handoff and unlocks on bfcache return", async () => {
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      const view = render(<Provider store={store}><ShoppingCartBillForm /></Provider>);
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+      await waitFor(() => expect(HTMLFormElement.prototype.submit).toHaveBeenCalledTimes(1));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+      act(() => window.dispatchEvent(new Event("pageshow")));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+      fireEvent.submit(view.container.querySelector("form")!);
+      await act(async () => { await Promise.resolve(); });
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+      const restored = new Event("pageshow");
+      Object.defineProperty(restored, "persisted", { value: true });
+      act(() => window.dispatchEvent(restored));
+      expect(screen.getByTestId("checkout-submit")).toBeEnabled();
+    });
+  });
+
 });

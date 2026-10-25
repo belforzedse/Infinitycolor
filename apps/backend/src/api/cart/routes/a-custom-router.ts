@@ -70,14 +70,6 @@ export default {
       },
     },
     {
-      method: "GET",
-      path: "/carts/checkout-attempt",
-      handler: "cart.checkoutAttempt",
-      config: {
-        auth: { scope: [] },
-      },
-    },
-    {
       method: "POST",
       path: "/carts/finalize",
       handler: "cart.finalizeToOrder",

@@ -3,7 +3,6 @@ export const CHECKOUT_QUOTE_STORAGE_KEY = "pendingCheckoutQuoteHash";
 export const CHECKOUT_ORDER_STORAGE_KEY = "pendingCheckoutOrderId";
 export const CHECKOUT_GATEWAY_STORAGE_KEY = "pendingCheckoutGateway";
 export const CHECKOUT_SIGNATURE_STORAGE_KEY = "pendingCheckoutCartSignature";
-export const CHECKOUT_FINALIZATION_STORAGE_KEY = "pendingCheckoutFinalization";
 export const CONTINUABLE_ATTEMPT_STORAGE_KEY = "continuableCheckoutAttemptId";
 export const CONTINUABLE_QUOTE_STORAGE_KEY = "continuableCheckoutQuoteHash";
 export const CONTINUABLE_ORDER_STORAGE_KEY = "continuableCheckoutOrderId";
@@ -16,29 +15,6 @@ export type CheckoutIdentity = {
   gateway?: string;
   cartSignature?: string;
 };
-export type PendingCheckoutFinalization = CheckoutIdentity & { requestFingerprint?: string; supersedeAttemptId?: string };
-
-/** Only this opaque digest is persisted; request bodies remain in memory. */
-export async function checkoutRequestFingerprint(body: unknown, cartSignature: string): Promise<string | null> {
-  const canonical = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(canonical);
-    if (value && typeof value === "object")
-      return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]));
-    return value;
-  };
-  try {
-    if (!globalThis.crypto?.subtle) return null;
-    // Attribution may change on reload; it cannot change an order or payment.
-    const orderBody = body && typeof body === "object"
-      ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== "analyticsCorrelationId"))
-      : body;
-    const normalized = JSON.parse(JSON.stringify({ body: orderBody, cartSignature }));
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(canonical(normalized))));
-    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  } catch {
-    return null;
-  }
-}
 
 /** Server-confirmed live Paying reservation that may be replayed. */
 export type ResumableCheckoutIdentity = {
@@ -126,53 +102,6 @@ export function clearCheckoutIdentity(): void {
   writeKey(CHECKOUT_ORDER_STORAGE_KEY, undefined);
   writeKey(CHECKOUT_GATEWAY_STORAGE_KEY, undefined);
   writeKey(CHECKOUT_SIGNATURE_STORAGE_KEY, undefined);
-  clearPendingCheckoutFinalization();
-}
-
-/** An unanswered finalize is not permission to mint a new payment attempt. */
-export function markPendingCheckoutFinalization(ownerId: string | number | undefined, requestFingerprint?: string | null, supersedeAttemptId?: string): void {
-  const identity = readCheckoutIdentity();
-  if (!identity) return;
-  writeKey(CHECKOUT_FINALIZATION_STORAGE_KEY, JSON.stringify({
-    attemptId: identity.attemptId,
-    quoteHash: identity.quoteHash,
-    ownerId: String(ownerId || ""),
-    requestFingerprint: requestFingerprint || undefined,
-    supersedeAttemptId,
-  }));
-}
-
-export function clearPendingCheckoutFinalization(): void {
-  writeKey(CHECKOUT_FINALIZATION_STORAGE_KEY, undefined);
-}
-
-export function readPendingCheckoutFinalization(
-  ownerId: string | number | undefined,
-): PendingCheckoutFinalization | null {
-  const value = readKey(CHECKOUT_FINALIZATION_STORAGE_KEY);
-  if (!value) return null;
-  try {
-    const marker = JSON.parse(value) as { attemptId?: string; quoteHash?: string; ownerId?: string; requestFingerprint?: string; supersedeAttemptId?: string };
-    const identity = readCheckoutIdentity();
-    if (
-      identity &&
-      marker.attemptId === identity.attemptId &&
-      marker.quoteHash === identity.quoteHash &&
-      (ownerId === undefined || marker.ownerId === String(ownerId))
-    ) return {
-      ...identity,
-      requestFingerprint: /^[a-f0-9]{64}$/.test(marker.requestFingerprint || "") ? marker.requestFingerprint : undefined,
-      supersedeAttemptId: typeof marker.supersedeAttemptId === "string" ? marker.supersedeAttemptId : undefined,
-    };
-    if (ownerId !== undefined && marker.ownerId !== String(ownerId)) {
-      clearCheckoutIdentity();
-      return null;
-    }
-  } catch {
-    // Invalid or replaced local state cannot authorize replaying an old attempt.
-  }
-  clearPendingCheckoutFinalization();
-  return null;
 }
 
 export function clearContinuableCheckoutIdentity(): void {

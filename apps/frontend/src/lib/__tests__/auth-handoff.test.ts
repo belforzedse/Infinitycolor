@@ -37,35 +37,12 @@ describe("auth handoff recovery", () => {
     await expect(updateRouteHint("PUT", fetchImpl)).rejects.toMatchObject({ status: 403 });
   });
 
-  it("settles the deadline even when fetch ignores cancellation", async () => {
-    let rejectFetch!: (error: Error) => void;
-    const fetchImpl = jest.fn<typeof fetch>(() => new Promise((_resolve, reject) => { rejectFetch = reject; }));
-    let failure: unknown;
-    const pending = updateRouteHint("PUT", fetchImpl).catch((error) => {
-      failure = error;
-    });
-
-    await jest.advanceTimersByTimeAsync(5_000);
-
-    expect(failure).toMatchObject({
-      name: "AuthHandoffError",
-      status: 503,
-      reasonCode: "timeout",
-    });
-    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
-    await pending;
-    rejectFetch(new DOMException("late rejection", "AbortError"));
-    await Promise.resolve();
-  });
-
-  it("returns a typed transport failure without hiding HTTP rejection", async () => {
+  it("distinguishes a transport failure from an HTTP rejection", async () => {
     const fetchImpl = jest.fn<typeof fetch>().mockRejectedValue(new TypeError("private URL"));
-
     await expect(updateRouteHint("DELETE", fetchImpl)).rejects.toMatchObject({
-      name: "AuthHandoffError",
-      status: 503,
-      reasonCode: "network",
+      name: "AuthHandoffError", status: 503, reasonCode: "network",
     });
     expect(jest.getTimerCount()).toBe(0);
   });
+
 });

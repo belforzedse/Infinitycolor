@@ -53,10 +53,11 @@ export default function AuthCompleteClient({
       const key = `${stage}:${outcome}`;
       if (reportedTerminal.current.has(key)) return;
       reportedTerminal.current.add(key);
+      const responseStatus = reasonCode && reasonCode !== "http_failure" ? undefined : status;
       try {
         Sentry.captureException(new AuthHandoffError("Session recovery failed", status ?? 503), {
           tags: { area: "auth", operation: "complete", outcome, failure_stage: stage },
-          extra: { attempt, http_status: status, reasonCode },
+          extra: { attempt, http_status: responseStatus, reasonCode },
           fingerprint: ["auth", "complete", stage, outcome],
         });
       } catch {
@@ -127,7 +128,7 @@ export default function AuthCompleteClient({
           retry_count: attempt,
           operation: "complete",
           outcome: authErrorStatus(cause) === 401 ? "unauthenticated" : "unavailable",
-          http_status: authErrorStatus(cause),
+          http_status: reasonCode && reasonCode !== "http_failure" ? undefined : authErrorStatus(cause),
           reasonCode,
         });
         if (authErrorStatus(cause) !== 401) {

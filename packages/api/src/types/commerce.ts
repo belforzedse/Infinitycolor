@@ -175,20 +175,6 @@ export interface FinalizeCartRequest extends CheckoutQuoteRequest {
   quoteHash: string;
 }
 
-/** Point-in-time, owner-scoped lookup; missing is not proof that an in-flight request stopped. */
-export type CheckoutAttemptLookupResponse =
-  | { success: true; lookup: "missing" }
-  | {
-      success: true;
-      lookup: "found";
-      attempt: {
-        attemptId: string;
-        quoteHash: string;
-        status: PaymentAttemptStatus;
-        orderId?: number;
-      };
-    };
-
 export interface FinalizeCartResponse {
   success: boolean;
   message: string;

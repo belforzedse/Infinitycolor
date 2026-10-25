@@ -154,3 +154,15 @@ it("keeps the token failure status and bounded reason in terminal diagnostics", 
   expect(centralAuth.tokenManager.expire).not.toHaveBeenCalled();
   expect(updateRouteHint).not.toHaveBeenCalled();
 });
+
+it.each(["network", "timeout"] as const)("does not label token %s as a received HTTP 503", async (reasonCode) => {
+  jest.mocked(centralAuth.tokenManager.getTokenOutcome).mockResolvedValueOnce({
+    state: "unavailable", reasonCode,
+  });
+  render(<AuthCompleteClient returnPath="/checkout" attempt={0} />);
+  await screen.findByRole("alert");
+  expect(Sentry.captureException).toHaveBeenCalledWith(
+    expect.any(Error),
+    expect.objectContaining({ extra: expect.objectContaining({ http_status: undefined, reasonCode }) }),
+  );
+});

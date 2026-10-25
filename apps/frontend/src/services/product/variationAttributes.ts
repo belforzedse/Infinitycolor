@@ -48,16 +48,18 @@ function readColorCode(entity: StrapiEntity): string | null {
   return typeof code === "string" && code.trim() ? code.trim() : null;
 }
 
-async function fetchCollectionPages(path: string, revalidate?: number): Promise<StrapiEntity[]> {
+async function fetchCollectionPages(path: string, revalidate?: number): Promise<{ items: StrapiEntity[]; complete: boolean }> {
   const isServerSide = typeof window === "undefined";
   const baseUrl = isServerSide ? getStrapiServerUrl() : API_BASE_URL;
   const items: StrapiEntity[] = [];
+  let complete = false;
 
   for (let page = 1, pageCount = 1; page <= pageCount && page <= MAX_PAGES; page += 1) {
     const params = new URLSearchParams();
     params.set("pagination[page]", String(page));
     params.set("pagination[pageSize]", String(PAGE_SIZE));
-    params.set("sort", "Title:asc");
+    params.set("sort[0]", "Title:asc");
+    params.set("sort[1]", "id:asc");
     if (!isServerSide) params.set("_skip_global_loader", "1");
 
     const url = `${baseUrl}${path}?${params.toString()}`;
@@ -82,17 +84,19 @@ async function fetchCollectionPages(path: string, revalidate?: number): Promise<
     const pageItems = Array.isArray(json.data) ? json.data : [];
     items.push(...pageItems);
     const nextPageCount = Number(json.meta?.pagination?.pageCount);
-    pageCount = Number.isFinite(nextPageCount) && nextPageCount > 0 ? nextPageCount : page;
+    if (!Number.isSafeInteger(nextPageCount) || nextPageCount <= 0) break;
+    pageCount = nextPageCount;
+    complete = page >= pageCount;
   }
 
-  return items;
+  return { items, complete };
 }
 
 export async function getProductVariationSizes(
   options: { revalidate?: number } = {},
 ): Promise<VariationSizeRecord[]> {
   try {
-    const items = await fetchCollectionPages(ENDPOINTS.PRODUCT.SIZES, options.revalidate);
+    const { items } = await fetchCollectionPages(ENDPOINTS.PRODUCT.SIZES, options.revalidate);
     const titles = items
       .map(readTitle)
       .filter((title): title is string => Boolean(title));
@@ -109,7 +113,7 @@ export async function getProductVariationColors(
   options: { revalidate?: number } = {},
 ): Promise<CatalogColor[]> {
   try {
-    const items = await fetchCollectionPages(ENDPOINTS.PRODUCT.COLORS, options.revalidate);
+    const { items, complete } = await fetchCollectionPages(ENDPOINTS.PRODUCT.COLORS, options.revalidate);
     const colors: CatalogColor[] = [];
     const byTitle = new Map<string, CatalogColor>();
     for (const item of items) {
@@ -117,9 +121,9 @@ export async function getProductVariationColors(
       if (!title) continue;
       const rawTitle = item.attributes?.Title ?? item.Title;
       const id = Number(item.id);
-      // Only replace exact-title matches with IDs. Unknown IDs or trimmed titles
-      // retain the existing title filter, including any duplicate relations.
-      const exactId = rawTitle === title && Number.isSafeInteger(id) && id > 0;
+      // IDs are exhaustive only after every catalog page was read. Otherwise
+      // retain exact-title matching, including duplicate relations outside the cap.
+      const exactId = complete && rawTitle === title && Number.isSafeInteger(id) && id > 0;
       const existing = byTitle.get(title);
       if (existing) {
         if (!exactId) delete existing.ids;

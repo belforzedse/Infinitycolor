@@ -1,7 +1,5 @@
 import {
   clearCheckoutIdentity,
-  markPendingCheckoutFinalization,
-  readPendingCheckoutFinalization,
   hydrateCheckoutIdentityFromServer,
   persistCheckoutOrder,
   readCheckoutAttemptId,
@@ -9,28 +7,10 @@ import {
   resolveCheckoutAttemptId,
   shouldResumeStoredCheckout,
 } from "../checkout-identity";
-import { clearUserStorage } from "@/utils/userStorage";
-jest.mock("@/lib/api-cache", () => ({ apiCache: { clearByPattern: jest.fn() } }));
 
 describe("checkout identity", () => {
   beforeEach(() => {
     window.localStorage.clear();
-  });
-
-  it("retains an unanswered finalize across reloads only for its owner and exact quote", () => {
-    const attempt = resolveCheckoutAttemptId({ quoteHash: "sha256:pending", cartSignature: "cart", cartIsEmpty: false, gateway: "mellat" });
-    markPendingCheckoutFinalization(1);
-    expect(readPendingCheckoutFinalization(1)).toMatchObject({ attemptId: attempt.attemptId, quoteHash: attempt.quoteHash });
-    expect(readPendingCheckoutFinalization(2)).toBeNull();
-    expect(readCheckoutIdentity()).toBeNull();
-  });
-
-  it.each([clearCheckoutIdentity, clearUserStorage])("clears unanswered finalize state with identity cleanup", (clear) => {
-    resolveCheckoutAttemptId({ quoteHash: "sha256:pending", cartSignature: "cart", cartIsEmpty: false });
-    markPendingCheckoutFinalization(1);
-    clear();
-    expect(readPendingCheckoutFinalization(1)).toBeNull();
-    expect(localStorage.getItem("pendingCheckoutFinalization")).toBeNull();
   });
 
   it("reuses the original attempt when the quote hash is unchanged", () => {
