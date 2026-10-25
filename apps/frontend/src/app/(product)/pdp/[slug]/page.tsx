@@ -19,7 +19,6 @@ import {
   productIdTag,
   productSlugTag,
 } from "@/constants/cacheTags";
-import { fetchCatalogJson, CatalogTransportError } from "@/lib/catalog-transport";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import logger from "@/utils/logger";
@@ -38,7 +37,6 @@ import {
   canonicalProductSlug,
   shouldRedirectToCanonicalSlug,
 } from "@/utils/productSlug";
-import { normalizeProductDetail } from "../normalizeProductDetail";
 import {
   fetchPdpProduct,
   PdpProductUnavailableError,
@@ -50,8 +48,6 @@ import {
 export const instant = false;
 
 const PDP_REVALIDATE_SECONDS = 30;
-const PDP_ID_FALLBACK_POPULATE_QUERY =
-  "populate[0]=CoverImage&populate[1]=Media&populate[2]=product_main_category&populate[3]=product_tags&populate[4]=product_variations&populate[5]=product_variations.product_stock&populate[6]=product_variations.product_variation_color&populate[7]=product_variations.product_variation_size&populate[8]=product_variations.product_variation_model&populate[9]=product_other_categories&populate[10]=product_size_helper&populate[11]=Files&populate[12]=product_faqs";
 
 /**
  * How a product lookup failed. The PDP must only render a 404 for `missing`;
@@ -457,7 +453,7 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
   const { slug } = await params;
 
   // Log for debugging (server-side logs appear in terminal)
-  logger.info("[PDP] Fetching product", { slug, timestamp: new Date().toISOString() });
+  logger.info("[PDP] Fetching product", { slug });
   const strapiBaseUrl = getStrapiServerUrl();
 
   // Verify the server-side Strapi URL is available (critical for server components)
@@ -476,7 +472,6 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
   const decodedSlug = decodeProductSlug(slug);
 
   // Fetch product data from API using server-safe fetch
-  const catalogDeadlineAt = Date.now() + 15_000;
   let productData: ProductDetail | null = null;
   let errorDetails: NonNullable<ProductLookupResult["errorDetails"]> = {};
 
@@ -553,79 +548,6 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
       status: errorDetails.status,
       stack: err?.stack,
     });
-
-    // Try ID fallback if slug looks like a number
-    // Use server-safe fetch instead of getProductById (which uses apiClient with localStorage)
-    const isNumericSlug = /^\d+$/.test(decodedSlug);
-    if (isNumericSlug && !productData && errorDetails.failure === "missing") {
-      logger.info("[PDP] Attempting ID-based fallback", { decodedSlug });
-      try {
-        // Server-safe fetch with the same shell fields used by the slug lookup.
-        const fallbackEndpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/${decodedSlug}?${PDP_ID_FALLBACK_POPULATE_QUERY}`;
-        const fallbackUrl = `${strapiBaseUrl}${fallbackEndpoint}`;
-
-        const {
-          response: fallbackResponse,
-          data: fallbackData,
-          requestId,
-        } = await fetchCatalogJson<{ data?: unknown }>(
-          fallbackUrl,
-          {
-            headers: { Accept: "application/json" },
-            next: {
-              revalidate: PDP_REVALIDATE_SECONDS,
-              tags: [PRODUCT_TAG, productIdTag(decodedSlug)],
-            },
-          },
-          "pdp_id",
-          { deadlineAt: catalogDeadlineAt },
-        );
-        if (!fallbackResponse.ok && fallbackResponse.status !== 404) {
-          errorDetails = {
-            failure: "unavailable",
-            failureStage: "response_status",
-            status: fallbackResponse.status,
-            requestId,
-          };
-        } else if (fallbackResponse.ok && !fallbackData?.data) {
-          errorDetails = {
-            failure: "unavailable",
-            failureStage: "response_normalization",
-            status: fallbackResponse.status,
-            requestId,
-          };
-        }
-        if (fallbackData?.data) {
-          productData = normalizeProductDetail(fallbackData.data);
-
-          // Check if product is trashed
-          const status = productData?.attributes?.Status;
-          const removedAt = productData?.attributes?.removedAt;
-          if (productData && (status !== "Active" || removedAt)) {
-            productData = null;
-            errorDetails = { failure: "missing", status: 404 };
-          }
-
-          logger.info("[PDP] Product found via ID fallback", { productId: productData?.id });
-        }
-      } catch (idError: unknown) {
-        errorDetails = {
-          failure: "unavailable",
-          failureStage:
-            idError instanceof CatalogTransportError
-              ? idError.failureStage
-              : "response_normalization",
-          status: idError instanceof CatalogTransportError ? idError.status : undefined,
-          requestId: idError instanceof CatalogTransportError ? idError.requestId : undefined,
-          cause: idError instanceof CatalogTransportError ? idError.cause : idError,
-        };
-        logger.error("[PDP] ID fallback also failed", {
-          decodedSlug,
-          failureStage: errorDetails.failureStage,
-          status: errorDetails.status,
-        });
-      }
-    }
   }
 
   // Missing/inactive products are durable 404s. Transport/server failures must

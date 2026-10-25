@@ -69,6 +69,7 @@ export default defineConfig({
     "storefront/static-parity.spec.ts",
     "storefront/forced-low-static-parity.spec.ts",
     "storefront/defects2.spec.ts",
+    "storefront/product-color-gallery.spec.ts",
   ],
   outputDir: "test-results",
   globalSetup: "./scripts/global-setup.ts",

@@ -41,6 +41,7 @@ const customJestConfig = {
     },
   },
   moduleDirectories: ["node_modules", "<rootDir>/"],
+  modulePathIgnorePatterns: ["<rootDir>/.next-color-gallery-check/"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     // `images.loaderFile` is wired by a webpack alias on this exact module at

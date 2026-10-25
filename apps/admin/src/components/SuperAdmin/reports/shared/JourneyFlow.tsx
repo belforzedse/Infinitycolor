@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ResponsiveContainer, Sankey } from "./charts";
 import { CATEGORICAL_PALETTE, CURSOR_COLOR, OTHER_COLOR } from "./chartTheme";
-import { buildJourneyFlow, type JourneyNode, type JourneyRow } from "./journeyFlow";
+import {
+  buildJourneyFlow,
+  type JourneyNode,
+  type JourneyRow,
+} from "./buildJourneyFlow";
+import type { JourneyLink } from "./buildJourneyFlow";
 import { faNum } from "@/utils/faNum";
 
 /**
@@ -47,8 +52,8 @@ type SankeyLinkRenderProps = {
 };
 
 function asRows(value: unknown[]): JourneyRow[] {
-  return value.filter(
-    (row): row is JourneyRow => Boolean(row && typeof row === "object" && !Array.isArray(row)),
+  return value.filter((row): row is JourneyRow =>
+    Boolean(row && typeof row === "object" && !Array.isArray(row)),
   );
 }
 
@@ -59,7 +64,10 @@ function toCount(value: unknown): number {
 
 function pathSteps(row: JourneyRow, label: (raw: unknown) => string): string[] {
   return [row.e1, row.e2, row.e3, row.e4]
-    .filter((step) => step !== undefined && step !== null && String(step).trim() !== "")
+    .filter(
+      (step) =>
+        step !== undefined && step !== null && String(step).trim() !== "",
+    )
     .map((step) => label(step));
 }
 
@@ -70,8 +78,12 @@ function truncateLabel(value: string, max = MAX_LABEL_CHARS): string {
 function CompactEmptyState() {
   return (
     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-5 text-center">
-      <p className="text-sm font-medium text-slate-600">هنوز داده‌ای ثبت نشده است</p>
-      <p className="mt-1 text-xs text-slate-400">برای پرتکرارترین توالی اقدام‌ها</p>
+      <p className="text-sm font-medium text-slate-600">
+        هنوز داده‌ای ثبت نشده است
+      </p>
+      <p className="mt-1 text-xs text-slate-400">
+        برای پرتکرارترین توالی اقدام‌ها
+      </p>
     </div>
   );
 }
@@ -86,7 +98,10 @@ function RankedPathsList({
   const items = useMemo(
     () =>
       rows
-        .map((row) => ({ steps: pathSteps(row, label), count: toCount(row.count) }))
+        .map((row) => ({
+          steps: pathSteps(row, label),
+          count: toCount(row.count),
+        }))
         .filter((item) => item.steps.length > 0)
         .slice(0, 30),
     [rows, label],
@@ -104,7 +119,9 @@ function RankedPathsList({
             <span
               aria-hidden
               className="absolute inset-y-1 right-1 rounded-md bg-infinity-primary/[0.055]"
-              style={{ width: `${Math.max(0, Math.min(100, (item.count / max) * 100))}%` }}
+              style={{
+                width: `${Math.max(0, Math.min(100, (item.count / max) * 100))}%`,
+              }}
             />
             <span className="relative min-w-0 truncate text-slate-600">
               {item.steps.join(" ← ")}
@@ -121,7 +138,11 @@ function RankedPathsList({
 
 /** Full accessible-name sentence for a node — shared by the hover/focus
  * detail panel, the SVG `<title>`, and `aria-label`. */
-function nodeSentence(node: FlowNodePayload, value: number, totalPaths: number): string {
+function nodeSentence(
+  node: FlowNodePayload,
+  value: number,
+  totalPaths: number,
+): string {
   const share = totalPaths > 0 ? Math.min(100, (value / totalPaths) * 100) : 0;
   const shareText = `${faNum(Math.round(share))}٪ از کل مسیرهای این نمودار`;
   if (node.isTerminal) {
@@ -133,9 +154,14 @@ function nodeSentence(node: FlowNodePayload, value: number, totalPaths: number):
   return `«${node.label}»: ${faNum(value)} بازدید از این مرحله عبور کرده است (${shareText}).`;
 }
 
-function linkSentence(payload: SankeyLinkRenderProps["payload"], totalPaths: number): string {
+function linkSentence(
+  payload: SankeyLinkRenderProps["payload"],
+  totalPaths: number,
+): string {
   const shareText =
-    totalPaths > 0 ? `${faNum(Math.round((payload.value / totalPaths) * 100))}٪ از کل مسیرهای این نمودار` : "";
+    totalPaths > 0
+      ? `${faNum(Math.round((payload.value / totalPaths) * 100))}٪ از کل مسیرهای این نمودار`
+      : "";
   const targetClause = payload.target.isTerminal
     ? "و در همین مرحله پایان یافته"
     : `به «${payload.target.label}»`;
@@ -173,7 +199,11 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
       const sourceId = flow.nodes[link.source]?.id;
       const targetId = flow.nodes[link.target]?.id;
       const linkKey = `${sourceId}>>${targetId}`;
-      if (sourceId === highlightId || targetId === highlightId || linkKey === highlightId) {
+      if (
+        sourceId === highlightId ||
+        targetId === highlightId ||
+        linkKey === highlightId
+      ) {
         if (sourceId) ids.add(sourceId);
         if (targetId) ids.add(targetId);
         ids.add(linkKey);
@@ -189,7 +219,8 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
       const node = flow.nodes[nodeIndex] as FlowNodePayload;
       const value = flow.links.reduce((sum, link) => {
         if (link.target === nodeIndex) return sum + link.value;
-        if (link.source === nodeIndex && flow.nodes[link.source]?.depth === 0) return sum + link.value;
+        if (link.source === nodeIndex && flow.nodes[link.source]?.depth === 0)
+          return sum + link.value;
         return sum;
       }, 0);
       return nodeSentence(node, value, flow.totalPaths);
@@ -197,7 +228,9 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
     const [sourceKey, targetKey] = activeId.split(">>");
     const sourceIndex = flow.nodes.findIndex((node) => node.id === sourceKey);
     const targetIndex = flow.nodes.findIndex((node) => node.id === targetKey);
-    const link = flow.links.find((l) => l.source === sourceIndex && l.target === targetIndex);
+    const link = flow.links.find(
+      (l) => l.source === sourceIndex && l.target === targetIndex,
+    );
     if (link && sourceIndex >= 0 && targetIndex >= 0) {
       return linkSentence(
         {
@@ -226,13 +259,15 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
     const node = props.payload;
     const id = node.id;
     const isDim = Boolean(connectedIds && !connectedIds.has(id));
-    const fill = node.isTerminal || node.isOverflow
-      ? TERMINAL_OVERFLOW_COLOR
-      : DEPTH_COLORS[node.depth % DEPTH_COLORS.length];
+    const fill =
+      node.isTerminal || node.isOverflow
+        ? TERMINAL_OVERFLOW_COLOR
+        : DEPTH_COLORS[node.depth % DEPTH_COLORS.length];
     const nodeIndex = props.index;
     const value = flow.links.reduce((sum, link) => {
       if (link.target === nodeIndex) return sum + link.value;
-      if (link.source === nodeIndex && node.depth === 0) return sum + link.value;
+      if (link.source === nodeIndex && node.depth === 0)
+        return sum + link.value;
       return sum;
     }, 0);
     const sentence = nodeSentence(node, value, flow.totalPaths);
@@ -303,7 +338,9 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
         onMouseLeave={() => setActiveId(null)}
         onFocus={() => setActiveId(linkKey)}
         onBlur={() => setActiveId(null)}
-        onClick={() => setSelectedId((current) => (current === linkKey ? null : linkKey))}
+        onClick={() =>
+          setSelectedId((current) => (current === linkKey ? null : linkKey))
+        }
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
@@ -319,7 +356,9 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
       <div className="border-b border-slate-100 px-4 py-3 md:px-5">
-        <h3 className="text-sm font-semibold text-slate-800">پرتکرارترین مسیرهای بازدید</h3>
+        <h3 className="text-sm font-semibold text-slate-800">
+          پرتکرارترین مسیرهای بازدید
+        </h3>
         <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
       </div>
       <div className="p-4 md:p-5" ref={containerRef}>
@@ -332,7 +371,11 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
             {/* Recharts lays a Sankey out left-to-right; mirroring the whole chart
                 makes it read right-to-left like the list view and the rest of
                 the page. Labels are flipped back individually. */}
-            <div dir="ltr" style={{ transform: "scaleX(-1)" }} data-journey-direction="rtl">
+            <div
+              dir="ltr"
+              style={{ transform: "scaleX(-1)" }}
+              data-journey-direction="rtl"
+            >
               <ResponsiveContainer width="100%" height={SANKEY_HEIGHT}>
                 <Sankey
                   data={sankeyData}
@@ -349,7 +392,8 @@ export default function JourneyFlow({ rows, label }: JourneyFlowProps) {
               role="status"
               aria-live="polite"
             >
-              {activeSentence ?? "برای دیدن جزئیات هر مرحله یا مسیر، روی آن نگه دارید یا با کیبورد به آن بروید."}
+              {activeSentence ??
+                "برای دیدن جزئیات هر مرحله یا مسیر، روی آن نگه دارید یا با کیبورد به آن بروید."}
             </div>
             <details className="mt-3 rounded-xl border border-slate-100">
               <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-slate-600">

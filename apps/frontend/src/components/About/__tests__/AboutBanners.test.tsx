@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import AboutBanners from "../AboutBanners";
-import { ABOUT_PRICE_BANNERS } from "../aboutBanners";
+import { ABOUT_PRICE_BANNERS } from "../aboutBannerData";
 
 describe("AboutBanners", () => {
   it("renders two equal lifestyle banners side by side", () => {

@@ -61,8 +61,7 @@ describe("admin product publication payload boundary", () => {
       scheduledPublishFailureKind: "Transient",
     };
 
-    await updateProduct("42", editProduct);
-
+    await updateProduct("42", editProduct, draftProduct);
     const [, payload] = mockPut.mock.calls[0];
     expect(payload.data).not.toHaveProperty("Status");
     expect(payload.data).not.toHaveProperty("scheduledPublishAt");

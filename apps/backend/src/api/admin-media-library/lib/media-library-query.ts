@@ -33,6 +33,18 @@ export type SqlQuery = { sql: string; bindings: unknown[] };
 
 const PRODUCT_UID = "api::product.product";
 const PRODUCT_MEDIA_FIELDS = ["CoverImage", "Media"] as const;
+// Only components actually owned by a product count as catalog media.
+export const PRODUCT_MEDIA_REFERENCES = `
+  SELECT file_id, related_id AS product_id, (field = 'CoverImage') AS as_cover
+  FROM files_related_morphs
+  WHERE related_type = 'api::product.product' AND field IN ('CoverImage', 'Media')
+  UNION ALL
+  SELECT fm.file_id, pc.entity_id AS product_id, false AS as_cover
+  FROM files_related_morphs fm
+  JOIN products_components pc ON pc.component_id = fm.related_id
+    AND pc.component_type = 'product.color-gallery' AND pc.field = 'ColorGalleries'
+  WHERE fm.related_type = 'product.color-gallery' AND fm.field = 'Images'
+`;
 const FORMAT_KEYS = ["thumbnail", "small", "medium", "large"] as const;
 
 type FormatKey = (typeof FORMAT_KEYS)[number];
@@ -99,7 +111,11 @@ export function buildMediaLibraryWhere(filter: MediaLibraryFilter): SqlQuery {
     `NOT EXISTS (
       SELECT 1 FROM files_related_morphs fm
       WHERE fm.file_id = f.id
-        AND (fm.related_type = ? AND fm.field IN (?, ?)) IS NOT TRUE
+        AND ((fm.related_type = ? AND fm.field IN (?, ?)) OR
+          (fm.related_type = 'product.color-gallery' AND fm.field = 'Images' AND EXISTS (
+            SELECT 1 FROM products_components pc WHERE pc.component_id = fm.related_id
+              AND pc.component_type = 'product.color-gallery' AND pc.field = 'ColorGalleries'
+          ))) IS NOT TRUE
     )`,
   );
   bindings.push(PRODUCT_UID, ...PRODUCT_MEDIA_FIELDS);
@@ -130,12 +146,12 @@ export function buildMediaLibraryWhere(filter: MediaLibraryFilter): SqlQuery {
     // `IN (subquery)` is planned once as a hashed SubPlan instead of per file.
     clauses.push(
       `(${nameMatch} OR f.id IN (
-        SELECT sm.file_id FROM files_related_morphs sm
-        JOIN products sp ON sp.id = sm.related_id
-        WHERE sm.related_type = ? AND sm.field IN (?, ?) AND (${titleMatch})
+        SELECT sm.file_id FROM (${PRODUCT_MEDIA_REFERENCES}) sm
+        JOIN products sp ON sp.id = sm.product_id
+        WHERE (${titleMatch})
       ))`,
     );
-    bindings.push(...patterns, PRODUCT_UID, ...PRODUCT_MEDIA_FIELDS, ...patterns);
+    bindings.push(...patterns, ...patterns);
   }
 
   return { sql: clauses.join("\n  AND "), bindings };
@@ -172,11 +188,10 @@ export function buildMediaLibraryUsageQuery(fileIds: number[]): SqlQuery {
   return {
     sql: `WITH pairs AS (
   SELECT m.file_id, p.id AS product_id, p.title, (p.removed_at IS NOT NULL) AS removed,
-         BOOL_OR(m.field = ?) AS as_cover
-  FROM files_related_morphs m
-  JOIN products p ON p.id = m.related_id
+         BOOL_OR(m.as_cover) AS as_cover
+  FROM (${PRODUCT_MEDIA_REFERENCES}) m
+  JOIN products p ON p.id = m.product_id
   WHERE m.file_id = ANY(string_to_array(?, ',')::integer[])
-    AND m.related_type = ? AND m.field IN (?, ?)
   GROUP BY m.file_id, p.id, p.title, p.removed_at
 ), ranked AS (
   SELECT pairs.*,
@@ -192,10 +207,7 @@ FROM ranked
 WHERE rn <= ?
 ORDER BY file_id, rn`,
     bindings: [
-      "CoverImage",
       fileIds.join(","),
-      PRODUCT_UID,
-      ...PRODUCT_MEDIA_FIELDS,
       MEDIA_LIBRARY_USAGE_PRODUCTS_LIMIT,
     ],
   };

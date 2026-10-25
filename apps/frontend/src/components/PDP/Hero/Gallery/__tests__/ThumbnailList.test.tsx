@@ -113,4 +113,42 @@ describe("PDP gallery thumbnails", () => {
     );
     expect(imageConstructor).toHaveBeenCalledTimes(1);
   });
+  it("scrolls the thumbnail container without scrolling the page", () => {
+    const setSelectedImage = jest.fn();
+
+    const { rerender } = render(
+      <ThumbnailList assets={assets} selectedImage="cover" setSelectedImage={setSelectedImage} />,
+    );
+
+    const container = screen.getByTestId("pdp-thumbnails");
+    const target = screen.getByRole("button", {
+      name: "نمایش تصویر 2: جزئیات محصول",
+    });
+
+    const scrollBy = jest.fn();
+
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, value: 120 },
+      clientHeight: { configurable: true, value: 120 },
+      scrollWidth: { configurable: true, value: 120 },
+      scrollHeight: { configurable: true, value: 400 },
+      scrollBy: { configurable: true, value: scrollBy },
+    });
+
+    jest.spyOn(container, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 120, 120));
+
+    jest.spyOn(target, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 240, 84, 105));
+
+    rerender(
+      <ThumbnailList assets={assets} selectedImage="detail" setSelectedImage={setSelectedImage} />,
+    );
+
+    expect(scrollBy).toHaveBeenCalledWith({
+      left: 0,
+      top: 225,
+      behavior: "auto",
+    });
+
+    expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
 });

@@ -5,6 +5,11 @@ jest.mock("redis", () => ({
     connect: jest.fn().mockResolvedValue({}),
   })),
 }));
+jest.mock("@strapi/strapi", () => ({
+  factories: {
+    createCoreService: jest.fn(),
+  },
+}));
 jest.unmock("../index");
 
 import { hasCapability } from "@repo/auth-core";
@@ -574,11 +579,7 @@ function createActionTree() {
       "issue-report",
       ["create", "query", "findOne", "updateStatus", "exportReport"],
     ],
-    [
-      "api::model-application",
-      "model-application",
-      ["create", "query", "findOne", "updateStatus"],
-    ],
+    ["api::model-application", "model-application", ["create", "query", "findOne", "updateStatus"]],
     ["api::commerce-maintenance", "commerce-maintenance", ["purge"]],
     ["api::cart-item", "cart-item", crud],
     ["api::order-item", "order-item", crud],
@@ -632,11 +633,7 @@ function createActionTree() {
       ],
     ],
     ["api::local-user-address", "local-user-address", [...crud, "getMyAddresses", "createAddress"]],
-    [
-      "api::story-seen",
-      "story-seen",
-      ["markSeen", "getMine", "markItemSeen", "getMineItems"],
-    ],
+    ["api::story-seen", "story-seen", ["markSeen", "getMine", "markItemSeen", "getMineItems"]],
   ] as Array<[string, string, string[]]>) {
     addController(typeKey, controllerName, actions);
   }
@@ -714,13 +711,7 @@ describe("role permission templates", () => {
     // checkStock is destructive self-service (drop/adjust the caller's lines) and
     // must never be public or confused with report.carts.read (`cart.find`).
     expect(enabled(customer, "api::cart", "cart")).toEqual(
-      expect.arrayContaining([
-        "getMyCart",
-        "addItem",
-        "updateItem",
-        "removeItem",
-        "checkStock",
-      ]),
+      expect.arrayContaining(["getMyCart", "addItem", "updateItem", "removeItem", "checkStock"]),
     );
     expect(enabled(customer, "api::cart", "cart")).not.toContain("find");
   });
@@ -778,16 +769,13 @@ describe("role permission templates", () => {
       false,
     );
     expect(
-      seller1["api::admin-order-list"].controllers["admin-order-list"].shippingMethods
-        .enabled,
+      seller1["api::admin-order-list"].controllers["admin-order-list"].shippingMethods.enabled,
     ).toBe(false);
     expect(
-      seller1["api::admin-order-list"].controllers["admin-order-list"].queryReserveGroups
-        .enabled,
+      seller1["api::admin-order-list"].controllers["admin-order-list"].queryReserveGroups.enabled,
     ).toBe(false);
     expect(
-      seller1["api::admin-order-list"].controllers["admin-order-list"].getReserveGroup
-        .enabled,
+      seller1["api::admin-order-list"].controllers["admin-order-list"].getReserveGroup.enabled,
     ).toBe(false);
     expect(editor["api::admin-product-list"].controllers["admin-product-list"].query.enabled).toBe(
       false,
@@ -807,8 +795,12 @@ describe("role permission templates", () => {
     );
     expect(hasCapability("seller2", "order.read")).toBe(true);
     expect(hasCapability("seller2", "order.shipping.manage")).toBe(true);
-    expect(seller2["api::admin-order-list"].controllers["admin-order-list"].query.enabled).toBe(true);
-    expect(seller2["api::admin-order-list"].controllers["admin-order-list"].counts.enabled).toBe(true);
+    expect(seller2["api::admin-order-list"].controllers["admin-order-list"].query.enabled).toBe(
+      true,
+    );
+    expect(seller2["api::admin-order-list"].controllers["admin-order-list"].counts.enabled).toBe(
+      true,
+    );
     expect(seller2["api::order"].controllers.order.generateAnipoBarcode.enabled).toBe(true);
     expect(seller2["api::order"].controllers.order.checkAnipoBarcode.enabled).toBe(true);
     expect(seller2["api::order"].controllers.order.generateReserveParcelBarcode.enabled).toBe(true);
@@ -888,10 +880,7 @@ describe("role permission templates", () => {
       },
       {
         capabilities: ["product.delete"],
-        actions: [
-          "api::product.product.permanentDelete",
-          "api::product.product.emptyTrash",
-        ],
+        actions: ["api::product.product.permanentDelete", "api::product.product.emptyTrash"],
       },
       {
         capabilities: ["product.homepage.manage"],
@@ -963,7 +952,9 @@ describe("role permission templates", () => {
       },
       {
         capabilities: ["report.excel.export"],
-        actions: ["payments", "wallet", "inventoryHistory", "orders", "productBuyers"].map((name) => `api::report-export.report-export.${name}`),
+        actions: ["payments", "wallet", "inventoryHistory", "orders", "productBuyers"].map(
+          (name) => `api::report-export.report-export.${name}`,
+        ),
       },
       {
         capabilities: ["report.traffic.read"],
@@ -1007,11 +998,7 @@ describe("role permission templates", () => {
       },
       {
         capabilities: ["content.stories.manage"],
-        actions: [
-          "api::story.story.create",
-          "api::story.story.update",
-          "api::story.story.delete",
-        ],
+        actions: ["api::story.story.create", "api::story.story.update", "api::story.story.delete"],
       },
       {
         capabilities: ["system.users.manage"],
@@ -1272,9 +1259,9 @@ describe("role permission templates", () => {
     expect(
       founder["api::commerce-maintenance"].controllers["commerce-maintenance"].purge.enabled,
     ).toBe(false);
-    expect(
-      founder["api::product-category"].controllers["product-category"].delete.enabled,
-    ).toBe(true);
+    expect(founder["api::product-category"].controllers["product-category"].delete.enabled).toBe(
+      true,
+    );
     expect(
       founder["api::product-category"].controllers["product-category"].deleteWithReassign.enabled,
     ).toBe(true);
@@ -1585,9 +1572,9 @@ describe("role permission templates", () => {
     expect(walletCtrl(finance).adminAdjustWallet.enabled).toBe(true);
     expect(walletCtrl(finance).adminGetUserWallet.enabled).toBe(true);
     expect(walletCtrl(finance).adminGetUserWalletHistory.enabled).toBe(true);
-    expect(
-      finance["api::plugin-user"].controllers["plugin-user"].searchCustomers.enabled,
-    ).toBe(true);
+    expect(finance["api::plugin-user"].controllers["plugin-user"].searchCustomers.enabled).toBe(
+      true,
+    );
 
     // Superadmin (full access) keeps them.
     expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
