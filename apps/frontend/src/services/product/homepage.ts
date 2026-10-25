@@ -5,10 +5,7 @@ import { formatProductsToCardProps } from "./product";
 import { parseStockCount, productTitleMatchesKeywords } from "@/utils/product";
 import logger from "@/utils/logger";
 import { getPublicSuperAdminSettings } from "@/services/super-admin/settings/public";
-import type {
-  HomeGifPromoAssignment,
-  SuperAdminSettings,
-} from "@/types/super-admin/settings";
+import type { HomeGifPromoAssignment, SuperAdminSettings } from "@/types/super-admin/settings";
 import { HOME_PRODUCTS_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
 
 const PRODUCT_CARD_VIEW = "view=card";
@@ -153,7 +150,10 @@ export const pickBatchedHomepageSection = (
  * Fetch products by IDs with the same populate/fields as homepage sections.
  * Returns products in the same order as the requested ids (Strapi order is undefined).
  */
-export const getProductsByIds = async (ids: number[], requireAvailable = true): Promise<ProductCardProps[]> => {
+export const getProductsByIds = async (
+  ids: number[],
+  requireAvailable = true,
+): Promise<ProductCardProps[]> => {
   if (ids.length === 0) return [];
   const idParams = ids.map((id, i) => `filters[id][$in][${i}]=${id}`).join("&");
   const endpoint =
@@ -284,7 +284,9 @@ export const getGifPromoProducts = async (
  * If settings contain curated product IDs (homeDiscountedProductIds, homeFavoriteProductIds),
  * those are used instead of algorithmic selection.
  */
-export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<typeof getPublicSuperAdminSettings>>): Promise<{
+export const getHomepageSections = async (
+  settingsOverride?: Awaited<ReturnType<typeof getPublicSuperAdminSettings>>,
+): Promise<{
   discounted: ProductCardProps[];
   new: ProductCardProps[];
   favorites: ProductCardProps[];
@@ -302,7 +304,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
   const newEndpoint =
     `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&offer=newest&` +
     `availability=in-stock&` +
-    `pagination[limit]=20&` +
+    `pagination[limit]=100&` +
     `pagination[withCount]=false`;
 
   try {
@@ -313,18 +315,17 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     const batchPromise = fetch(
       `${getStrapiServerUrl()}${withHomepageCacheBust(batchEndpoint)}`,
       homepageFetchOptions(),
-    )
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) {
-          logger.error("[Homepage] Batch products API error", {
-            status: res.status,
-            error: (data as { error?: { message?: string } })?.error?.message ?? data,
-          });
-          return { data: [] };
-        }
-        return data as { data?: unknown[] };
-      });
+    ).then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) {
+        logger.error("[Homepage] Batch products API error", {
+          status: res.status,
+          error: (data as { error?: { message?: string } })?.error?.message ?? data,
+        });
+        return { data: [] };
+      }
+      return data as { data?: unknown[] };
+    });
 
     // Wait for settings to determine strategy for "new" and "discounted" sections
     const settings = await settingsPromise;
@@ -349,7 +350,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
       })
       .then((newResponse: { data?: unknown[] }) => {
         const raw = newResponse?.data ?? [];
-        return formatProductsToCardProps((raw as unknown[]).filter(productHasStock).slice(0, 20));
+        return formatProductsToCardProps((raw as unknown[]).filter(productHasStock).slice(0, 100));
       });
     const discountedCuratedPromise = curatedDiscounted
       ? getProductsByIds(settings.homeDiscountedProductIds, false)
@@ -368,7 +369,9 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
 
     const allProducts = (batchResponse as { data?: unknown[] })?.data ?? [];
     const availableProducts = allProducts.filter(productHasStock);
-    logger.info(`[BatchHomepage] Fetched ${allProducts.length} total products for discounted/favorites`);
+    logger.info(
+      `[BatchHomepage] Fetched ${allProducts.length} total products for discounted/favorites`,
+    );
 
     let discounted: ProductCardProps[];
     if (discountedCurated) {
@@ -387,17 +390,19 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
       discounted = formatProductsToCardProps(discountedProducts);
     }
 
-    const favoriteProducts = favoriteCurated ?? formatProductsToCardProps(
-      [...availableProducts]
-        .sort((a: any, b: any) => {
-          const attrsA = a?.attributes;
-          const attrsB = b?.attributes;
-          const ratingA = parseFloat(String(attrsA?.AverageRating ?? 0)) || 0;
-          const ratingB = parseFloat(String(attrsB?.AverageRating ?? 0)) || 0;
-          return ratingB - ratingA;
-        })
-        .slice(0, 20),
-    );
+    const favoriteProducts =
+      favoriteCurated ??
+      formatProductsToCardProps(
+        [...availableProducts]
+          .sort((a: any, b: any) => {
+            const attrsA = a?.attributes;
+            const attrsB = b?.attributes;
+            const ratingA = parseFloat(String(attrsA?.AverageRating ?? 0)) || 0;
+            const ratingB = parseFloat(String(attrsB?.AverageRating ?? 0)) || 0;
+            return ratingB - ratingA;
+          })
+          .slice(0, 20),
+      );
 
     logger.info(
       `[BatchHomepage] Split into: ${discounted.length} discounted, ${newProducts.length} new, ${favoriteProducts.length} favorites`,
@@ -472,11 +477,11 @@ export const getDiscountedProducts = async (): Promise<ProductCardProps[]> => {
     const response = await fetch(`${getStrapiServerUrl()}${endpoint}`, {
       next: { revalidate: 60 }, // Revalidate every minute
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip',
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "Accept-Encoding": "gzip",
       },
-    }).then(res => res.json());
+    }).then((res) => res.json());
 
     const allProducts = (response as any)?.data || [];
     logger.info(`Fetched ${allProducts.length} total products for discount check`);
@@ -504,16 +509,15 @@ export const getNewProducts = async (): Promise<ProductCardProps[]> => {
     `pagination[limit]=20&` +
     `pagination[withCount]=false`;
 
-
   try {
     const response = await fetch(`${getStrapiServerUrl()}${endpoint}`, {
       next: { revalidate: 60 }, // Revalidate every minute
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip',
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "Accept-Encoding": "gzip",
       },
-    }).then(res => res.json());
+    }).then((res) => res.json());
     const availableProducts = ((response as any).data || []).filter(productHasStock);
     return formatProductsToCardProps(availableProducts);
   } catch (error) {
@@ -539,11 +543,11 @@ export const getFavoriteProducts = async (): Promise<ProductCardProps[]> => {
     const response = await fetch(`${getStrapiServerUrl()}${endpoint}`, {
       next: { revalidate: 60 }, // Revalidate every minute
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip',
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "Accept-Encoding": "gzip",
       },
-    }).then(res => res.json());
+    }).then((res) => res.json());
     const availableProducts = ((response as any).data || []).filter(productHasStock);
     return formatProductsToCardProps(availableProducts);
   } catch (error) {
@@ -562,13 +566,12 @@ export const getRandomProducts = async (
 ): Promise<ProductCardProps[]> => {
   const endpoint =
     `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&filters[Status][$eq]=Active&` +
-      `filters[removedAt][$null]=true&` +
-      // Hide zero-price variations
-      `filters[product_variations][Price][$gte]=1&` +
-      `availability=in-stock&` +
-      `pagination[limit]=${poolSize}&` +
-      `pagination[withCount]=false`;
-
+    `filters[removedAt][$null]=true&` +
+    // Hide zero-price variations
+    `filters[product_variations][Price][$gte]=1&` +
+    `availability=in-stock&` +
+    `pagination[limit]=${poolSize}&` +
+    `pagination[withCount]=false`;
 
   try {
     // Public products endpoint: avoid sending user token to prevent accidental 401/logout
