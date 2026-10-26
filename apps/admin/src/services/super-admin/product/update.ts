@@ -7,6 +7,7 @@ import type {
   ProductEditorClient,
   ProductEditSnapshot,
 } from "./editor-session";
+import { notifyProductTitleKeywordsChanged } from "./title-keywords-events";
 
 interface TransformedProductData
   extends Omit<
@@ -146,7 +147,9 @@ export function buildProductEditorPayload(
       : undefined;
   const data = transformProductDataForApi(body);
   // An unrelated edit must preserve mappings the form did not change/read.
-  if (JSON.stringify(body.ColorGalleries) === JSON.stringify(base.ColorGalleries)) {
+  if (
+    JSON.stringify(body.ColorGalleries) === JSON.stringify(base.ColorGalleries)
+  ) {
     delete data.ColorGalleries;
   }
   return {
@@ -162,9 +165,14 @@ export const updateProduct = async (
   base: EditProductData,
   client: ProductEditorClient = apiClient,
   sizeGuide?: SizeGuidePayload,
-) =>
-  client.put<ProductEditSnapshot>(
+) => {
+  const response = await client.put<ProductEditSnapshot>(
     `/products/${id}/editor`,
     buildProductEditorPayload(body, base, sizeGuide),
     { retries: 0 },
   );
+
+  notifyProductTitleKeywordsChanged();
+
+  return response;
+};

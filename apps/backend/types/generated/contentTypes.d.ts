@@ -2000,6 +2000,7 @@ export interface ApiOrderOrder extends Schema.CollectionType {
       Attribute.SetMinMaxLength<{
         maxLength: 160;
       }>;
+    AnipoBarcodeData: Attribute.JSON;
     AnipoBarcodeState: Attribute.Enumeration<
       ["Pending", "Issued", "NeedsAttention", "Stopped", "Voided"]
     >;
@@ -2129,6 +2130,9 @@ export interface ApiOrderOrder extends Schema.CollectionType {
         number
       > &
       Attribute.DefaultTo<0>;
+    ShippingSmsCompletedAt: Attribute.DateTime & Attribute.Private;
+    ShippingSmsDueAt: Attribute.DateTime & Attribute.Private;
+    ShippingSmsLastAttemptAt: Attribute.DateTime & Attribute.Private;
     ShippingTax: Attribute.Integer &
       Attribute.SetMinMax<
         {
@@ -2154,6 +2158,93 @@ export interface ApiOrderOrder extends Schema.CollectionType {
     updatedBy: Attribute.Relation<"api::order.order", "oneToOne", "admin::user"> &
       Attribute.Private;
     user: Attribute.Relation<"api::order.order", "manyToOne", "plugin::users-permissions.user">;
+  };
+}
+
+export interface ApiPaymentAttemptEvidencePaymentAttemptEvidence extends Schema.CollectionType {
+  collectionName: "payment_attempt_evidence";
+  info: {
+    description: "Append-only record of every provider-evidence recovery decision. Rows are immutable at the database level and are the source of truth for breakers, readiness and terminality.";
+    displayName: "Payment Attempt Evidence";
+    pluralName: "payment-attempt-evidences";
+    singularName: "payment-attempt-evidence";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  pluginOptions: {
+    "content-manager": {
+      visible: false;
+    };
+    "content-type-builder": {
+      visible: false;
+    };
+  };
+  attributes: {
+    attemptId: Attribute.Integer & Attribute.Required;
+    callbackState: Attribute.String;
+    clientIdFingerprint: Attribute.String;
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::payment-attempt-evidence.payment-attempt-evidence",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    decision: Attribute.Enumeration<
+      [
+        "observed",
+        "would_release",
+        "released",
+        "would_revert",
+        "reverted",
+        "refused_breaker_count",
+        "refused_breaker_value",
+        "refused_single_cap",
+        "refused_prerequisite",
+        "refused_unproven",
+        "review",
+      ]
+    > &
+      Attribute.Required;
+    details: Attribute.JSON;
+    gatewayAmountIrr: Attribute.BigInteger;
+    generationSeq: Attribute.Integer;
+    httpStatus: Attribute.Integer;
+    kind: Attribute.Enumeration<
+      [
+        "not_found_read",
+        "not_found_confirmed",
+        "failed_then_not_found",
+        "registered_aged",
+        "registered_reverted",
+        "local_ttl",
+        "local_ceiling",
+        "provider_revert",
+        "provider_cancel",
+        "late_success_observed",
+        "late_success_reverted",
+        "late_success_review",
+        "followup",
+      ]
+    > &
+      Attribute.Required;
+    mode: Attribute.Enumeration<["off", "shadow", "enforce"]> & Attribute.Required;
+    observedAt: Attribute.DateTime;
+    orderId: Attribute.Integer;
+    providerCode: Attribute.Integer;
+    providerHost: Attribute.String;
+    providerStatus: Attribute.String;
+    tokenAgeMs: Attribute.BigInteger;
+    tokenFingerprint: Attribute.String;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::payment-attempt-evidence.payment-attempt-evidence",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    walletAmountIrr: Attribute.BigInteger;
   };
 }
 
@@ -3229,9 +3320,6 @@ export interface ApiProductStockProductStock extends Schema.CollectionType {
       Attribute.Private;
     external_id: Attribute.String;
     external_source: Attribute.String;
-    StockRevision: Attribute.Integer &
-      Attribute.SetMinMax<{ min: 0 }, number> &
-      Attribute.DefaultTo<0>;
     product_stock_logs: Attribute.Relation<
       "api::product-stock.product-stock",
       "oneToMany",
@@ -3243,6 +3331,14 @@ export interface ApiProductStockProductStock extends Schema.CollectionType {
       "api::product-variation.product-variation"
     >;
     reservedCount: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    StockRevision: Attribute.Integer &
       Attribute.SetMinMax<
         {
           min: 0;
@@ -3554,7 +3650,12 @@ export interface ApiProductProduct extends Schema.CollectionType {
     Description: Attribute.RichText;
     discounts: Attribute.Relation<"api::product.product", "manyToMany", "api::discount.discount">;
     EditRevision: Attribute.Integer &
-      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
       Attribute.DefaultTo<0>;
     external_id: Attribute.String;
     external_source: Attribute.String;
@@ -3701,6 +3802,67 @@ export interface ApiReserveGroupReserveGroup extends Schema.CollectionType {
   };
   attributes: {
     activatedAt: Attribute.DateTime;
+    AnipoBarcodeData: Attribute.JSON;
+    AnipoBarcodeState: Attribute.Enumeration<
+      ["Pending", "Issued", "NeedsAttention", "Stopped", "Voided"]
+    >;
+    AnipoCancellationPending: Attribute.Boolean & Attribute.Private & Attribute.DefaultTo<false>;
+    AnipoCheckCount: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoIssuedAt: Attribute.DateTime;
+    AnipoLastCheckedAt: Attribute.DateTime;
+    AnipoLastError: Attribute.Text;
+    AnipoLastMessage: Attribute.Text;
+    AnipoLeaseExpiresAt: Attribute.DateTime & Attribute.Private;
+    AnipoLeaseToken: Attribute.String &
+      Attribute.Private &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    AnipoOrderCode: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    AnipoPollingDeadlineAt: Attribute.DateTime;
+    AnipoProviderStatus: Attribute.String;
+    AnipoReadyToIssue: Attribute.Boolean;
+    AnipoRecipientRevision: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoRecipientSnapshotRevision: Attribute.Integer & Attribute.DefaultTo<0>;
+    AnipoRecipientSyncAttempts: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoRecipientSyncedAt: Attribute.DateTime;
+    AnipoRecipientSyncedRevision: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoRecipientSyncLastAttemptAt: Attribute.DateTime;
+    AnipoRecipientSyncLastError: Attribute.Text;
+    AnipoRecipientSyncState: Attribute.Enumeration<["Pending", "Synced", "NeedsAttention"]>;
+    AnipoRegistrationAttemptedAt: Attribute.DateTime;
+    AnipoSubmittedAt: Attribute.DateTime;
     closedAt: Attribute.DateTime;
     ClosureReason: Attribute.Enumeration<
       ["Expired", "ReleasedEarly", "ReleasedByAdmin", "RootAbandoned"]
@@ -3738,6 +3900,14 @@ export interface ApiReserveGroupReserveGroup extends Schema.CollectionType {
       "api::shipping.shipping"
     >;
     ShippingBarcode: Attribute.String;
+    ShippingBoxSizeId: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
     ShippingCostPaid: Attribute.Integer &
       Attribute.SetMinMax<
         {
@@ -3748,6 +3918,14 @@ export interface ApiReserveGroupReserveGroup extends Schema.CollectionType {
       Attribute.DefaultTo<0>;
     ShippingMethodCode: Attribute.String;
     ShippingMethodTitle: Attribute.String;
+    ShippingWeight: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
     State: Attribute.Enumeration<
       ["PendingActivation", "Active", "ReadyToFulfill", "Fulfilling", "Completed", "Cancelled"]
     > &
@@ -3884,7 +4062,12 @@ export interface ApiSettingsSettings extends Schema.SingleType {
     homeHeroSliderPublished: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeNewestProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     HomepageProductsRevision: Attribute.Integer &
-      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
       Attribute.DefaultTo<0>;
     homeWeeklyPicksEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
     homeWeeklyPicksProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
@@ -4265,6 +4448,8 @@ export interface ApiWalletTopupWalletTopup extends Schema.CollectionType {
         number
       > &
       Attribute.DefaultTo<0>;
+    RedirectMethod: Attribute.Enumeration<["GET", "POST"]>;
+    RedirectUrl: Attribute.Text;
     RefId: Attribute.String;
     SaleOrderId: Attribute.String & Attribute.Unique;
     SaleReferenceId: Attribute.String;
@@ -4281,6 +4466,7 @@ export interface ApiWalletTopupWalletTopup extends Schema.CollectionType {
       "manyToOne",
       "plugin::users-permissions.user"
     >;
+    VerificationReference: Attribute.String;
   };
 }
 
@@ -4719,6 +4905,7 @@ declare module "@strapi/types" {
       "api::order-item.order-item": ApiOrderItemOrderItem;
       "api::order-log.order-log": ApiOrderLogOrderLog;
       "api::order.order": ApiOrderOrder;
+      "api::payment-attempt-evidence.payment-attempt-evidence": ApiPaymentAttemptEvidencePaymentAttemptEvidence;
       "api::payment-attempt.payment-attempt": ApiPaymentAttemptPaymentAttempt;
       "api::payment-gateway.payment-gateway": ApiPaymentGatewayPaymentGateway;
       "api::payment-operation.payment-operation": ApiPaymentOperationPaymentOperation;

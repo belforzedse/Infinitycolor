@@ -19,6 +19,7 @@ import { startExpireStockReservationsJob } from "./jobs/expireStockReservations"
 import { startReconcileCartCleanupJob } from "./jobs/reconcileCartCleanup";
 import { startExpireReserveOrdersJob } from "./jobs/expireReserveOrders";
 import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
+import { startProductKeywordsJob } from "./jobs/productTitleKeywords";
 import { registerAppLifecycles } from "./lifecycles/registerAppLifecycles";
 import { registerSchemaRegressionGuard } from "./bootstrap/schemaRegressionGuard";
 import {
@@ -100,7 +101,9 @@ const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // the route — same U&P-grant omission pattern as admin-product-list above:
   // every non-superadmin role 403'd at Strapi's RBAC layer despite passing
   // the capability policy, so only superadmin could preview products.
-  "api::product": { product: [...READ_ACTIONS, "search", "createPreviewDraft", "editLease", "editSnapshot"] },
+  "api::product": {
+    product: [...READ_ACTIONS, "search", "createPreviewDraft", "editLease", "editSnapshot"],
+  },
   "api::product-faq": { "product-faq": READ_ACTIONS },
   "api::product-size-helper": { "product-size-helper": READ_ACTIONS },
   "api::product-tag": { "product-tag": READ_ACTIONS },
@@ -163,7 +166,11 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "product.read": PRODUCT_READ_GRANTS,
   "product.create": { "api::product": { product: ["create"] } },
-  "product.update": { "api::product": { product: ["update", "editor", "editAcquire", "editRenew", "editTakeover", "editRelease"] } },
+  "product.update": {
+    "api::product": {
+      product: ["update", "editor", "editAcquire", "editRenew", "editTakeover", "editRelease"],
+    },
+  },
   // `bulkLifecycle` is one route for every lifecycle action; the controller
   // checks the capability of the action requested, so each capability that owns
   // a bulk action must also grant the route.
@@ -182,7 +189,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
   "product.variation.manage": {
-    "api::product": { product: ["generateVariationCombinations", "replaceVariationColor", "editorVariation"] },
+    "api::product": {
+      product: ["generateVariationCombinations", "replaceVariationColor", "editorVariation"],
+    },
     "api::product-variation": { "product-variation": CREATE_UPDATE_ACTIONS },
     "api::product-variation-color": { "product-variation-color": CREATE_UPDATE_ACTIONS },
     "api::product-variation-size": { "product-variation-size": CREATE_UPDATE_ACTIONS },
@@ -276,7 +285,13 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "order.shipping.manage": {
     "api::order": {
-      order: ["generateAnipoBarcode", "checkAnipoBarcode", "generateReserveParcelBarcode", "checkReserveParcelBarcode", "adminVoidBarcode"],
+      order: [
+        "generateAnipoBarcode",
+        "checkAnipoBarcode",
+        "generateReserveParcelBarcode",
+        "checkReserveParcelBarcode",
+        "adminVoidBarcode",
+      ],
     },
   },
   "report.product.read": { "api::report": { report: PRODUCT_REPORT_ACTIONS } },
@@ -289,7 +304,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::report": { report: ["liquidity", "gatewayLiquidity"] },
   },
   "report.excel.export": {
-    "api::report-export": { "report-export": ["payments", "wallet", "inventoryHistory", "orders", "productBuyers"] },
+    "api::report-export": {
+      "report-export": ["payments", "wallet", "inventoryHistory", "orders", "productBuyers"],
+    },
   },
   "report.carts.read": { "api::cart": { cart: ["find"] } },
   "report.traffic.read": {
@@ -1345,6 +1362,7 @@ export const RedisClient = process.argv.includes("ts:generate-types")
         console.error("Failed to connect to Redis:", err.message);
         throw err;
       });
+let stopProductKeywordsJob: (() => Promise<void>) | undefined;
 
 export default {
   /**
@@ -1555,6 +1573,13 @@ export default {
     ensureIranLocations(strapi).catch((err) => {
       strapi.log.error("Failed to ensure province/city seed", err);
     });
+    if (
+      shouldStartInProcessBackgroundJobs() ||
+      process.env.PRODUCT_TITLE_KEYWORDS_ENABLED === "true"
+    ) {
+      await stopProductKeywordsJob?.();
+      stopProductKeywordsJob = startProductKeywordsJob(strapi);
+    }
     if (shouldStartInProcessBackgroundJobs()) {
       try {
         startExpireStockReservationsJob(strapi);
@@ -1955,9 +1980,9 @@ export default {
           populate: { categories: { populate: ["items"] } },
           limit: 1,
         });
-        const record = (
-          Array.isArray(existing) ? existing[0] : existing
-        ) as { id?: number; categories?: unknown } | undefined;
+        const record = (Array.isArray(existing) ? existing[0] : existing) as
+          | { id?: number; categories?: unknown }
+          | undefined;
 
         if (siteFaqHasQuestions(record?.categories)) {
           await migrationStore.set({
@@ -2007,9 +2032,7 @@ export default {
             migratedItems: mapped.reduce((sum, category) => sum + category.items.length, 0),
           },
         });
-        strapi.log.info(
-          `✓ Copied ${mapped.length} legacy FAQ categories into site-faq`,
-        );
+        strapi.log.info(`✓ Copied ${mapped.length} legacy FAQ categories into site-faq`);
       } catch (error) {
         strapi.log.error("Failed to copy legacy FAQ into site-faq", {
           error: (error as Error)?.message,
@@ -2103,5 +2126,10 @@ export default {
         });
       }
     })();
+  },
+
+  async destroy() {
+    await stopProductKeywordsJob?.();
+    stopProductKeywordsJob = undefined;
   },
 };
