@@ -144,10 +144,10 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
       "a line whose product is in no category is reported under an explicit 'بدون دسته‌بندی' row, never dropped",
     limitations: [
       "Rows are NOT additive. A product belongs to every category it is filed under, so one line can " +
-        "legitimately appear under several unrelated categories, and a product whose additional category " +
-        "is also an ancestor of its main category appears both in a child row and in the parent's " +
-        "'(مستقیم)' row. Each row is individually de-duplicated and correct; summing rows is not meaningful " +
-        "for any column, orders or money alike.",
+        "legitimately appear under several sibling or unrelated categories. A parent's '(مستقیم)' row " +
+        "holds only products filed on the parent and on none of its descendants, so it never repeats a " +
+        "child row's sales. Each row is individually de-duplicated and correct; summing rows is not " +
+        "meaningful for any column, orders or money alike.",
       "A category's own row counts each order item exactly once no matter how many valid relationships " +
         "connect the product to that category (deduplicated on order_items.id).",
       "@2 fixed membership: before it, only product_main_category counted, so revenue from products filed " +

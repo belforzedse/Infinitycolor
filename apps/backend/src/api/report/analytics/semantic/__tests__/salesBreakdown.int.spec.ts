@@ -204,6 +204,47 @@ describe("sales breakdown: category hierarchy (real Postgres)", () => {
     );
   });
 
+  it("keeps a product filed on the parent AND a child out of the '(مستقیم)' row", async () => {
+    // The production shape: jeans filed under «شلوار جین» with «شلوار» as an
+    // additional category. That sale already shows in the child row, so repeating it
+    // in the parent's "(مستقیم)" row made the expanded parent never add up.
+    const knex = strapi.db.connection;
+    const parent = await f.createCategory({ title: "شلوار آزمایشی" });
+    const child = await f.createCategory({ title: "جین آزمایشی", parentId: parent.id });
+
+    const parentOnly = await variationIn(parent.id, 100_000);
+    const both = await variationInCategories(child.id, [parent.id], 400_000);
+    await makeEligibleOrder({ items: [{ variationId: parentOnly.id, amountToman: 100_000 }] });
+    await makeEligibleOrder({ items: [{ variationId: both.id, amountToman: 400_000 }] });
+
+    const joins = await PA.resolveJoins(knex);
+    const result = await getSalesBreakdown(knex, joins, "category", RANGE_START, RANGE_END);
+    const byKey = Object.fromEntries(result.rows.map((r) => [r.key, r]));
+
+    expect(byKey[String(parent.id)]).toMatchObject({ grossToman: 500_000, units: 2, ordersCount: 2 });
+    expect(byKey[String(child.id)]).toMatchObject({ grossToman: 400_000, units: 1, ordersCount: 1 });
+    expect(byKey[`${parent.id}:__self__`]).toMatchObject({ grossToman: 100_000, units: 1, ordersCount: 1 });
+    expect(
+      byKey[`${parent.id}:__self__`].grossToman + byKey[String(child.id)].grossToman,
+    ).toBe(byKey[String(parent.id)].grossToman);
+  });
+
+  it("omits the '(مستقیم)' row when every parent-filed product is also in a child", async () => {
+    const knex = strapi.db.connection;
+    const parent = await f.createCategory({ title: "والد همپوشان" });
+    const child = await f.createCategory({ title: "فرزند همپوشان", parentId: parent.id });
+
+    const both = await variationInCategories(child.id, [parent.id], 400_000);
+    await makeEligibleOrder({ items: [{ variationId: both.id, amountToman: 400_000 }] });
+
+    const joins = await PA.resolveJoins(knex);
+    const result = await getSalesBreakdown(knex, joins, "category", RANGE_START, RANGE_END);
+    const byKey = Object.fromEntries(result.rows.map((r) => [r.key, r]));
+
+    expect(byKey[String(parent.id)]).toMatchObject({ grossToman: 400_000 });
+    expect(byKey[`${parent.id}:__self__`]).toBeUndefined();
+  });
+
   it("rolls a three-level tree all the way to the root", async () => {
     const knex = strapi.db.connection;
     const root = await f.createCategory({ title: "ریشه" });
@@ -621,8 +662,9 @@ describe("sales breakdown: category reconciles with the canonical raw query", ()
     const result = await getSalesBreakdown(knex, joins, "category", RANGE_START, RANGE_END);
     const byKey = Object.fromEntries(result.rows.map((r) => [r.key, r]));
 
-    // Each category's SUBTREE row must equal the canonical recursive figure, and its
-    // "(مستقیم)" figure the canonical direct one.
+    // Each category's SUBTREE row must equal the canonical recursive figure. The
+    // canonical direct figure (filed on this exact category) is checked on leaves only:
+    // a parent's "(مستقیم)" row also excludes products filed on a descendant.
     for (const category of [parent, childA, childB, unrelated]) {
       const recursive = await canonicalCategorySales(
         knex, joins, category.id, RANGE_START, RANGE_END, { includeDescendants: true },
