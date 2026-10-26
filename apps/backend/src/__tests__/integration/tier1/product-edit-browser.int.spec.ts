@@ -283,7 +283,18 @@ beforeAll(async () => {
     }
   }, 120_000);
   browser = await chromium.launch({ headless: true });
-}, 240_000);
+  // `next dev` compiles a route on its first request. On a loaded CI runner the
+  // product page's first compile outlasted the test's 120 s wait for the lease
+  // acquire, so compile it here, signed out: no token means no lease is taken.
+  const warm = await browser.newContext({ baseURL: adminOrigin, serviceWorkers: "block" });
+  await warm.addCookies([
+    { name: "infinity_admin_route_hint", value: "1", url: adminOrigin, httpOnly: true, sameSite: "Lax" },
+  ]);
+  await (await warm.newPage())
+    .goto(`/products/${productId}`, { timeout: 240_000, waitUntil: "load" })
+    .catch(() => undefined);
+  await warm.close();
+}, 480_000);
 
 afterAll(async () => {
   // Close contexts first so their best-effort releases still have a live API.
