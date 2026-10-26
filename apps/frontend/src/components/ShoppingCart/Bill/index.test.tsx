@@ -2369,6 +2369,34 @@ describe("ShoppingCartBillForm auth gate", () => {
       act(() => window.dispatchEvent(restored));
       expect(screen.getByTestId("checkout-submit")).toBeEnabled();
     });
+
+    it("unlocks when Next hides checkout in <Activity> after a client-side result navigation", async () => {
+      // cacheComponents hides the page instead of unmounting it, and router.push
+      // fires no pageshow, so only the hide itself can clear the guard.
+      (CartService.finalizeCart as jest.Mock).mockReset().mockResolvedValue({
+        success: true, orderId: 92, redirectUrl: "",
+      });
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      const page = (mode: "visible" | "hidden") => (
+        <Provider store={store}>
+          <React.Activity mode={mode}><ShoppingCartBillForm /></React.Activity>
+        </Provider>
+      );
+      const view = render(page("visible"));
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=92"));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+
+      view.rerender(page("hidden"));
+      view.rerender(page("visible"));
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeEnabled());
+    });
   });
 
 });

@@ -371,6 +371,18 @@ function ShoppingCartBillForm({}: Props) {
     return () => window.removeEventListener("pageshow", onPageShow);
   }, []);
 
+  // The client-side result navigations (router.push) keep the guard set too, but
+  // with cacheComponents Next hides this page in <Activity> instead of unmounting
+  // it, and no pageshow fires on the way back. Activity runs layout-effect
+  // cleanups when it hides the page, so clear the guard there; a full-page
+  // navigation (gateway handoff) never runs it.
+  React.useLayoutEffect(() => {
+    return () => {
+      submitInProgressRef.current = false;
+      setIsSubmitting(false);
+    };
+  }, []);
+
   // Check authentication on mount - redirect to login if not authenticated.
   // Wait for global auth loading to finish so we don't redirect while user is still being fetched
   // (avoids loop when returning from auth with valid token).
