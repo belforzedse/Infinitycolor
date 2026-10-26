@@ -7,7 +7,7 @@ const localNetwork = `--require=${fileURLToPath(new URL("./scripts/mellat-local-
 
 export default defineConfig({
   testDir: "./tests/runtime",
-  testMatch: "mellat-checkout.spec.ts",
+  testMatch: ["mellat-checkout.spec.ts", "loader-runtime.spec.ts"],
   workers: 1,
   timeout: 90_000,
   outputDir: "test-results/mellat",
@@ -35,6 +35,7 @@ export default defineConfig({
       env: {
         NODE_OPTIONS: localNetwork,
         NEXT_PUBLIC_AUTH_ENVIRONMENT: "e2e",
+        NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_E2E: "true",
         NEXT_PUBLIC_AUTH_ORIGIN: "http://localhost:2889",
         NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:4351/api",
         NEXT_PUBLIC_IMAGE_BASE_URL: "http://127.0.0.1:4351",

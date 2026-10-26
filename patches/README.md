@@ -1,5 +1,24 @@
 # Local package patches
 
+## `@lottiefiles/dotlottie-react@0.19.4`
+
+Upstream: <https://github.com/LottieFiles/dotlottie-web/tree/main/packages/react> (MIT).
+The constructor already receives the initial speed. The React wrapper nevertheless calls
+`setSpeed(speed ?? 1)` immediately in its passive effect. Production iPhone checkout events
+reach that redundant call and throw a Rust/WASM borrow error, allowing a decorative loader
+to reach the root error boundary.
+
+The patch tracks the speed last supplied to the constructor/setter in a React ref. It skips
+the initial/default no-op and repeated values, while preserving actual speed changes and
+resetting an explicit speed to the default. It applies to the ESM export and legacy browser
+bundle; their source maps are composed through the two edits so original source locations
+remain available. No runtime versions or other player controls change.
+
+`pnpm --filter @repo/e2e test:loader-wrapper` exercises the installed wrapper with a player
+that throws if the redundant setter is invoked. It also verifies explicit speed updates.
+The storefront separately contains player failures within its existing CSS loader fallback.
+Recheck this regression and the loader/browser suites before removing or replacing the patch.
+
 ## `react-instagram-stories@1.1.1`
 
 Upstream: <https://github.com/ankit64jangir/react-instagram-stories> (MIT), published as a
