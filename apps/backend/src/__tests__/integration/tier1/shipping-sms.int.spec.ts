@@ -75,12 +75,14 @@ async function scheduledOrder(barcode: string | null = "JEST_TEST__original_barc
   // The order-created lifecycle starts its notification asynchronously. Wait
   // for its real disabled audit so it cannot consume this test's Redis failure
   // or provider response after the scheduled dispatcher is enabled.
-  const settleBy = Date.now() + 2_000;
+  // The deadline only bounds a hang: a loaded CI runner took over 2 s to settle,
+  // and polling every tick added DB load of its own.
+  const settleBy = Date.now() + 20_000;
   while (true) {
     const logs = await f.getOrderLogs(order.id);
     if (logs.some((log: any) => log.Changes?.type === "order_created" && log.Changes?.reason === "disabled")) break;
     if (Date.now() >= settleBy) throw new Error("Factory order-created notification did not settle while SMS was disabled");
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
   }
   await strapi.db.connection("orders").where({ id: order.id }).update({
     shipping_barcode: barcode,

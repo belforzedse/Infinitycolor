@@ -701,6 +701,35 @@ describe("StoryMediaSurface — undecodable and broken media", () => {
 });
 
 describe("StoryMediaSurface — lifecycle", () => {
+  it("cancels pending native play before React commits a hidden-tab hold", async () => {
+    const reportIssue = jest.fn();
+    const { video, next } = renderSurface(payloadFor(), { reportIssue });
+    const media = controlMedia(video()!);
+    await act(async () => {
+      media.set({ readyState: 4, duration: 5, videoWidth: 1080, videoHeight: 1920 });
+      media.emit("loadedmetadata");
+      media.emit("canplay");
+    });
+    const pausesBefore = media.state().pauseCalls;
+    let rejection: Promise<void>;
+    act(() => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      // This assertion runs inside the event turn, before React flushes effects.
+      expect(media.state().pauseCalls).toBeGreaterThan(pausesBefore);
+      rejection = media.rejectPlay("AbortError");
+    });
+    await act(async () => { await rejection; });
+    expect(reportIssue).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("story-media-error")).not.toBeInTheDocument();
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(media.playCalls()).toBeGreaterThan(1);
+  });
+
   it("ignores events and a settling play() promise from the story just left", async () => {
     const { video, next, progress, rerenderWith } = renderSurface(
       payloadFor(),
