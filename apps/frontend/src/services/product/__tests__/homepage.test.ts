@@ -48,6 +48,7 @@ describe("homepage service", () => {
       // The rail is the start of the Newest listing, ranked server-side.
       expect(newUrl.searchParams.get("offer")).toBe("newest");
       expect(newUrl.searchParams.get("availability")).toBe("in-stock");
+      expect(newUrl.searchParams.get("pagination[limit]")).toBe("100");
       expect(newUrl.searchParams.has("sort[0]")).toBe(false);
     });
 
