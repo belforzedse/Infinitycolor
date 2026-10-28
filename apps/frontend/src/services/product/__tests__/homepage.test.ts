@@ -35,7 +35,9 @@ describe("homepage service", () => {
       await getHomepageSections(defaultSettings());
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
-      const [batchUrl, newUrl, promoUrl] = mockFetch.mock.calls.map(([url]) => new URL(url as string));
+      const [batchUrl, newUrl, promoUrl] = mockFetch.mock.calls.map(
+        ([url]) => new URL(url as string),
+      );
 
       expect(`${batchUrl.origin}${batchUrl.pathname}`).toBe(`${API_BASE_URL}/products`);
       expect(batchUrl.searchParams.get("pagination[limit]")).toBe("36");
@@ -46,8 +48,8 @@ describe("homepage service", () => {
       // The rail is the start of the Newest listing, ranked server-side.
       expect(newUrl.searchParams.get("offer")).toBe("newest");
       expect(newUrl.searchParams.get("availability")).toBe("in-stock");
+      expect(newUrl.searchParams.get("pagination[limit]")).toBe("100");
       expect(newUrl.searchParams.has("sort[0]")).toBe(false);
-      expect(newUrl.searchParams.get("pagination[limit]")).toBe("20");
     });
 
     it("leaves curated newest ids to the Newest listing instead of fetching them by id", async () => {
@@ -57,7 +59,9 @@ describe("homepage service", () => {
       const newest = urls.filter((url) => url.searchParams.get("offer") === "newest");
       expect(newest).toHaveLength(1);
       expect(
-        urls.some((url) => Array.from(url.searchParams.keys()).some((key) => key.startsWith("filters[id]"))),
+        urls.some((url) =>
+          Array.from(url.searchParams.keys()).some((key) => key.startsWith("filters[id]")),
+        ),
       ).toBe(false);
     });
 
