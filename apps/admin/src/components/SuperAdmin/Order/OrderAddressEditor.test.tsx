@@ -1,9 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import OrderAddressEditor from "./OrderAddressEditor";
 import { apiClient } from "@/services";
+import toast from "react-hot-toast";
 
 jest.mock("@/services", () => ({
   apiClient: { put: jest.fn() },
+}));
+jest.mock("react-hot-toast", () => ({
+  __esModule: true,
+  default: { error: jest.fn(), success: jest.fn() },
 }));
 jest.mock("@/components/Kits/Modal", () => ({
   __esModule: true,
@@ -75,5 +80,18 @@ describe("OrderAddressEditor", () => {
       { data: expect.objectContaining({ fullAddress: "نشانی اصلاح‌شده", shippingCityId: 7 }) },
     ));
     expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ affectedOrderIds: [10, 11] }));
+  });
+
+  it("shows the backend's reason when a save is refused", async () => {
+    // The admin API client rejects with `{ status, message }`.
+    (apiClient.put as jest.Mock).mockRejectedValue({
+      status: 400,
+      message: "کدپستی باید ۱۰ رقم معتبر باشد",
+    });
+    render(<OrderAddressEditor isOpen order={order} onClose={jest.fn()} onSaved={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "ذخیره تغییرات" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("کدپستی باید ۱۰ رقم معتبر باشد"),
+    );
   });
 });

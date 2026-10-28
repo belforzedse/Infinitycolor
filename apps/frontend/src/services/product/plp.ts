@@ -8,7 +8,7 @@ import fetchWithTimeout from "@/utils/fetchWithTimeout";
 import logger from "@/utils/logger";
 import { getCategoryAndDescendantSlugs } from "@/utils/category-descendants";
 import { getValidatedCategoryCached, type CategoryData } from "@/utils/category-validation";
-import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import { getCategoryPlpHref, getOfferPlpHref, type PLPOffer } from "@/utils/plpRoutes";
 import { getProductCategoriesForRender, type ProductCategorySummary } from "./categories";
 import { formatProductsToCardProps } from "./product";
 import type { ProductSmallCardProps } from "@/components/Product/SmallCard";
@@ -17,6 +17,17 @@ import type { CategoryEditorialContent } from "./categoryEditorial";
 import { expandSizeKeysToTitles } from "@/utils/plpSizeFilter";
 import { expandColorKeysToTitles, type CatalogColor } from "@/utils/plpColorFilter";
 import { getProductVariationColors, getProductVariationSizes } from "./variationAttributes";
+import { redactCatalogCause, type CatalogFailureStage } from "@/lib/catalog-error-diagnostics";
+import {
+  fetchCatalogJson,
+  CatalogTransportError,
+  type CatalogRequestShape,
+} from "@/lib/catalog-transport";
+import {
+  buildStorefrontMenuTaxonomy,
+  isSyntheticStorefrontMenuCategory,
+} from "@/utils/storefrontMenuTaxonomy";
+import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
 
 export interface PLPProduct {
   id: number;
@@ -72,6 +83,8 @@ export interface PLPQuery {
   search?: string;
   sort?: string;
   hasDiscount?: boolean;
+  // Set by the route (/offer?type=…), never parsed from the shopper's query here.
+  offer?: PLPOffer;
 }
 
 export interface PLPCategoryContext {
@@ -88,13 +101,36 @@ export interface PLPProductsResult {
 }
 
 export class PLPProductsError extends Error {
+  public readonly failureStage?: CatalogFailureStage;
+  public readonly requestId?: string;
+  public readonly attempts?: number;
+  public readonly requestShape?: CatalogRequestShape;
+
   constructor(
     message: string,
     public readonly code: "FETCH_FAILED" | "API_ERROR" | "INVALID_RESPONSE",
     public readonly status?: number,
+    diagnostics?: {
+      stage: CatalogFailureStage;
+      cause?: unknown;
+      requestId?: string;
+      attempts?: number;
+      requestShape?: CatalogRequestShape;
+    },
   ) {
-    super(message);
+    super(
+      message,
+      diagnostics?.cause === undefined
+        ? undefined
+        : {
+            cause: redactCatalogCause(diagnostics.cause, diagnostics.stage),
+          },
+    );
     this.name = "PLPProductsError";
+    this.failureStage = diagnostics?.stage;
+    this.requestId = diagnostics?.requestId;
+    this.attempts = diagnostics?.attempts;
+    this.requestShape = diagnostics?.requestShape;
   }
 }
 
@@ -105,11 +141,13 @@ const PLP_HERO_KEYWORDS = [
   "\u06a9\u062a\u0648\u0646\u06cc",
 ];
 
-const PLP_HERO_TITLE_FILTER = PLP_HERO_KEYWORDS
-  .map((keyword, index) => `filters[$or][${index}][Title][$containsi]=${encodeURIComponent(keyword)}`)
-  .join("&");
+const PLP_HERO_TITLE_FILTER = PLP_HERO_KEYWORDS.map(
+  (keyword, index) => `filters[$or][${index}][Title][$containsi]=${encodeURIComponent(keyword)}`,
+).join("&");
 
-const cardToSmallCard = (product: ReturnType<typeof formatProductsToCardProps>[number]): ProductSmallCardProps => ({
+const cardToSmallCard = (
+  product: ReturnType<typeof formatProductsToCardProps>[number],
+): ProductSmallCardProps => ({
   id: product.id,
   slug: product.slug,
   title: product.title,
@@ -151,20 +189,22 @@ export function parsePLPQuery(params: { [key: string]: string | string[] | undef
     usage: typeof params.usage === "string" ? params.usage : undefined,
     search: typeof params.search === "string" ? params.search : undefined,
     sort: typeof params.sort === "string" ? params.sort : undefined,
-    hasDiscount:
-      typeof params.hasDiscount === "string" ? params.hasDiscount === "true" : undefined,
+    hasDiscount: typeof params.hasDiscount === "string" ? params.hasDiscount === "true" : undefined,
   };
 }
 
-const appendIndexedInFilter = (
-  params: URLSearchParams,
-  prefix: string,
-  values: string[],
-) => {
+const appendIndexedInFilter = (params: URLSearchParams, prefix: string, values: string[]) => {
   values.forEach((value, index) => {
     params.append(`${prefix}[$in][${index}]`, value);
   });
 };
+
+/** Preserve encoded values; Strapi accepts literal bracket/operator syntax in keys. */
+export function serializePLPProductsQuery(params: URLSearchParams): string {
+  return params.toString().replace(/(^|&)([^=]+)=/g, (_match, separator: string, key: string) =>
+    `${separator}${key.replace(/%5B/gi, "[").replace(/%5D/gi, "]").replace(/%24/gi, "$")}=`,
+  );
+}
 
 export interface PLPFilterCatalogs {
   sizeTitles?: string[];
@@ -191,7 +231,10 @@ export function buildPLPProductsQuery(
   queryParams.append(`filters[$and][${nextAnd()}][removedAt][$null]`, "true");
 
   const variationIndex = nextAnd();
-  queryParams.append(`filters[$and][${variationIndex}][product_variations][IsPublished][$eq]`, "true");
+  queryParams.append(
+    `filters[$and][${variationIndex}][product_variations][IsPublished][$eq]`,
+    "true",
+  );
   queryParams.append(`filters[$and][${variationIndex}][product_variations][Price][$gt]`, "0");
 
   if (categorySlugs.length > 0) {
@@ -211,7 +254,10 @@ export function buildPLPProductsQuery(
   if (query.search) {
     const searchIndex = nextAnd();
     queryParams.append(`filters[$and][${searchIndex}][$or][0][Title][$containsi]`, query.search);
-    queryParams.append(`filters[$and][${searchIndex}][$or][1][Description][$containsi]`, query.search);
+    queryParams.append(
+      `filters[$and][${searchIndex}][$or][1][Description][$containsi]`,
+      query.search,
+    );
   }
 
   if (query.available) {
@@ -239,15 +285,46 @@ export function buildPLPProductsQuery(
   if (query.color && query.color.length > 0) {
     const colorTitles = expandColorKeysToTitles(query.color, catalogs.colors ?? []);
     if (colorTitles.length > 0) {
-      appendIndexedInFilter(
-        queryParams,
-        `filters[$and][${nextAnd()}][product_variations][product_variation_color][Title]`,
-        colorTitles,
-      );
+      const colorsByTitle = new Map((catalogs.colors ?? []).map((color) => [color.title, color]));
+      const ids = new Set<number>();
+      const fallbackTitles: string[] = [];
+      for (const title of colorTitles) {
+        const colorIds = colorsByTitle.get(title)?.ids;
+        if (colorIds?.length && colorIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+          colorIds.forEach((id) => ids.add(id));
+        } else {
+          fallbackTitles.push(title);
+        }
+      }
+      const prefix = `filters[$and][${nextAnd()}]`;
+      if (ids.size) {
+        // The stock-aware card query already accepts comma-separated IN values.
+        // One numeric list avoids repeating a deep relation path for every shade.
+        const idPrefix = fallbackTitles.length ? `${prefix}[$or][0]` : prefix;
+        queryParams.append(
+          `${idPrefix}[product_variations][product_variation_color][id][$in]`,
+          [...ids].join(","),
+        );
+      }
+      if (fallbackTitles.length) {
+        const titlePrefix = ids.size ? `${prefix}[$or][1]` : prefix;
+        appendIndexedInFilter(
+          queryParams,
+          `${titlePrefix}[product_variations][product_variation_color][Title]`,
+          fallbackTitles,
+        );
+      }
     }
   }
   if (query.sort) {
     queryParams.append("sort[0]", query.sort);
+  }
+
+  // An offer listing's dataset, eligibility and default ranking (curated picks included)
+  // are resolved by the backend, so none of the /plp view hints below apply to it.
+  if (query.offer) {
+    queryParams.append("offer", query.offer);
+    return queryParams;
   }
 
   // True once every ancillary filter is untouched -- no category, search, price,
@@ -272,19 +349,18 @@ export function buildPLPProductsQuery(
     queryParams.append("excludeDiscount", "true");
   }
 
-  // Hint naming which curated storefront section (see site_settings' homeNewestProductIds /
-  // homeFavoriteProductIds / homeDiscountedProductIds) this exact "View all" URL maps to, if
-  // any. Mirrors the three canonical hrefs built in OffersListHomePage/DiscountedShowcase --
-  // the backend independently re-validates the hint against the actual query before honoring
-  // it, so a stale or spoofed value just falls back to the plain algorithmic query.
-  let curatedSection: "newest" | "popular" | "discount" | undefined;
+  // Hint naming which curated storefront section (see site_settings' homeFavoriteProductIds /
+  // homeDiscountedProductIds) this exact "View all" URL maps to, if any. Mirrors the canonical
+  // hrefs built in OffersListHomePage/DiscountedShowcase -- the backend independently
+  // re-validates the hint against the actual query before honoring it, so a stale or spoofed
+  // value just falls back to the plain algorithmic query. Newest is not one of them: its
+  // curated picks lead the /offer?type=newest listing instead.
+  let curatedSection: "popular" | "discount" | undefined;
   if (hasOnlyBaseFilters) {
     if (query.hasDiscount && !query.sort) {
       curatedSection = "discount";
     } else if (!query.hasDiscount && query.sort === "AverageRating:desc") {
       curatedSection = "popular";
-    } else if (!query.hasDiscount && query.sort === "LastEditedByAdminAt:desc") {
-      curatedSection = "newest";
     }
   }
   if (curatedSection) {
@@ -307,9 +383,7 @@ export async function getPLPCategoryContext(
   const allCategories = await getProductCategoriesForRender({ revalidate: 3600 });
   const resolvedSlug = categoryData.attributes.Slug;
   const descendantSlugs =
-    allCategories.length > 0
-      ? getCategoryAndDescendantSlugs(allCategories, resolvedSlug)
-      : [];
+    allCategories.length > 0 ? getCategoryAndDescendantSlugs(allCategories, resolvedSlug) : [];
 
   return {
     data: categoryData,
@@ -317,6 +391,52 @@ export async function getPLPCategoryContext(
     title: categoryData.attributes.Title || resolvedSlug,
     allCategories,
     categorySlugs: descendantSlugs.length > 0 ? descendantSlugs : [resolvedSlug],
+  };
+}
+
+export async function getPLPMenuGroupContext(groupKey: string) {
+  const allCategories = await getProductCategoriesForRender({
+    revalidate: 3600,
+  });
+
+  const menuCategories = withHeaderExtraCategories(allCategories);
+
+  const taxonomy = buildStorefrontMenuTaxonomy(menuCategories);
+
+  const group = taxonomy.find((item) => item.type === "group" && item.key === groupKey);
+
+  if (!group || group.type !== "group") {
+    return null;
+  }
+
+  const categorySlugs = new Set<string>();
+
+  const collectCategory = (category: (typeof menuCategories)[number]) => {
+    if (isSyntheticStorefrontMenuCategory(category)) {
+      for (const child of category.children ?? []) {
+        collectCategory(child);
+      }
+      return;
+    }
+
+    const descendants = getCategoryAndDescendantSlugs(allCategories, category.slug);
+
+    if (descendants.length > 0) {
+      descendants.forEach((slug) => categorySlugs.add(slug));
+    } else if (category.slug) {
+      categorySlugs.add(category.slug);
+    }
+  };
+
+  group.categories.forEach(collectCategory);
+
+  if (categorySlugs.size === 0) {
+    return null;
+  }
+
+  return {
+    title: group.label,
+    categorySlugs: [...categorySlugs],
   };
 }
 
@@ -365,9 +485,12 @@ function normalizeRelation(rel: any, isVariation = false): any {
           const normalized: any = { id, attributes: rest };
           if (isVariation) {
             normalized.attributes.product_stock = normalizeRelation(product_stock);
-            normalized.attributes.product_variation_color = normalizeRelation(product_variation_color);
-            normalized.attributes.product_variation_size = normalizeRelation(product_variation_size);
-            normalized.attributes.product_variation_model = normalizeRelation(product_variation_model);
+            normalized.attributes.product_variation_color =
+              normalizeRelation(product_variation_color);
+            normalized.attributes.product_variation_size =
+              normalizeRelation(product_variation_size);
+            normalized.attributes.product_variation_model =
+              normalizeRelation(product_variation_model);
             normalized.attributes.general_discounts = normalizeRelation(general_discounts);
           }
           return normalized;
@@ -438,22 +561,44 @@ export async function getPLPProducts(
   }
   const queryParams = buildPLPProductsQuery(query, categorySlugs, pageSize, catalogs);
 
-  const url = `${baseUrl}?${queryParams.toString()}`;
-  let response: Response;
+  const url = `${baseUrl}?${serializePLPProductsQuery(queryParams)}`;
+  let response: Response | undefined;
   let data: { data?: unknown[]; meta?: { pagination?: { total?: number; pageCount?: number } } };
+  let failureStage: CatalogFailureStage = "request";
+  let requestId: string | undefined;
+  let attempts: number | undefined;
+  let requestShape: CatalogRequestShape | undefined;
 
   try {
-    response = await fetchWithTimeout(url, {
-      timeoutMs: 15000,
-      next: { revalidate: 120, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
-    });
-    data = await response.json();
+    const result = await fetchCatalogJson<typeof data>(
+      url,
+      {
+        next: { revalidate: 120, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
+      },
+      "plp",
+    );
+    response = result.response;
+    data = result.data;
+    requestId = result.requestId;
+    attempts = result.attempts;
+    requestShape = result.requestShape;
   } catch (error) {
     logger.error("[PLP] Products fetch failed", {
       error: String(error),
       urlHint: baseUrl,
     });
-    throw new PLPProductsError("Unable to load products", "FETCH_FAILED");
+    throw new PLPProductsError(
+      "Unable to load products",
+      "FETCH_FAILED",
+      error instanceof CatalogTransportError ? error.status : response?.status,
+      {
+        stage: error instanceof CatalogTransportError ? error.failureStage : failureStage,
+        cause: error instanceof CatalogTransportError ? error.cause : error,
+        requestId: error instanceof CatalogTransportError ? error.requestId : requestId,
+        attempts: error instanceof CatalogTransportError ? error.attempts : attempts,
+        requestShape: error instanceof CatalogTransportError ? error.requestShape : requestShape,
+      },
+    );
   }
 
   if (!response.ok) {
@@ -462,12 +607,27 @@ export async function getPLPProducts(
       url: (response.url || url).replace(/\?.*/, "?..."),
       error: (data as { error?: { message?: string } })?.error?.message ?? String(data),
     });
-    throw new PLPProductsError("Products service returned an error", "API_ERROR", response.status);
+    throw new PLPProductsError("Products service returned an error", "API_ERROR", response.status, {
+      stage: "response_status",
+      requestId,
+      attempts,
+      requestShape,
+    });
   }
 
   try {
     if (!Array.isArray(data?.data)) {
-      throw new PLPProductsError("Products response is invalid", "INVALID_RESPONSE");
+      throw new PLPProductsError(
+        "Products response is invalid",
+        "INVALID_RESPONSE",
+        response.status,
+        {
+          stage: "response_normalization",
+          requestId,
+          attempts,
+          requestShape,
+        },
+      );
     }
     const rawProducts = data.data
       .map(normalizeProduct)
@@ -490,7 +650,18 @@ export async function getPLPProducts(
   } catch (error) {
     if (error instanceof PLPProductsError) throw error;
     logger.error("[PLP] Error parsing or filtering products", { error: String(error) });
-    throw new PLPProductsError("Products response could not be read", "INVALID_RESPONSE");
+    throw new PLPProductsError(
+      "Products response could not be read",
+      "INVALID_RESPONSE",
+      response.status,
+      {
+        stage: "response_normalization",
+        requestId,
+        attempts,
+        requestShape,
+        cause: error,
+      },
+    );
   }
 }
 
@@ -539,7 +710,27 @@ export async function getPLPHeroProducts(categorySlug?: string): Promise<Product
   }
 }
 
+const OFFER_PAGE_COPY: Record<PLPOffer, { title: string; description: string }> = {
+  newest: {
+    title: "جدیدترین محصولات",
+    description: `جدیدترین محصولات ${SITE_NAME}؛ تازه‌ترین مدل‌ها را زودتر از همه ببینید و بخرید.`,
+  },
+};
+
+export function getOfferPageTitle(offer: PLPOffer) {
+  return OFFER_PAGE_COPY[offer].title;
+}
+
 export function buildPLPPageCopy(query: PLPQuery, category?: PLPCategoryContext) {
+  if (query.offer) {
+    const copy = OFFER_PAGE_COPY[query.offer];
+    return {
+      pageName: copy.title,
+      pageDescription: copy.description,
+      url: `${SITE_URL}${getOfferPlpHref(query.offer)}`,
+    };
+  }
+
   const pageName = category
     ? `خرید ${category.title}`
     : query.search
@@ -562,15 +753,16 @@ export function buildCollectionItems(products: PLPProduct[]) {
   return products.slice(0, 20).map((product) => {
     const compactPrice = Number(product.attributes.DiscountPrice || product.attributes.Price || 0);
     const variations = product.attributes.product_variations?.data || [];
-    const prices = compactPrice > 0
-      ? [compactPrice]
-      : variations
-          .map((v: Variation) => {
-            const price = parseFloat(String(v.attributes.Price || "0"));
-            const discountPrice = parseFloat(String(v.attributes.DiscountPrice || "0"));
-            return discountPrice > 0 ? discountPrice : price;
-          })
-          .filter((price: number) => price > 0);
+    const prices =
+      compactPrice > 0
+        ? [compactPrice]
+        : variations
+            .map((v: Variation) => {
+              const price = parseFloat(String(v.attributes.Price || "0"));
+              const discountPrice = parseFloat(String(v.attributes.DiscountPrice || "0"));
+              return discountPrice > 0 ? discountPrice : price;
+            })
+            .filter((price: number) => price > 0);
     const minPrice = prices.length > 0 ? Math.min(...prices) : undefined;
     const cover: any = product.attributes.CoverImage;
     const coverUrl =
@@ -602,9 +794,7 @@ export function buildPLPMetadata(
   if (query.search) {
     const q = query.search.slice(0, 60);
     const pathname = category ? getCategoryPlpHref(category.slug) : "/plp";
-    const title = category
-      ? `جستجو در ${category.title}: "${q}"`
-      : `نتایج جستجو برای "${q}"`;
+    const title = category ? `جستجو در ${category.title}: "${q}"` : `نتایج جستجو برای "${q}"`;
     const description = category
       ? `مشاهده نتایج جستجو برای «${q}» در دسته ${category.title}.`
       : `مشاهده نتایج جستجو برای «${q}» در ${SITE_NAME}. جدیدترین و محبوب‌ترین محصولات.`;
@@ -655,6 +845,25 @@ export function buildPLPMetadata(
     title: baseTitle,
     description: `مشاهده و خرید انواع محصولات با بهترین قیمت در ${SITE_NAME}.`,
     alternates: { canonical: `${SITE_URL}/plp` },
+  };
+}
+
+/** Filters, sort and paging are views of the same listing, so they share one canonical URL. */
+export function buildOfferPLPMetadata(offer: PLPOffer): Metadata {
+  const { title, description } = OFFER_PAGE_COPY[offer];
+  const canonicalUrl = `${SITE_URL}${getOfferPlpHref(offer)}`;
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      url: canonicalUrl,
+    },
+    alternates: {
+      canonical: canonicalUrl,
+    },
   };
 }
 

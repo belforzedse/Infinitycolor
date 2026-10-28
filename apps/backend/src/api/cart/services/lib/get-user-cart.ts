@@ -1,8 +1,26 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
+import { resolveUserCartId } from "./user-cart-identity";
 
-export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
-  let cart = await strapi.db.query("api::cart.cart").findOne({
-    where: { user: userId },
+export type GetUserCartOptions = {
+  /**
+   * Keep lines whose product left the store (draft, scheduled, Trash) or whose
+   * variation is unpublished. Only the stock check asks for them: it removes
+   * them and names them to the shopper. Every other reader gets the filtered cart.
+   */
+  includeUnavailable?: boolean;
+};
+
+export const getOrCreateUserCart = async (
+  strapi: Strapi,
+  userId: number,
+  options: GetUserCartOptions = {},
+) => {
+  // Resolved by id: a `{ user }` filter is LIMIT 1 with no ORDER BY, and creating
+  // through Strapi's oneToOne relation can unlink the cart a concurrent merge filled.
+  const cartId = await resolveUserCartId(strapi, userId);
+  const cart = await strapi.db.query("api::cart.cart").findOne({
+    where: { id: cartId },
     populate: {
       cart_items: {
         populate: {
@@ -27,12 +45,7 @@ export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
   });
 
   if (!cart) {
-    cart = await strapi.entityService.create("api::cart.cart", {
-      data: {
-        user: userId,
-        Status: "Empty",
-      },
-    });
+    throw new Error(`Cart ${cartId} resolved for user ${userId} could not be loaded`);
   }
 
   // Clean up cart items with missing product data to prevent checkout errors
@@ -48,8 +61,10 @@ export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
         return false;
       }
 
+      if (options.includeUnavailable) return true;
+
       // Check if product is soft-deleted or inactive
-      const isProductAvailable = !product?.removedAt && product?.Status === "Active";
+      const isProductAvailable = isProductPubliclyVisible(product);
       if (!isProductAvailable) {
         strapi.log.warn(`Filtering out cart item ${item.id}: product is soft-deleted or inactive`, {
           productId: product?.id,

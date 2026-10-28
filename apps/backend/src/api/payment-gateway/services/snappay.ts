@@ -8,6 +8,11 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
 import type { Strapi } from "@strapi/strapi";
 import {
+  snappayE2EScript,
+  snappayE2EStatus,
+  snappayE2ESuccess,
+} from "./snappay-e2e";
+import {
   displaySnappayFingerprint,
   snappayTokenFingerprint,
 } from "./snappay-security";
@@ -15,7 +20,51 @@ import {
 export type SnappayErrorData = {
   errorCode?: number;
   message: string;
+  /** Raw `errorData.data`, kept verbatim for diagnostics and order logs. */
+  data?: unknown;
 };
+
+/**
+ * Best-effort read of the transaction status SnappPay reports inside a 1011
+ * error body.
+ *
+ * The error-code workbook documents the behaviour per originating status —
+ * `revert` from `registered` means "consider the order not finalized and wait
+ * 30 min to revert it again", from `settle` means "use cancel", and a 1011 with
+ * *no* transaction status means "it never reached the bank, consider it failed"
+ * — but the sample body shows `data: null`, so the exact field name is
+ * unverified against a live 1011.
+ *
+ * This therefore scans rather than reads one key, and returns `undefined` only
+ * when nothing recognisable is present. Callers must treat `undefined` as
+ * "unknown", not as "absent": mistaking an unparsed body for "never reached the
+ * bank" would turn an ambiguous revert into a false terminal-unpaid decision.
+ */
+export function readSnappayErrorTransactionStatus(data: unknown): string | undefined {
+  const known = ["PENDING", "REGISTERED", "VERIFY", "SETTLE", "REVERT", "CANCEL"];
+  const fromText = (value: unknown): string | undefined => {
+    const text = String(value ?? "").trim().toUpperCase();
+    return known.includes(text) ? text : undefined;
+  };
+  if (data === null || data === undefined) return undefined;
+  if (typeof data === "string") return fromText(data);
+  if (typeof data !== "object") return undefined;
+  const record = data as Record<string, unknown>;
+  for (const key of ["status", "transactionStatus", "transaction_status", "state"]) {
+    const found = fromText(record[key]);
+    if (found) return found;
+  }
+  // Nested one level, e.g. `{ transaction: { status: "REGISTERED" } }`.
+  for (const value of Object.values(record)) {
+    if (value && typeof value === "object") {
+      for (const key of ["status", "transactionStatus", "transaction_status", "state"]) {
+        const found = fromText((value as Record<string, unknown>)[key]);
+        if (found) return found;
+      }
+    }
+  }
+  return undefined;
+}
 
 export type SnappayCallResult<T> = {
   successful: boolean;
@@ -27,6 +76,13 @@ export type SnappayCallResult<T> = {
     providerCode?: number;
     timedOut?: boolean;
     transportError?: boolean;
+    /**
+     * Transaction status carried inside an error body (the 1011 case). Absent
+     * when the body carried none *or* when it could not be parsed — the two are
+     * deliberately not distinguished, because only one of them is safe to act
+     * on and the caller cannot tell which it has.
+     */
+    transactionStatus?: string;
   };
 };
 
@@ -213,6 +269,9 @@ function normalizeEnvelope<T>(
   httpStatus?: number,
 ): SnappayCallResult<T> {
   const code = providerCode(data?.errorData?.errorCode);
+  const transactionStatus = readSnappayErrorTransactionStatus(
+    (data?.errorData as { data?: unknown } | undefined)?.data,
+  );
   return {
     successful: data?.successful === true,
     response: data?.successful === true ? mergeStatusAmount(data) : undefined,
@@ -225,11 +284,13 @@ function normalizeEnvelope<T>(
               data?.errorData?.message,
               "SnappPay rejected the request",
             ),
+            data: (data?.errorData as { data?: unknown } | undefined)?.data,
           },
     diagnostic: {
       endpoint,
       httpStatus,
       providerCode: code,
+      ...(transactionStatus ? { transactionStatus } : {}),
     },
   };
 }
@@ -242,6 +303,9 @@ function normalizeTransportError<T>(
   const status = axiosError.response?.status;
   const body = axiosError.response?.data;
   const code = providerCode(body?.errorData?.errorCode);
+  const transactionStatus = readSnappayErrorTransactionStatus(
+    (body?.errorData as { data?: unknown } | undefined)?.data,
+  );
   const timedOut =
     axiosError.code === "ECONNABORTED" ||
     axiosError.code === "ETIMEDOUT" ||
@@ -254,11 +318,13 @@ function normalizeTransportError<T>(
         body?.errorData?.message,
         timedOut ? "SnappPay request timed out" : "SnappPay request failed",
       ),
+      data: (body?.errorData as { data?: unknown } | undefined)?.data,
     },
     diagnostic: {
       endpoint,
       httpStatus: status,
       providerCode: code,
+      ...(transactionStatus ? { transactionStatus } : {}),
       timedOut,
       transportError: !axiosError.response,
     },
@@ -396,6 +462,50 @@ async function callProvider<T>(
 }
 
 export function createSnappayAdapter(strapi: Strapi) {
+  // Deterministic end-to-end mode. Opt-in, refused in a production build, and
+  // scoped to the provider calls only: every local transition, lock, CAS and
+  // evidence write below is the production code path.
+  const e2eScript = snappayE2EScript();
+  if (e2eScript) {
+    strapi.log.warn(
+      `SnappPay provider calls are simulated by the "${e2eScript}" end-to-end script`,
+    );
+    return {
+      async eligible() {
+        return snappayE2ESuccess("eligible");
+      },
+      async requestPaymentToken(payload: SnappayTokenRequest) {
+        const paymentToken = `E2E-${payload.transactionId}`;
+        return {
+          successful: true,
+          response: {
+            paymentToken,
+            paymentPageUrl: `https://snappay.e2e.invalid/pay?paymentToken=${paymentToken}`,
+          },
+          diagnostic: { endpoint: "token" as const, httpStatus: 200, providerCode: 0 },
+        } as SnappayCallResult<any>;
+      },
+      async verify() {
+        return snappayE2ESuccess("verify");
+      },
+      async settle() {
+        return snappayE2ESuccess("settle");
+      },
+      async revert() {
+        return snappayE2ESuccess("revert");
+      },
+      async cancel() {
+        return snappayE2ESuccess("cancel");
+      },
+      async update() {
+        return snappayE2ESuccess("update");
+      },
+      async status(paymentToken: string) {
+        return snappayE2EStatus(e2eScript, paymentToken);
+      },
+    } as any;
+  }
+
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
   const post = <T>(
     endpoint: SnappayEndpoint,

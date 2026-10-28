@@ -3,9 +3,10 @@ import { authStorageStatePath } from "../../helpers/auth";
 import {
   cleanupRuntimeProducts,
   createRuntimeProductFixture,
+  leaveRuntimeProductEditor,
   updateRuntimeVariationStock,
 } from "../../helpers/admin";
-import { apiGet, apiPut, expectApiOk, getProductVariationStock } from "../../helpers/api";
+import { apiGet, expectApiOk, getProductVariationStock } from "../../helpers/api";
 import { prepareStorefrontPage } from "../../helpers/page";
 
 async function waitForProductsListURLToSettle(page: Page) {
@@ -41,7 +42,8 @@ test.describe("super-admin product CRUD", () => {
     await cleanupRuntimeProducts(request);
   });
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ page, request }) => {
+    await leaveRuntimeProductEditor(page, request);
     await cleanupRuntimeProducts(request);
   });
 
@@ -72,17 +74,26 @@ test.describe("super-admin product CRUD", () => {
     await expect(page).toHaveURL(editURLPattern);
 
     const updatedTitle = `${fixture.productTitle} Updated`;
-    const updateResponse = await apiPut(request, "admin", `/products/${fixture.productId}`, {
-      data: { Title: updatedTitle },
-    });
-    await expectApiOk(updateResponse, "update runtime product");
+    await expect(page.getByTestId("admin-product-save")).toBeEnabled();
+    await page.locator('input[name="name"]').fill(updatedTitle);
+    await page.getByTestId("admin-product-save").click();
+    await expect.poll(async () => {
+      const response = await apiGet(request, "admin", `/products/${fixture.productId}`);
+      await expectApiOk(response, "read updated runtime product");
+      return (await response.json()).data.attributes.Title;
+    }).toBe(updatedTitle);
 
-    await page.goto("/products?pageSize=100", { waitUntil: "commit" });
+    await leaveRuntimeProductEditor(page, request);
     await waitForProductsListURLToSettle(page);
     await expect(
       page.locator('[data-testid="admin-product-row"]:visible').filter({ hasText: updatedTitle }).first(),
     ).toBeVisible({ timeout: 30_000 });
 
+    // Move to Trash lives in the row's actions menu.
+    await page
+      .locator(`[data-testid="admin-product-actions"][data-id="${fixture.productId}"]:visible`)
+      .first()
+      .click();
     await page
       .locator(`[data-testid="admin-product-soft-delete"][data-id="${fixture.productId}"]:visible`)
       .first()

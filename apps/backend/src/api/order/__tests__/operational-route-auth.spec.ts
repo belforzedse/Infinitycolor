@@ -20,14 +20,14 @@ describe("order operational route authorization", () => {
     ]);
   });
 
-  it("requires financial-read capability for raw payment-operation status", () => {
+  it("gates payment-operation status on order read; the handler scopes by operation type", () => {
     const route = routeConfig.routes.find(
       (entry) => entry.path === "/orders/:id/admin/payment-operations/:operationId",
     );
     expect(route?.config.policies).toEqual([
       {
         name: "global::require-capability",
-        config: { capability: "order.financial.read" },
+        config: { capability: "order.read" },
       },
     ]);
   });

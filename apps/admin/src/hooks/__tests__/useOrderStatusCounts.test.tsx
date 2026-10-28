@@ -1,4 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { getDefaultStore } from "jotai";
+import { refreshTable } from "@/components/SuperAdmin/Table/refreshTableAtom";
 
 jest.mock("@/services/super-admin/orders/list", () => ({
   getAdminOrderCounts: jest.fn(),
@@ -22,6 +24,7 @@ const result = {
 describe("useOrderStatusCounts", () => {
   beforeEach(() => {
     (getAdminOrderCounts as jest.Mock).mockReset().mockResolvedValue(result);
+    getDefaultStore().set(refreshTable, false);
   });
 
   it("loads the current non-tab filters and supports an explicit mutation refresh", async () => {
@@ -56,6 +59,14 @@ describe("useOrderStatusCounts", () => {
     await waitFor(() => expect(hook.current.loading).toBe(false));
     expect(hook.current.counts).toBeUndefined();
     expect(hook.current.error).toBe("شمارش سفارش‌ها موقتاً در دسترس نیست.");
+  });
+
+  it("refreshes the review count after a row-level Anipo action refreshes the table", async () => {
+    renderHook(() => useOrderStatusCounts({ filters: [], search: "", shippingMethodCodes: [] }));
+    await waitFor(() => expect(getAdminOrderCounts).toHaveBeenCalledTimes(1));
+    act(() => getDefaultStore().set(refreshTable, true));
+    await waitFor(() => expect(getAdminOrderCounts).toHaveBeenCalledTimes(2));
+    getDefaultStore().set(refreshTable, false);
   });
 
   it("refetches for count criteria but not tab, page, or sort changes", async () => {

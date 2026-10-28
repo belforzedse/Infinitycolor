@@ -4,6 +4,8 @@ import { assertNonProductionTarget } from "../../helpers/admin";
 import { prepareStorefrontPage } from "../../helpers/page";
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+// LEGACY_SALES_DATA_CUTOFF in apps/admin/.../reports/shared/reportDates.ts.
+const LEGACY_SALES_DATA_CUTOFF = "2026-09-14";
 
 function queryDate(url: string, key: "start" | "end"): string | null {
   try {
@@ -130,8 +132,14 @@ test.describe("admin sales date-range filters", () => {
     const seven = await clickPresetAndCaptureOverview(page, "۷ روز گذشته");
     expect(daySpan(seven)).toBe(7);
 
+    // A preset never reaches back past the storefront cutover: it starts at
+    // the cutoff instead (earlier data lives on the previous site).
     const thirty = await clickPresetAndCaptureOverview(page, "۳۰ روز گذشته");
-    expect(daySpan(thirty)).toBe(30);
+    const thirtyStart = tehranDateOnly(new Date(Date.now() - 30 * 86_400_000));
+    expect(thirty.start).toBe(
+      thirtyStart < LEGACY_SALES_DATA_CUTOFF ? LEGACY_SALES_DATA_CUTOFF : thirtyStart,
+    );
+    expect(thirty.end).toBe(tehranDateOnly());
 
     const thisMonth = await clickPresetAndCaptureOverview(page, "این ماه");
     const startJalali = jalaliPartsOfDateOnly(thisMonth.start);
@@ -141,17 +149,22 @@ test.describe("admin sales date-range filters", () => {
     expect(startJalali.month).toBe(todayJalali.month);
     expect(await urlRange(page)).toEqual(thisMonth);
 
-    await page.getByRole("link", { name: "تفکیک فروش" }).click();
+    // The sidebar's open sales menu repeats these links; use the page's sub-nav.
+    const salesNav = page.getByLabel("بخش‌های فروش");
+    await salesNav.getByRole("link", { name: "تفکیک فروش" }).click();
     await expect(page).toHaveURL(/\/sales\/breakdown/, { timeout: 30_000 });
     expect(await urlRange(page)).toEqual(thisMonth);
 
-    await page.getByRole("link", { name: "فروش محصولات" }).click();
+    await salesNav.getByRole("link", { name: "فروش محصولات" }).click();
     await expect(page).toHaveURL(/\/sales\/products/, { timeout: 30_000 });
     await expect(page.getByRole("textbox", { name: "تاریخ شروع" })).toHaveCount(1);
     await expect(page.getByRole("textbox", { name: "تاریخ پایان" })).toHaveCount(1);
     await expect(page.getByText("از تاریخ")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "عملکرد محصولات" }).click();
+    await page
+      .getByRole("tablist", { name: "بخش‌های گزارش محصولات" })
+      .getByRole("tab", { name: "عملکرد محصولات" })
+      .click();
     await expect(page.getByPlaceholder("نام محصول یا کد...")).toBeVisible({
       timeout: 30_000,
     });
@@ -160,7 +173,7 @@ test.describe("admin sales date-range filters", () => {
     const liquidityPending = page.waitForRequest((request) =>
       isDateOnlyReportRequest(request.url(), "liquidity"),
     );
-    await page.getByRole("link", { name: "نقدینگی" }).click();
+    await salesNav.getByRole("link", { name: "نقدینگی" }).click();
     await expect(page).toHaveURL(/\/sales\/liquidity/, { timeout: 30_000 });
     const liquidity = rangeFromRequest(await liquidityPending);
     expect(liquidity).toEqual(thisMonth);

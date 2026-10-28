@@ -76,6 +76,22 @@ function makeResponse(overrides: Partial<any> = {}) {
   };
 }
 
+/**
+ * The reconciliation formula's box. KPI cards show their titles while
+ * loading, so wait for the formula itself rather than the first «فروش ناخالص».
+ */
+async function findFormula() {
+  let formula: HTMLElement | undefined;
+  await waitFor(() => {
+    formula = screen
+      .getAllByText("فروش ناخالص")
+      .map((el) => el.closest("div.rounded-xl"))
+      .find(Boolean) as HTMLElement | undefined;
+    expect(formula).toBeTruthy();
+  });
+  return formula as HTMLElement;
+}
+
 describe("OverviewReportPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -101,9 +117,7 @@ describe("OverviewReportPage", () => {
     render(<OverviewReportPage />);
 
     // gross 1,120,000 − shipping 120,000 − discounts 50,000 − refunds 50,000 = net 900,000.
-    const formula = (await screen.findAllByText("فروش ناخالص"))
-      .map((el) => el.closest("div.rounded-xl"))
-      .find(Boolean) as HTMLElement;
+    const formula = await findFormula();
     expect(formula).toBeTruthy();
     expect(formula).toHaveTextContent("۱٬۱۲۰٬۰۰۰ تومان");
     expect(formula).toHaveTextContent("۱۲۰٬۰۰۰ تومان");
@@ -132,9 +146,7 @@ describe("OverviewReportPage", () => {
     getOverviewMock.mockResolvedValue(response);
     render(<OverviewReportPage />);
 
-    const formula = (await screen.findAllByText("فروش ناخالص"))
-      .map((el) => el.closest("div.rounded-xl"))
-      .find(Boolean) as HTMLElement;
+    const formula = await findFormula();
     // 1,000,000 − 50,000 − 50,000 = 900,000, the pre-D16 arithmetic.
     expect(formula).toHaveTextContent("۱٬۰۰۰٬۰۰۰ تومان");
     expect(formula).toHaveTextContent("۹۰۰٬۰۰۰ تومان");
@@ -144,36 +156,11 @@ describe("OverviewReportPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the durable commerce delivery health", async () => {
+  it("leaves analytics delivery health to the traffic report", async () => {
     getOverviewMock.mockResolvedValue(makeResponse());
     render(<OverviewReportPage />);
-    await screen.findByText("همه خریدها و مرجوعی‌ها در آمار ثبت شده‌اند");
-  });
-
-  it("shows dead-letter delivery as requiring attention", async () => {
-    getOverviewMock.mockResolvedValue(
-      makeResponse({
-        analyticsDelivery: {
-          status: "attention",
-          total: 3,
-          pending: 0,
-          processing: 0,
-          deadLetter: 1,
-          oldestPendingAt: null,
-          lastSentAt: null,
-        },
-      }),
-    );
-    render(<OverviewReportPage />);
-    await screen.findByText("ثبت بعضی خریدها یا مرجوعی‌ها نیازمند بررسی است");
-  });
-
-  it("does not fabricate delivery health when the queue table is unavailable", async () => {
-    getOverviewMock.mockResolvedValue(
-      makeResponse({ analyticsDelivery: null }),
-    );
-    render(<OverviewReportPage />);
-    await screen.findByText("وضعیت ثبت آمار خرید و مرجوعی در دسترس نیست.");
+    await screen.findAllByText(/تومان/);
+    expect(screen.queryByText(/وضعیت ثبت آمار خرید و مرجوعی/)).not.toBeInTheDocument();
   });
 
   it("shows an error message when the fetch fails", async () => {

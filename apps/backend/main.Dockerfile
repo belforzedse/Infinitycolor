@@ -1,5 +1,5 @@
 # syntax=docker.arvancloud.ir/docker/dockerfile:1.7
-FROM docker.arvancloud.ir/library/node:20-alpine AS dependencies
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS dependencies
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -10,6 +10,9 @@ ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
 ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
 ENV STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS}
 ENV STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED}
+# Strapi's constructor asks registry.npmjs.org for its latest version; when that
+# request stalls, `strapi build` cannot exit until TCP gives up (15+ minutes).
+ENV STRAPI_DISABLE_UPDATE_NOTIFICATION=true
 ENV NODE_OPTIONS=${NODE_OPTIONS}
 ENV NODE_ENV=production
 # Build must not use Redis rest-cache (no broker in builder); production runtime sets redis via deploy env.
@@ -18,12 +21,16 @@ ENV CI=true
 
 WORKDIR /repo
 
-COPY .cursor/docker/fallback-apk.sh .cursor/docker/fallback-registry.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/fallback-apk.sh /usr/local/bin/fallback-registry.sh
+COPY .cursor/docker/fallback-apk.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-apk.sh
 
 # Arvan APK mirror + build deps required to compile sharp against Alpine's libvips
 # (avoids GitHub binary download which fails in CI due to network restrictions)
 RUN /usr/local/bin/fallback-apk.sh build-base python3 vips-dev fftw-dev
+
+# Registry fallback changes must not invalidate the expensive native toolchain.
+COPY .cursor/docker/fallback-registry.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-registry.sh
 
 # node-gyp would otherwise download headers from unofficial-builds.nodejs.org (DNS failures in CI).
 # Official node:alpine already installs headers under /usr/local/include/node.
@@ -33,27 +40,30 @@ ENV npm_config_nodedir=/usr/local
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY patches ./patches
 COPY apps/backend/package.json ./apps/backend/package.json
-COPY packages ./packages
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/auth-core/package.json ./packages/auth-core/package.json
 RUN --mount=type=cache,target=/root/.npm \
-    --mount=type=cache,id=infinity-pnpm-store,target=/pnpm-store \
+    --mount=type=cache,id=infinity-pnpm-node20,target=/pnpm-store,sharing=shared \
     --mount=type=cache,target=/root/.cache/node/corepack \
     /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm install --filter @repo/backend... --frozen-lockfile --store-dir /pnpm-store
-# Same corepack cache and registry fallback as every other pnpm invocation
-# here. Without them this line calls bare `pnpm`, corepack tries to fetch
-# pnpm from registry.npmjs.org, and the build dies on a Cloudflare address
-# that is not reachable from this network. The layer cache hid it until a
-# change under packages/ invalidated it.
+COPY packages/api ./packages/api
+COPY packages/auth-core ./packages/auth-core
+# Registry fallback is only for package retrieval. Compilation failures must
+# remain single, original application failures.
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
-    /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm --filter @repo/auth-core build
 
 # Materialize production dependencies before application source is copied. This
 # keeps the expensive pnpm deploy layer reusable for source-only changes.
-RUN --mount=type=cache,target=/root/.cache/node/corepack \
+# The workspace patches storefront-only packages that the backend closure never
+# installs, and a deploy treats an unused patch as fatal (ERR_PNPM_UNUSED_PATCH).
+# Allow it here only, so full-workspace installs still catch a stale patch.
+RUN --mount=type=cache,id=infinity-pnpm-node20,target=/pnpm-store,sharing=shared \
+    --mount=type=cache,target=/root/.cache/node/corepack \
     echo "starting cacheable production dependency deploy..." \
     && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm --filter @repo/backend deploy --legacy --prod /app \
+    pnpm --store-dir /pnpm-store --config.allow-unused-patches=true --filter @repo/backend deploy --legacy --prod /app \
     && cd /app \
     && echo "rebuilding sharp for musl runtime..." \
     && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \
@@ -66,8 +76,7 @@ COPY apps/backend ./apps/backend
 WORKDIR /repo/apps/backend
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
     echo "starting strapi build at $(date -Iseconds)..." \
-    && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm run build \
+    && pnpm run build \
     && echo "strapi build finished at $(date -Iseconds)"
 RUN echo "removing build artifacts..." \
     && rm -rf .strapi .cache .tmp \
@@ -84,11 +93,11 @@ RUN mkdir -p /runtime \
     && mkdir -p /runtime/dist /runtime/build \
     && cp -a /repo/apps/backend/dist/. /runtime/dist/ \
     && if [ -d /repo/apps/backend/build ]; then cp -a /repo/apps/backend/build/. /runtime/build/; fi \
-    && mkdir -p /runtime/public/uploads \
+    && mkdir -p /runtime/public/uploads /runtime/.tmp \
     && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /runtime/public/uploads/ \
     && echo "backend runtime assembly complete"
 
-FROM docker.arvancloud.ir/library/node:20-alpine AS runner
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS runner
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -99,17 +108,21 @@ ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
 ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
 ENV NODE_ENV=production \
     STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED} \
+    STRAPI_DISABLE_UPDATE_NOTIFICATION=true \
     STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS} \
     NODE_OPTIONS=${NODE_OPTIONS}
 
-COPY .cursor/docker/fallback-apk.sh .cursor/docker/fallback-registry.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/fallback-apk.sh /usr/local/bin/fallback-registry.sh
-
+COPY .cursor/docker/fallback-apk.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-apk.sh
 # su-exec so entrypoint can create uploads dir then run as node
 # Alpine default CDN (dl-cdn.alpinelinux.org) is often unreachable from same networks as Docker Hub; use Arvan APK mirror
 # ffmpeg normalizes story video uploads (see src/services/media): the catalogue arrives
 # as HEVC in QuickTime containers, which Chromium parses and then decodes to nothing.
 RUN /usr/local/bin/fallback-apk.sh su-exec vips vips-dev ffmpeg
+RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'libvpx-vp9' \
+    && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'libopus'
+COPY .cursor/docker/fallback-registry.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/fallback-registry.sh
 # Prepare pnpm in the runner layer (builder corepack cache uses --mount=cache and is not COPY-able).
 RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" pnpm --version \
     && mkdir -p /home/node/.cache/node \
@@ -122,6 +135,10 @@ WORKDIR /app
 COPY --link --from=dependencies --chown=1000:1000 /app /app
 COPY --link --from=builder --chown=1000:1000 /runtime /app
 RUN chmod +x /app/docker-entrypoint.sh
+
+# Keep Sentry attribution with this image when another app is released separately.
+ARG RELEASE_SHA=""
+ENV RELEASE_SHA=${RELEASE_SHA}
 
 EXPOSE 1337
 USER root

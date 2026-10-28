@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import { CartService } from "@/services";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import notify from "@/utils/notify";
+import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { cartRequestQueue } from "@/utils/requestQueue";
 import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
@@ -111,6 +112,8 @@ interface CartContextType {
   isLoading: boolean;
   /** False until the first client-side cart init (token + API or localStorage) completes. */
   isCartReady: boolean;
+  authRecoveryUnavailable: boolean;
+  retryAuthRecovery: () => void;
   checkCartStock: () => Promise<boolean>;
   /**
    * Re-fetch the cart from the server (no-op for guest carts).
@@ -152,6 +155,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isCartReady, setIsCartReady] = useState(false);
   const [initializedMode, setInitializedMode] = useState<"guest" | "account" | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  const [authRecoveryUnavailable, setAuthRecoveryUnavailable] = useState(false);
+  const [authRetry, setAuthRetry] = useState(0);
   const [sessionGeneration, setSessionGeneration] = useState(0);
   const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
@@ -162,29 +167,81 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     if (window.location.pathname === "/auth/complete") return;
 
     let active = true;
+    let requestSequence = 0;
+    let needsRecovery = false;
+    let recoveryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const retryDelays = [1_000, 3_000, 8_000];
+    const clearRetry = () => {
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
     const updateLoginState = async (forceRefresh = false) => {
-      const token = await centralAuth.tokenManager.getToken({ forceRefresh }).catch(() => null);
-      if (active) {
-        setIsLoggedIn(Boolean(token));
+      clearRetry();
+      needsRecovery = false;
+      const sequence = ++requestSequence;
+      const requestGeneration = cartInitGenerationRef.current;
+      const outcome = await centralAuth.tokenManager.getTokenOutcome({ forceRefresh });
+      if (
+        !active ||
+        sequence !== requestSequence ||
+        requestGeneration !== cartInitGenerationRef.current
+      )
+        return;
+      needsRecovery = outcome.state === "unavailable";
+      setAuthRecoveryUnavailable(needsRecovery);
+      if (needsRecovery && recoveryAttempt < retryDelays.length) {
+        // A failed initial session check must not lock every PDP until reload.
+        // Retry only this read, with a bounded backoff; never replay cart writes
+        // or treat an unknown account as a guest.
+        const delay = retryDelays[recoveryAttempt++];
+        retryTimer = setTimeout(() => {
+          if (document.visibilityState === "hidden" || navigator.onLine === false) return;
+          void updateLoginState(true);
+        }, delay);
+      }
+      if (outcome.state === "authenticated" || outcome.state === "unauthenticated") {
+        recoveryAttempt = 0;
+        setIsLoggedIn(outcome.state === "authenticated");
         if (forceRefresh) setSessionGeneration((generation) => generation + 1);
       }
     };
-    void updateLoginState();
+    const recoverWhenVisible = () => {
+      if (!needsRecovery || document.visibilityState === "hidden" || navigator.onLine === false)
+        return;
+      recoveryAttempt = 0;
+      void updateLoginState(true);
+    };
+    void updateLoginState(authRetry > 0);
+    window.addEventListener("online", recoverWhenVisible);
+    window.addEventListener("focus", recoverWhenVisible);
+    document.addEventListener("visibilitychange", recoverWhenVisible);
     const unsubscribe = subscribeToAuthState((event) => {
+      clearRetry();
+      needsRecovery = false;
+      recoveryAttempt = 0;
+      requestSequence += 1;
+      cartInitGenerationRef.current += 1;
       if (event.type === "logout") {
+        setAuthRecoveryUnavailable(false);
         setIsLoggedIn(false);
         setSessionGeneration((generation) => generation + 1);
       } else {
         setCartItems([]);
+        setIsLoggedIn(null);
         setIsCartReady(false);
         void updateLoginState(true);
       }
     });
     return () => {
       active = false;
+      clearRetry();
+      window.removeEventListener("online", recoverWhenVisible);
+      window.removeEventListener("focus", recoverWhenVisible);
+      document.removeEventListener("visibilitychange", recoverWhenVisible);
       unsubscribe();
     };
-  }, []);
+  }, [authRetry]);
 
   // Close drawer when path changes
   useEffect(() => {
@@ -660,7 +717,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           notify.error(CART_STOCK_LIMIT_MESSAGE);
         } else {
           hapticError();
-          notify.error("افزودن کالا به سبد خرید با خطا مواجه شد");
+          // The server says why (e.g. the product left the store); errorTranslations
+          // has the Persian for it. Resync, since the page's view of it is stale.
+          await fetchUserCart();
+          notify.error(getUserFacingErrorMessage(error, "افزودن کالا به سبد خرید با خطا مواجه شد"));
         }
       } finally {
         setIsLoading(false);
@@ -750,16 +810,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       // Remove item optimistically
       setCartItems((prev) => prev.filter((item) => item.id !== id && item.cartItemId !== id));
       const undoToastId = showRemoveUndoToast(item);
-      trackAnalyticsEvent({
-        category: "ecommerce",
-        action: "remove_from_cart",
-        valueToman: item.price * item.quantity,
-        properties: {
-          product_id: item.productId,
-          ...(item.variationId ? { variant_id: item.variationId } : {}),
-          quantity: item.quantity,
-        },
-      });
 
       // Queue API call in the background
       try {
@@ -775,6 +825,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           await CartService.removeCartItem(Number(cartItemId));
           await fetchUserCart();
         }, `remove-${cartItemId}`);
+        // Only a removal the server accepted is an outcome.
+        trackAnalyticsEvent({
+          category: "ecommerce",
+          action: "remove_from_cart",
+          valueToman: item.price * item.quantity,
+          properties: {
+            product_id: item.productId,
+            ...(item.variationId ? { variant_id: item.variationId } : {}),
+            quantity: item.quantity,
+          },
+        });
       } catch (error) {
         console.error("Failed to remove item from cart:", error);
         toast.dismiss(undoToastId);
@@ -842,15 +903,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           cartItem.id === id || cartItem.cartItemId === id ? { ...cartItem, quantity } : cartItem,
         ),
       );
-      trackAnalyticsEvent({
-        category: "ecommerce",
-        action: "update_quantity",
-        properties: {
-          product_id: item.productId,
-          ...(item.variationId ? { variant_id: item.variationId } : {}),
-          quantity,
-        },
-      });
 
       // Queue API call in the background
       try {
@@ -867,6 +919,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           // Refresh cart to ensure consistency with backend
           await fetchUserCart();
         }, `update-${cartItemId}`);
+        // Only a quantity the server accepted is an outcome.
+        trackAnalyticsEvent({
+          category: "ecommerce",
+          action: "update_quantity",
+          properties: {
+            product_id: item.productId,
+            ...(item.variationId ? { variant_id: item.variationId } : {}),
+            quantity,
+          },
+        });
       } catch (error: any) {
         console.error("Failed to update cart item:", error);
 
@@ -976,6 +1038,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     cartDiscountTotal,
     isLoading,
     isCartReady,
+    authRecoveryUnavailable,
+    retryAuthRecovery: () => setAuthRetry((value) => value + 1),
     checkCartStock,
     refreshCart: async (options?: { silent?: boolean }) => {
       if (isLoggedIn) {

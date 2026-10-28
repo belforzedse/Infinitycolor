@@ -40,6 +40,8 @@ export default function useAddToCart({
     cartItems,
     updateQuantity,
     isCartReady,
+    authRecoveryUnavailable,
+    retryAuthRecovery,
   } = useCart();
   const [quantity, setQuantity] = useState(1);
   const [isAdding, setIsAdding] = useState(false);
@@ -148,6 +150,8 @@ export default function useAddToCart({
     isAdding,
     isInCart,
     isCartReady,
+    authRecoveryUnavailable,
+    retryAuthRecovery,
     cartItemId,
     addToCart: handleAddToCart,
   };

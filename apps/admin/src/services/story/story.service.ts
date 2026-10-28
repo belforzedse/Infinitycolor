@@ -6,15 +6,12 @@
  */
 import { apiClient } from "@/services";
 import { getStrapiServerUrl, ENDPOINTS } from "@/constants/api";
-import { unwrapStrapiEntity } from "@/utils/strapiEntity";
+import { normalizeStoryEntity, normalizeStoryMediaAsset } from "@repo/api";
 import type {
   Story,
   StoryListParams,
   CreateStoryData,
   UpdateStoryData,
-  StoryMediaAsset,
-  StoryMediaType,
-  StoryOverlay,
 } from "@/types/story";
 
 interface StrapiListResponse<T> {
@@ -32,6 +29,8 @@ interface StrapiListResponse<T> {
 function applyStoryMediaPopulate(query: URLSearchParams): URLSearchParams {
   query.set("populate[Media]", "true");
   query.set("populate[Thumbnail]", "true");
+  query.set("populate[Items][populate][Media]", "true");
+  query.set("populate[Items][populate][Thumbnail]", "true");
   return query;
 }
 
@@ -40,86 +39,10 @@ function storyEndpoint(path: string, extra?: URLSearchParams): string {
   return `${path}?${query.toString()}`;
 }
 
-function asOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function asOptionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function numericMediaId(raw: unknown): number | undefined {
-  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-  if (typeof raw === "string" && raw.trim()) {
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
-}
-
-function isStoryMediaType(value: unknown): value is StoryMediaType {
-  return value === "image" || value === "video";
-}
-
-function normalizeMediaFormats(raw: unknown): StoryMediaAsset["formats"] | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const formats = raw as Record<string, unknown>;
-  const pickUrl = (key: string): { url: string } | undefined => {
-    const entry = formats[key];
-    if (!entry || typeof entry !== "object") return undefined;
-    const url = (entry as { url?: unknown }).url;
-    return typeof url === "string" ? { url } : undefined;
-  };
-  const large = pickUrl("large");
-  const medium = pickUrl("medium");
-  const small = pickUrl("small");
-  const thumbnail = pickUrl("thumbnail");
-  if (!large && !medium && !small && !thumbnail) return undefined;
-  return { large, medium, small, thumbnail };
-}
-
-export function normalizeMediaAsset(raw: unknown): StoryMediaAsset | undefined {
-  const bareId = numericMediaId(raw);
-  if (bareId !== undefined) {
-    return { id: bareId, url: "" };
-  }
-
-  const entity = unwrapStrapiEntity(raw);
-  if (!entity) return undefined;
-
-  return {
-    id: entity.id,
-    url: typeof entity.url === "string" ? entity.url : "",
-    alternativeText: asOptionalString(entity.alternativeText),
-    width: asOptionalNumber(entity.width),
-    height: asOptionalNumber(entity.height),
-    mime: asOptionalString(entity.mime),
-    formats: normalizeMediaFormats(entity.formats),
-  };
-}
+export const normalizeMediaAsset = normalizeStoryMediaAsset;
 
 export function normalizeStory(raw: unknown): Story {
-  const entity = unwrapStrapiEntity(raw);
-  if (!entity) throw new Error("Invalid story data");
-
-  return {
-    id: entity.id,
-    Title: typeof entity.Title === "string" ? entity.Title : "",
-    Slug: typeof entity.Slug === "string" ? entity.Slug : "",
-    IsActive: Boolean(entity.IsActive),
-    SortOrder: asOptionalNumber(entity.SortOrder) ?? 0,
-    MediaType: isStoryMediaType(entity.MediaType) ? entity.MediaType : "image",
-    Media: normalizeMediaAsset(entity.Media),
-    Thumbnail: normalizeMediaAsset(entity.Thumbnail),
-    StartAt: asOptionalString(entity.StartAt),
-    EndAt: asOptionalString(entity.EndAt),
-    DurationMs: asOptionalNumber(entity.DurationMs) ?? 5000,
-    CtaLabel: asOptionalString(entity.CtaLabel),
-    CtaUrl: asOptionalString(entity.CtaUrl),
-    Overlays: Array.isArray(entity.Overlays) ? (entity.Overlays as StoryOverlay[]) : undefined,
-    createdAt: typeof entity.createdAt === "string" ? entity.createdAt : "",
-    updatedAt: typeof entity.updatedAt === "string" ? entity.updatedAt : "",
-  };
+  return normalizeStoryEntity(raw);
 }
 
 // ─── Public (server + client) ────────────────────────────────────────────────

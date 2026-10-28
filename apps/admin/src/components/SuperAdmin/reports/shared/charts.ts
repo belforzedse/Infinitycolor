@@ -25,6 +25,9 @@ export const Line = dynamic(() => import("recharts").then((m) => m.Line), { ssr:
 export const BarChart = dynamic(() => import("recharts").then((m) => m.BarChart), { ssr: false });
 export const Bar = dynamic(() => import("recharts").then((m) => m.Bar), { ssr: false });
 export const AreaChart = dynamic(() => import("recharts").then((m) => m.AreaChart), { ssr: false });
+export const ComposedChart = dynamic(() => import("recharts").then((m) => m.ComposedChart), {
+  ssr: false,
+});
 export const Area = dynamic(() => import("recharts").then((m) => m.Area), { ssr: false });
 export const PieChart = dynamic(() => import("recharts").then((m) => m.PieChart), { ssr: false });
 export const Pie = dynamic(() => import("recharts").then((m) => m.Pie), { ssr: false });
@@ -41,14 +44,8 @@ export const Legend = dynamic(() => import("recharts").then((m) => m.Legend as a
   ssr: false,
 });
 
-/** Consistent categorical palette for pie/bar charts across every report page. */
-export const REPORT_CHART_COLORS = [
-  "#6366f1",
-  "#22c55e",
-  "#f59e0b",
-  "#ef4444",
-  "#06b6d4",
-  "#a855f7",
-  "#84cc16",
-  "#ec4899",
-];
+/**
+ * The chart colours live in `chartTheme.ts` and are re-exported here, so a
+ * page that draws a chart imports everything from one place.
+ */
+export * from "./chartTheme";

@@ -1,104 +1,103 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { getMySeenStoryIds, markStorySeen } from "@/services/story/story.service";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getMySeenStoryItems, markStoryItemSeen } from "@/services/story/story.service";
 
-const LS_KEY = "story_seen_ids";
+const LS_KEY = "story_seen_items_v2";
+const LEGACY_LS_KEY = "story_seen_ids";
+type SeenMap = Map<number, Set<string>>;
 
-function readLocalSeenIds(): number[] {
-  if (typeof window === "undefined") return [];
+function readLocalSeenItems(): SeenMap {
+  const result: SeenMap = new Map();
+  if (typeof window === "undefined") return result;
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as number[]) : [];
+    const parsed = JSON.parse(localStorage.getItem(LS_KEY) || "[]") as unknown;
+    if (Array.isArray(parsed)) {
+      for (const row of parsed) {
+        if (!Array.isArray(row) || typeof row[0] !== "number" || !Array.isArray(row[1])) continue;
+        result.set(row[0], new Set(row[1].filter((key): key is string => typeof key === "string")));
+      }
+    }
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_LS_KEY) || "[]") as unknown;
+    if (Array.isArray(legacy)) {
+      for (const id of legacy) {
+        if (typeof id !== "number") continue;
+        const keys = result.get(id) ?? new Set<string>();
+        keys.add(`legacy:${id}`);
+        result.set(id, keys);
+      }
+    }
   } catch {
-    return [];
+    return result;
+  }
+  return result;
+}
+
+function writeLocalSeenItems(items: SeenMap) {
+  try {
+    localStorage.setItem(
+      LS_KEY,
+      JSON.stringify([...items.entries()].map(([storyId, keys]) => [storyId, [...keys]])),
+    );
+  } catch {
+    // Private mode or exhausted storage: in-memory seen state still works.
   }
 }
 
-function writeLocalSeenIds(ids: number[]) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(ids));
-  } catch {
-    // storage full or private mode — silent fail
+function mergeSeen(base: SeenMap, rows: Array<{ storyId: number; itemKeys: string[] }>): SeenMap {
+  const next = new Map([...base.entries()].map(([id, keys]) => [id, new Set(keys)]));
+  for (const row of rows) {
+    const keys = next.get(row.storyId) ?? new Set<string>();
+    row.itemKeys.forEach((key) => keys.add(key));
+    next.set(row.storyId, keys);
   }
+  return next;
 }
 
-/**
- * Manages the set of seen story IDs.
- * - Guests: localStorage only.
- * - Authenticated users: merges localStorage with server-side list on mount,
- *   then calls the API on each markSeen.
- */
 export function useStoriesSeenState(isAuthenticated: boolean) {
-  // Start with an empty set so SSR and first client render match exactly.
-  const [seenIds, setSeenIds] = useState<Set<number>>(new Set());
+  const [seenItems, setSeenItems] = useState<SeenMap>(new Map());
+  const reportedRef = useRef(new Set<string>());
 
-  // Ids this session has already reported. The `setSeenIds` guard below cannot serve
-  // this purpose: it runs inside a state updater, which React may invoke twice (Strict
-  // Mode) and which does not gate the network call that follows it. Without this, opening
-  // a story posted a view for it more than once.
-  const reportedRef = useRef<Set<number>>(new Set());
-
-  // Hydrate local seen IDs after mount (client only).
-  useEffect(() => {
-    const localIds = readLocalSeenIds();
-    if (!localIds.length) return;
-    setSeenIds((prev) => {
-      const merged = new Set<number>();
-      Array.from(prev).forEach((id) => merged.add(id));
-      localIds.forEach((id) => merged.add(id));
-      return merged;
-    });
-  }, []);
-
-  // Merge server-side seen IDs for authenticated users
+  useEffect(() => setSeenItems(readLocalSeenItems()), []);
   useEffect(() => {
     if (!isAuthenticated) return;
-    (async () => {
-      try {
-        const serverIds = await getMySeenStoryIds();
-        setSeenIds((prev) => {
-          const merged = new Set<number>();
-          Array.from(prev).forEach((id) => merged.add(id));
-          serverIds.forEach((id) => merged.add(id));
-          writeLocalSeenIds(Array.from(merged));
-          return merged;
+    void getMySeenStoryItems()
+      .then((rows) => {
+        setSeenItems((current) => {
+          const next = mergeSeen(current, rows);
+          writeLocalSeenItems(next);
+          return next;
         });
-      } catch {
-        // network error — silently keep local state
-      }
-    })();
+      })
+      .catch(() => undefined);
   }, [isAuthenticated]);
 
   const markSeen = useCallback(
-    async (storyId: number) => {
-      setSeenIds((prev) => {
-        if (prev.has(storyId)) return prev;
-        const next = new Set(prev);
-        next.add(storyId);
-        writeLocalSeenIds(Array.from(next));
+    async (storyId: number, itemKey = `legacy:${storyId}`) => {
+      setSeenItems((current) => {
+        if (current.get(storyId)?.has(itemKey)) return current;
+        const next = mergeSeen(current, [{ storyId, itemKeys: [itemKey] }]);
+        writeLocalSeenItems(next);
         return next;
       });
-
       if (!isAuthenticated) return;
-      if (reportedRef.current.has(storyId)) return;
-      reportedRef.current.add(storyId);
-
+      const reportKey = `${storyId}:${itemKey}`;
+      if (reportedRef.current.has(reportKey)) return;
+      reportedRef.current.add(reportKey);
       try {
-        await markStorySeen(storyId);
+        await markStoryItemSeen(storyId, itemKey);
       } catch {
-          // network error — local state already updated
-        // Allow a later attempt: the view is recorded locally either way, but a dropped
-        // request should not permanently lose the server-side record.
-        reportedRef.current.delete(storyId);
+        reportedRef.current.delete(reportKey);
       }
     },
-    [isAuthenticated]
+    [isAuthenticated],
   );
 
-  const hasSeen = useCallback((storyId: number) => seenIds.has(storyId), [seenIds]);
-
-  return { seenIds, markSeen, hasSeen };
+  const seenIds = useMemo(() => new Set(seenItems.keys()), [seenItems]);
+  const hasSeen = useCallback(
+    (storyId: number, itemKey?: string) =>
+      itemKey ? Boolean(seenItems.get(storyId)?.has(itemKey)) : seenItems.has(storyId),
+    [seenItems],
+  );
+  return { seenIds, seenItems, markSeen, hasSeen };
 }

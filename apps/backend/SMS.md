@@ -81,3 +81,27 @@ Approved pattern text:
 ## Key Rotation
 
 Rotate `IP_PANEL_API_KEY` in the deployment environment variable store, restart the backend processes, and verify a disabled-mode local test plus one controlled staging send. Never commit real API keys to this repository.
+
+## Delayed shipping notification
+
+Completing an order still moves it through `Done` to `Shipment` and starts Anipo
+registration immediately. The customer shipping SMS is due 48 elapsed hours after
+that successful action. Its due timestamp is persisted in the same order
+transaction; a commerce-maintenance scheduler dispatches due messages every
+minute, so worker downtime delays delivery rather than losing the timer.
+
+The sender reads the current order and barcode at dispatch. Barcode updates do
+not send an early SMS or move the deadline. The existing shipped pattern receives
+`trackingCode` with the latest barcode, or `—` when no barcode is available.
+Cancelled/returned orders are excluded. Historical shipped orders are not
+backfilled, avoiding repeat messages for orders already notified before release.
+
+The dispatcher locks one order at a time, deduplicates by its due timestamp, and
+persists completion after provider acceptance. Known failures remain pending with
+a five-minute retry interval. Transport timeouts, lost responses and server
+errors are recorded as uncertain and are not resent automatically. Inspect the
+order's SMS audit before manually retrying an uncertain submission.
+
+Deployment requires the additive `2026.10.23T10.00.00.add-delayed-shipping-sms`
+migration and the updated backend API, workers and scheduler. No new environment
+variables or IPPanel pattern are required.

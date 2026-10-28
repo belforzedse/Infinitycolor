@@ -68,3 +68,33 @@ export async function clearProductOriginCaches(
     strapi?.log?.warn?.(`[${logPrefix}] storefront revalidation failed`, error);
   }
 }
+
+/**
+ * Clear every cached product surface at once, for a write that no single slug
+ * owns — a shared colour row is rendered by every product that uses it.
+ *
+ * `{ tag: "product" }` alone reaches all of them in the storefront: the PDP,
+ * PLP, colour filter list and homepage rails all carry `PRODUCT_TAG`. Never
+ * throws; a cache concern must not fail the write that triggered it.
+ */
+export async function clearAllProductCaches(strapi: any, logPrefix = "product-origin-cache"): Promise<void> {
+  try {
+    await delByPattern("endpoint-cache:product.");
+  } catch (error) {
+    strapi?.log?.warn?.(`[${logPrefix}] endpoint cache clear failed`, error);
+  }
+
+  try {
+    const restCache = strapi?.plugin?.("rest-cache");
+    const cacheStore = restCache?.service?.("cacheStore");
+    await cacheStore?.clearByUid?.("api::product.product", {}, true);
+  } catch (error) {
+    strapi?.log?.warn?.(`[${logPrefix}] rest-cache clear failed`, error);
+  }
+
+  try {
+    await triggerFrontendRevalidation({ tag: "product" }, logPrefix);
+  } catch (error) {
+    strapi?.log?.warn?.(`[${logPrefix}] storefront revalidation failed`, error);
+  }
+}

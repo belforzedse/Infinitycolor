@@ -74,19 +74,3 @@ export const PRODUCT_BOOST_KEYWORDS: readonly string[] = [
 ];
 
 export type ProductBoostKeyword = string;
-
-/**
- * Builds Strapi $containsi filter for product Title matching any keyword.
- * Single keyword: filters[Title][$containsi]=X
- * Multiple keywords: filters[$or][0][Title][$containsi]=X&filters[$or][1][Title][$containsi]=Y
- */
-export function buildTitleKeywordFilter(): string {
-  const keywords = PRODUCT_BOOST_KEYWORDS;
-  if (keywords.length === 0) return "";
-  if (keywords.length === 1) {
-    return `filters[Title][$containsi]=${encodeURIComponent(keywords[0])}`;
-  }
-  return keywords
-    .map((kw, i) => `filters[$or][${i}][Title][$containsi]=${encodeURIComponent(kw)}`)
-    .join("&");
-}

@@ -27,6 +27,7 @@ jest.mock("@/contexts/CartContext", () => ({
     totalPrice: 100_000,
     totalItems: 1,
     cartItems: [{ id: "1", cartItemId: "10", variationId: "100", quantity: 1, price: 100_000 }],
+    isCartReady: true,
     clearCart: jest.fn(),
     openDrawer: jest.fn(),
     refreshCart: jest.fn(),
@@ -57,6 +58,8 @@ jest.mock("@/lib/analytics", () => ({
   getAnalyticsCorrelationId: jest.fn(() => "test-correlation"),
   trackFunnelStep: jest.fn(),
   trackAnalyticsEvent: jest.fn(),
+  trackCheckoutFailure: jest.fn(),
+  checkoutFailureCategoryForCode: jest.fn(() => "unknown"),
 }));
 
 jest.mock("./InformationForm", () => ({

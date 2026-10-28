@@ -1,6 +1,11 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
+import {
+  retryStorefrontError,
+  reportStorefrontError,
+  exhaustStorefrontRecovery,
+  RECOVERY_WINDOW_MS,
+} from "@/lib/storefront-recovery";
 import { useEffect, useRef } from "react";
 
 export default function GlobalError({
@@ -14,19 +19,31 @@ export default function GlobalError({
   /** Older runtimes only cleared client error state without re-fetching. */
   reset?: () => void;
 }) {
+  const handledError = useRef<Error | null>(null);
+  const retriedError = useRef<Error | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // Prefer retry so a root-layout Server Component failure actually re-fetches
   // (reset alone leaves PRODUCT_DATA_UNAVAILABLE-class errors stuck).
   const recover = retry ?? reset;
 
   useEffect(() => {
+    if (handledError.current === error) return;
+    handledError.current = error;
     headingRef.current?.focus();
-    if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return;
-    Sentry.withScope((scope) => {
-      scope.setTag("recovery_surface", "root-layout");
-      if (error.digest) scope.setTag("next_error_digest", error.digest);
-      Sentry.captureException(error);
-    });
+    if (recover && retryStorefrontError(error, "root-layout", recover)) {
+      retriedError.current = error;
+      return;
+    }
+    reportStorefrontError(error, "root-layout");
+  }, [error, recover]);
+
+  useEffect(() => {
+    if (retriedError.current !== error) return;
+    const timeout = window.setTimeout(() => {
+      retriedError.current = null;
+      exhaustStorefrontRecovery(error, "root-layout");
+    }, RECOVERY_WINDOW_MS);
+    return () => window.clearTimeout(timeout);
   }, [error]);
 
   return (

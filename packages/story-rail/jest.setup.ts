@@ -1,5 +1,10 @@
 import "@testing-library/jest-dom";
 
+Object.defineProperty(window, "scrollTo", {
+  configurable: true,
+  value: jest.fn(),
+});
+
 // jsdom implements no media pipeline at all: play/pause/load are unimplemented stubs and
 // readyState/videoWidth/duration are read-only zeros. `installMediaStub` in
 // src/__tests__/media-stub.ts replaces them per test with a controllable fake, which is

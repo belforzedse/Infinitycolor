@@ -178,6 +178,32 @@ describe("registerAppLifecycles", () => {
     }
   });
 
+  it("persists the 48-hour deadline in the generic completion update and rejects client scheduling fields", async () => {
+    const { strapi, subscribers } = createMockStrapi();
+    strapi.entityService.findOne.mockResolvedValue({ id: 10, Status: "Started" });
+    registerAppLifecycles(strapi);
+    const subscriber = getSubscriber(subscribers, "api::order.order");
+    const data: any = {
+      Status: "Done", ShippingSmsDueAt: "2000-01-01T00:00:00.000Z",
+      ShippingSmsCompletedAt: "2000-01-01T00:00:00.000Z", ShippingSmsLastAttemptAt: "2000-01-01T00:00:00.000Z",
+    };
+    const before = Date.now();
+    await subscriber.beforeUpdate({ params: { where: { id: 10 }, data }, state: {} });
+    expect(Date.parse(data.ShippingSmsDueAt)).toBeGreaterThanOrEqual(before + 48 * 60 * 60 * 1000);
+    expect(Date.parse(data.ShippingSmsDueAt)).toBeLessThanOrEqual(Date.now() + 48 * 60 * 60 * 1000);
+    expect(data.ShippingSmsCompletedAt).toBeUndefined();
+    expect(data.ShippingSmsLastAttemptAt).toBeUndefined();
+  });
+
+  it("does not reset the shipping deadline when a tracking barcode arrives", async () => {
+    const { strapi, subscribers } = createMockStrapi();
+    strapi.entityService.findOne.mockResolvedValue({ id: 10, Status: "Shipment" });
+    registerAppLifecycles(strapi);
+    const data: any = { ShippingBarcode: "LATEST" };
+    await getSubscriber(subscribers, "api::order.order").beforeUpdate({ params: { where: { id: 10 }, data }, state: {} });
+    expect(data).toEqual({ ShippingBarcode: "LATEST" });
+  });
+
   it("keeps technical order effects but leaves canonical audit to the owning mutation", async () => {
     const { strapi, subscribers, activityService } = createMockStrapi();
     strapi.entityService.findOne
@@ -278,6 +304,47 @@ describe("registerAppLifecycles", () => {
         oldStatus,
         newStatus,
       })
+    );
+  });
+
+  it("prefers CancellationReason over Description/Note for the cancellation SMS and timeline entry", async () => {
+    const { strapi, subscribers, activityService } = createMockStrapi();
+    strapi.entityService.findOne
+      .mockResolvedValueOnce({
+        id: 14,
+        Status: "Paying",
+        Type: "Cart",
+        Description: "an old unrelated admin note",
+        user: { id: 5 },
+      })
+      .mockResolvedValueOnce({
+        id: 14,
+        Status: "Cancelled",
+        Type: "Cart",
+        Description: "an old unrelated admin note",
+        CancellationReason: "پرداخت توسط درگاه تایید نشد",
+        user: { id: 5 },
+      });
+
+    registerAppLifecycles(strapi);
+    const subscriber = getSubscriber(subscribers, "api::order.order");
+    const event = { params: { where: { id: 14 } }, result: { id: 14 }, state: {} };
+
+    await subscriber.beforeUpdate(event);
+    await subscriber.afterUpdate(event);
+
+    expect(notifyOrderStatusSms).toHaveBeenCalledWith(
+      strapi,
+      expect.objectContaining({
+        orderId: 14,
+        newStatus: "Cancelled",
+        reason: "پرداخت توسط درگاه تایید نشد",
+      })
+    );
+    expect(activityService.logOrderCancelled).toHaveBeenCalledWith(
+      5,
+      14,
+      "پرداخت توسط درگاه تایید نشد",
     );
   });
 

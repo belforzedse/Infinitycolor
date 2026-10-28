@@ -1,7 +1,20 @@
 import { parsePositiveInt } from "../../../utils/parsePositiveInt";
 
 export const UMAMI_REPORT_TIMEZONE = process.env.REPORT_TIMEZONE || "Asia/Tehran";
-export const UMAMI_DEFINITION_VERSION = "umami-infinity-v1";
+export const UMAMI_DEFINITION_VERSION = "umami-infinity-v2";
+/**
+ * The Umami release these reports are written against (verified on
+ * alp-services 2026-09-24). Umami exposes no version endpoint, so this is the
+ * declared contract, not a live detection.
+ */
+export const UMAMI_CONTRACT_VERSION = "3.3.1";
+const DEFAULT_DATA_START = "2026-08-09";
+
+/** First trustworthy behavior date; earlier buckets are «no data», never zero. */
+export function umamiDataStart(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = String(env.UMAMI_DATA_START_DATE || "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(configured) ? configured : DEFAULT_DATA_START;
+}
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -387,6 +400,58 @@ export class UmamiClient {
     );
   }
 
+  /**
+   * Pageviews and distinct sessions per bucket. Umami 3.3.1 truncates in the
+   * requested timezone and returns `x` as Tehran wall-clock text.
+   */
+  async pageviewSeries(
+    range: UmamiRange,
+    unit: SeriesUnit,
+    websiteId = this.config.websiteId,
+    filters: Record<string, string> = {},
+  ): Promise<Record<string, any>> {
+    const query = new URLSearchParams({
+      startAt: String(toTimestamp(range.startDate, false)),
+      endAt: String(toTimestamp(range.endDate, true)),
+      unit,
+      timezone: UMAMI_REPORT_TIMEZONE,
+    });
+    Object.entries(standardUmamiFilters(filters)).forEach(([key, value]) => query.set(key, value));
+    return assertResponseShape(
+      await this.request(
+        `/api/websites/${encodeURIComponent(websiteId)}/pageviews?${query}`,
+        {},
+        websiteId,
+      ),
+      "record",
+    );
+  }
+
+  /**
+   * Distinct sessions per weekday and hour, summed over the range, in Tehran
+   * wall-clock time: a 7×24 matrix whose row 0 is Sunday (Postgres `dow`).
+   */
+  async weeklyTraffic(
+    range: UmamiRange,
+    websiteId = this.config.websiteId,
+    filters: Record<string, string> = {},
+  ): Promise<unknown[]> {
+    const query = new URLSearchParams({
+      startAt: String(toTimestamp(range.startDate, false)),
+      endAt: String(toTimestamp(range.endDate, true)),
+      timezone: UMAMI_REPORT_TIMEZONE,
+    });
+    Object.entries(standardUmamiFilters(filters)).forEach(([key, value]) => query.set(key, value));
+    return assertResponseShape(
+      await this.request(
+        `/api/websites/${encodeURIComponent(websiteId)}/sessions/weekly?${query}`,
+        {},
+        websiteId,
+      ),
+      "array",
+    );
+  }
+
   async realtime(websiteId = this.config.websiteId): Promise<Record<string, any>> {
     return assertResponseShape(
       await this.request(`/api/realtime/${encodeURIComponent(websiteId)}`, {}, websiteId),
@@ -505,6 +570,62 @@ function normalizeNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/** Missing provider values stay null so reports show «—», never a fake zero. */
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * The storefront funnels. `discovery`, `checkout` and `payment` mirror the
+ * reports `deploy/umami/bin/provision` creates in Umami (docs/analytics.md);
+ * change both together. `core` is the admin's end-to-end view and has no
+ * Umami-side copy. `window` is Umami's maximum gap in minutes between two
+ * consecutive steps, chosen from observed production step gaps.
+ *
+ * `discovery` is exactly the first three steps of `core` with the same window
+ * (Umami computes each level from the one before it only), so the report
+ * derives it from `core` instead of asking Umami twice.
+ */
+export const UMAMI_FUNNELS = {
+  core: {
+    window: 24 * 60,
+    steps: [
+      "view_item",
+      "add_to_cart",
+      "begin_checkout",
+      "add_shipping_info",
+      "place_order_attempt",
+      "purchase",
+    ],
+  },
+  discovery: { window: 24 * 60, steps: ["view_item", "add_to_cart", "begin_checkout"] },
+  checkout: {
+    window: 60,
+    steps: ["begin_checkout", "add_shipping_info", "place_order_attempt", "purchase"],
+  },
+  payment: { window: 60, steps: ["payment_redirect", "purchase"] },
+} as const;
+
+/** Funnels the admin can request per bucket or per segment. */
+export const DETAIL_FUNNELS = ["core", "checkout", "payment"] as const;
+export type DetailFunnel = (typeof DETAIL_FUNNELS)[number];
+
+/**
+ * Server-origin diagnostics. They live in the backend's own Umami session (see
+ * report/analytics/outbox.ts), so they are kept out of every visitor-level view:
+ * journeys, realtime, and path tables. `/commerce/purchase` is the retired
+ * server purchase, still present in history until it is purged.
+ */
+const SERVER_EVENT_NAMES = new Set(["order_paid", "refund"]);
+const SERVER_PATH_PREFIX = "/commerce/";
+
+function isServerStep(value: unknown): boolean {
+  const raw = String(value ?? "").trim();
+  return SERVER_EVENT_NAMES.has(raw) || raw.startsWith(SERVER_PATH_PREFIX);
+}
+
 function rows(value: unknown): Array<Record<string, any>> {
   return Array.isArray(value)
     ? value.filter((row): row is Record<string, any> => isRecord(row))
@@ -512,19 +633,258 @@ function rows(value: unknown): Array<Record<string, any>> {
 }
 
 function rowLabel(row: Record<string, any>): string {
-  return String(row.name ?? row.label ?? row.value ?? "Unknown").trim() || "Unknown";
+  return String(row.name ?? row.label ?? row.utm ?? row.value ?? "Unknown").trim() || "Unknown";
 }
 
-function metricRows(value: unknown) {
-  return rows(value).map((row) => ({
-    label: rowLabel(row),
-    pageviews: normalizeNumber(row.pageviews ?? row.views),
-    visitors: normalizeNumber(row.visitors),
-    visits: normalizeNumber(row.visits),
-    bounces: normalizeNumber(row.bounces),
-    totaltime: normalizeNumber(row.totaltime ?? row.totalTime),
-    value: normalizeNumber(row.value ?? row.count ?? row.events),
-  }));
+function withoutNulls<T extends Record<string, unknown>>(row: T): T {
+  return Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as T;
+}
+
+/**
+ * Normalizes a `metrics/expanded` table. Event tables report how often each
+ * event fired (`count`, which Umami returns in `pageviews`) plus the visitors
+ * and visits that fired it; page-only fields such as bounces and time are not
+ * meaningful per event and are dropped. Missing values are omitted, not zeroed.
+ */
+function metricRows(value: unknown, type?: string) {
+  const source =
+    type === "event" ? rows(value).filter((row) => !isServerStep(rowLabel(row))) : rows(value);
+  return source.map((row) => {
+    if (type === "event") {
+      return withoutNulls({
+        label: rowLabel(row),
+        count: numberOrNull(row.pageviews ?? row.views ?? row.count),
+        visitors: numberOrNull(row.visitors),
+        visits: numberOrNull(row.visits),
+      });
+    }
+    return withoutNulls({
+      label: rowLabel(row),
+      pageviews: numberOrNull(row.pageviews ?? row.views),
+      visitors: numberOrNull(row.visitors),
+      visits: numberOrNull(row.visits),
+      bounces: numberOrNull(row.bounces),
+      totaltime: numberOrNull(row.totaltime ?? row.totalTime),
+      value: numberOrNull(row.value ?? row.count ?? row.events),
+    });
+  });
+}
+
+/** `{label, value}` rows from a report group, dropping rows without a count. */
+function countRows(value: unknown) {
+  return rows(value).flatMap((row) => {
+    const count = numberOrNull(row.value ?? row.visitors ?? row.views ?? row.count);
+    return count === null ? [] : [{ label: rowLabel(row), value: count }];
+  });
+}
+
+/** Umami's UTM report groups rows per parameter as `{utm, views}`. */
+function utmGroups(value: unknown) {
+  const record = isRecord(value) ? value : {};
+  return Object.fromEntries(
+    ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"].map((key) => [
+      key,
+      countRows(record[key]),
+    ]),
+  );
+}
+
+/** Umami's attribution report groups sessions per source dimension. */
+function attributionGroups(value: unknown) {
+  const record = isRecord(value) ? value : {};
+  const total = isRecord(record.total) ? record.total : {};
+  return {
+    referrer: countRows(record.referrer),
+    paidAds: countRows(record.paidAds),
+    utm_source: countRows(record.utm_source),
+    utm_medium: countRows(record.utm_medium),
+    utm_campaign: countRows(record.utm_campaign),
+    total: withoutNulls({
+      visitors: numberOrNull(total.visitors),
+      visits: numberOrNull(total.visits),
+    }),
+  };
+}
+
+/** Visitor journeys only: a path through a server diagnostic is not a visitor path. */
+function visitorJourneys(value: unknown) {
+  return rows(value).filter(
+    (row) => !Object.keys(row).some((key) => /^e\d+$/.test(key) && isServerStep(row[key])),
+  );
+}
+
+/**
+ * Filters an ordered funnel, goal or attribution can honor. Umami 3.3.1 keeps
+ * browser, OS, device, language and geography on the session, so they narrow
+ * *who* is counted. Every other filter (path, referrer, title, tag, hostname,
+ * event, UTM) is a column of individual event rows: on Postgres Umami tests it
+ * against the first step's own row (on ClickHouse, every step's), so a
+ * campaign filter would keep only visitors whose product view itself carried
+ * the campaign URL, not the visitors the campaign brought. Those are reported
+ * back as ignored instead of being applied.
+ */
+const SESSION_FILTER_KEYS = new Set([
+  "os",
+  "browser",
+  "device",
+  "language",
+  "country",
+  "region",
+  "city",
+  "segment",
+  "cohort",
+  "match",
+]);
+
+export function stepFilterScope(filters: Record<string, string>): {
+  applied: Record<string, string>;
+  ignored: string[];
+} {
+  const applied: Record<string, string> = {};
+  const ignored: string[] = [];
+  for (const [key, value] of Object.entries(filters)) {
+    if (SESSION_FILTER_KEYS.has(key)) applied[key] = value;
+    else ignored.push(key);
+  }
+  // `match` alone narrows nothing and would only confuse the "applied" list.
+  if (Object.keys(applied).length === 1 && applied.match) delete applied.match;
+  return { applied, ignored: ignored.sort() };
+}
+
+function stepFilterSummary(scope: ReturnType<typeof stepFilterScope>) {
+  return {
+    applied: Object.keys(scope.applied).filter((key) => key !== "match").sort(),
+    ignored: scope.ignored,
+  };
+}
+
+/** Umami's funnel step, with non-finite ratios (step 1's `dropoff`) as null. */
+function funnelSteps(value: unknown) {
+  return rows(value).map((row) =>
+    withoutNulls({
+      type: typeof row.type === "string" ? row.type : "event",
+      value: String(row.value ?? "").trim(),
+      visitors: numberOrNull(row.visitors),
+      previous: numberOrNull(row.previous),
+      dropped: numberOrNull(row.dropped),
+      dropoff: numberOrNull(row.dropoff),
+      remaining: numberOrNull(row.remaining),
+    }),
+  );
+}
+
+/**
+ * The first `length` steps of an ordered funnel. Umami builds level N only
+ * from level N-1, so a prefix with the same window is that funnel exactly,
+ * and every ratio (anchored on the unchanged first step) carries over.
+ */
+function funnelPrefix(steps: Array<Record<string, any>>, length: number) {
+  return steps.slice(0, length).map((step) => ({ ...step }));
+}
+
+function goalCounts(value: unknown) {
+  const record = isRecord(value) ? value : {};
+  return withoutNulls({ num: numberOrNull(record.num), total: numberOrNull(record.total) });
+}
+
+export type SeriesUnit = "hour" | "day" | "month";
+
+function inclusiveDays(range: UmamiRange): number {
+  return (
+    Math.round((parseYmdUtc(range.endDate).getTime() - parseYmdUtc(range.startDate).getTime()) / DAY_MS) +
+    1
+  );
+}
+
+/** Hourly for a day or two, daily up to four months, then monthly. */
+export function seriesUnitForRange(range: UmamiRange): SeriesUnit {
+  const days = inclusiveDays(range);
+  if (days <= 2) return "hour";
+  if (days <= 120) return "day";
+  return "month";
+}
+
+function ymdUtc(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** Every bucket key of the range, as Umami formats `x` in the report timezone. */
+export function seriesKeys(range: UmamiRange, unit: SeriesUnit): string[] {
+  const keys: string[] = [];
+  const end = parseYmdUtc(range.endDate).getTime();
+  for (let day = parseYmdUtc(range.startDate).getTime(); day <= end; day += DAY_MS) {
+    const ymd = ymdUtc(new Date(day));
+    if (unit === "hour") {
+      for (let hour = 0; hour < 24; hour += 1) keys.push(`${ymd} ${String(hour).padStart(2, "0")}`);
+    } else if (unit === "month") {
+      if (keys[keys.length - 1] !== ymd.slice(0, 7)) keys.push(ymd.slice(0, 7));
+    } else {
+      keys.push(ymd);
+    }
+  }
+  return keys;
+}
+
+function seriesKey(value: unknown, unit: SeriesUnit): string {
+  const raw = String(value ?? "").trim().replace("T", " ");
+  return unit === "hour" ? raw.slice(0, 13) : unit === "month" ? raw.slice(0, 7) : raw.slice(0, 10);
+}
+
+function pointMap(value: unknown, unit: SeriesUnit): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of rows(value)) {
+    const count = numberOrNull(row.y);
+    if (count !== null) map.set(seriesKey(row.x, unit), count);
+  }
+  return map;
+}
+
+/**
+ * One point per bucket of the range. A bucket Umami returned nothing for is
+ * `null` («no data recorded»), never 0: for this storefront an empty day means
+ * the collector was down, and a bucket before the data-start date has no data
+ * by definition.
+ */
+function trendSeries(value: unknown, range: UmamiRange, unit: SeriesUnit) {
+  const record = isRecord(value) ? value : {};
+  const pageviews = pointMap(record.pageviews, unit);
+  const visitors = pointMap(record.sessions, unit);
+  const dataStart = umamiDataStart();
+  return {
+    unit,
+    points: seriesKeys(range, unit).map((t) => {
+      const beforeData = t.slice(0, 10) < dataStart.slice(0, t.length >= 10 ? 10 : 7);
+      return {
+        t,
+        pageviews: beforeData ? null : (pageviews.get(t) ?? null),
+        visitors: beforeData ? null : (visitors.get(t) ?? null),
+      };
+    }),
+  };
+}
+
+/**
+ * The weekday × hour grid. `sessions[d][h]` sums, over every day d of the week
+ * in the range, the sessions active in hour h (row 0 is Sunday). `days[d]`
+ * says how many such days had data (none before the data-start date), so the
+ * admin can average per day: a 30-day range holds five of two weekdays and
+ * four of the rest, and raw sums would crown whichever weekday occurred more.
+ */
+function weeklyGrid(value: unknown, range: UmamiRange) {
+  const grid = Array.isArray(value) ? value : [];
+  const sessions = Array.from({ length: 7 }, (_, day) => {
+    const row = Array.isArray(grid[day]) ? grid[day] : [];
+    return Array.from({ length: 24 }, (_, hour) => numberOrNull(row[hour]));
+  });
+  if (grid.length !== 7 || sessions.some((row) => row.some((count) => count === null || count < 0))) {
+    throw new Error("UMAMI_INVALID_RESPONSE");
+  }
+  const dataStart = umamiDataStart();
+  const days = Array.from({ length: 7 }, () => 0);
+  for (let ymd = range.startDate; ymd <= range.endDate; ymd = addDays(ymd, 1)) {
+    if (ymd >= dataStart) days[parseYmdUtc(ymd).getUTCDay()] += 1;
+  }
+  return { timezone: UMAMI_REPORT_TIMEZONE, firstDay: "sunday", sessions, days };
 }
 
 export type UmamiBehaviorPayload = {
@@ -547,7 +907,7 @@ const metricTypes = {
     "utmTerm",
   ],
   content: ["path", "entry", "exit", "title", "event", "tag"],
-  audience: ["device", "browser", "os", "language", "country", "region", "city"],
+  audience: ["device", "browser", "os", "screen", "language", "country", "region", "city"],
   conversion: ["event"],
   performance: [],
 } as const;
@@ -671,6 +1031,25 @@ async function captureSection(
   }
 }
 
+async function runFunnel(
+  client: UmamiClient,
+  dates: ReturnType<typeof reportParameters>,
+  definition: { window: number; steps: readonly string[] },
+  filters: Record<string, string>,
+) {
+  return funnelSteps(
+    await client.report(
+      "funnel",
+      {
+        ...dates,
+        window: definition.window,
+        steps: definition.steps.map((value) => ({ type: "event", value })),
+      },
+      filters,
+    ),
+  );
+}
+
 export async function getUmamiBehaviorReport(
   kind: keyof typeof metricTypes | "overview",
   range: UmamiRange,
@@ -690,13 +1069,13 @@ export async function getUmamiBehaviorReport(
   const errors: Record<string, string> = {};
   try {
     const summary = await client.statistics(range, undefined, filters);
-    sections.summary = {
-      pageviews: normalizeNumber(summary.pageviews ?? summary.views),
-      visitors: normalizeNumber(summary.visitors),
-      visits: normalizeNumber(summary.visits),
-      bounces: normalizeNumber(summary.bounces),
-      totaltime: normalizeNumber(summary.totaltime),
-    };
+    sections.summary = withoutNulls({
+      pageviews: numberOrNull(summary.pageviews ?? summary.views),
+      visitors: numberOrNull(summary.visitors),
+      visits: numberOrNull(summary.visits),
+      bounces: numberOrNull(summary.bounces),
+      totaltime: numberOrNull(summary.totaltime),
+    });
   } catch (error: any) {
     errors.summary = String(error?.message || error).slice(0, 80);
   }
@@ -704,7 +1083,7 @@ export async function getUmamiBehaviorReport(
   const settled = await Promise.allSettled(
     types.map(
       async (type) =>
-        [type, metricRows(await client.metrics(type, range, undefined, 100, filters))] as const,
+        [type, metricRows(await client.metrics(type, range, undefined, 100, filters), type)] as const,
     ),
   );
   settled.forEach((result, index) => {
@@ -712,58 +1091,72 @@ export async function getUmamiBehaviorReport(
     if (result.status === "fulfilled") sections[type] = result.value[1];
     else errors[type] = String(result.reason?.message || result.reason).slice(0, 80);
   });
-  if (options.advanced && !sections.series) {
-    try {
-      const series = await client.metrics("path", range, undefined, 500, filters);
-      sections.series = metricRows(series);
-    } catch (error: any) {
-      errors.series = String(error?.message || error).slice(0, 80);
-    }
-  }
-
   const dates = reportParameters(range);
-  if (kind === "acquisition") {
+  // Goal, funnel and attribution are defined by their own steps and join on the
+  // session: only session-level filters can narrow them without erasing steps.
+  const scope = stepFilterScope(filters);
+  const stepFilters = scope.applied;
+  if (kind === "overview") {
+    const unit = seriesUnitForRange(range);
+    await captureSection(sections, errors, "trend", async () =>
+      trendSeries(await client.pageviewSeries(range, unit, undefined, filters), range, unit),
+    );
+  } else if (kind === "acquisition") {
+    sections.stepFilters = stepFilterSummary(scope);
     await Promise.all([
-      captureSection(sections, errors, "utm", () => client.report("utm", dates, filters)),
-      captureSection(sections, errors, "firstAttribution", () =>
-        client.report(
-          "attribution",
-          { ...dates, model: "first-click", type: "event", step: "purchase" },
-          filters,
+      captureSection(sections, errors, "utm", async () =>
+        utmGroups(await client.report("utm", dates, filters)),
+      ),
+      captureSection(sections, errors, "firstAttribution", async () =>
+        attributionGroups(
+          await client.report(
+            "attribution",
+            { ...dates, model: "first-click", type: "event", step: "purchase" },
+            stepFilters,
+          ),
         ),
       ),
-      captureSection(sections, errors, "lastAttribution", () =>
-        client.report(
-          "attribution",
-          { ...dates, model: "last-click", type: "event", step: "purchase" },
-          filters,
+      captureSection(sections, errors, "lastAttribution", async () =>
+        attributionGroups(
+          await client.report(
+            "attribution",
+            { ...dates, model: "last-click", type: "event", step: "purchase" },
+            stepFilters,
+          ),
         ),
       ),
     ]);
   } else if (kind === "conversion") {
+    sections.funnelDefinitions = UMAMI_FUNNELS;
+    sections.stepFilters = stepFilterSummary(scope);
+    const funnel = (definition: { window: number; steps: readonly string[] }) =>
+      runFunnel(client, dates, definition, stepFilters);
+    const purchaseGoal = (goalFilters: Record<string, string>) => async () =>
+      goalCounts(
+        await client.report("goal", { ...dates, type: "event", value: "purchase" }, goalFilters),
+      );
     await Promise.all([
-      captureSection(sections, errors, "purchaseGoal", () =>
-        client.report("goal", { ...dates, type: "event", value: "purchase" }, filters),
-      ),
-      captureSection(sections, errors, "checkoutFunnel", () =>
-        client.report(
-          "funnel",
-          {
-            ...dates,
-            window: 24 * 60,
-            steps: ["view_item", "add_to_cart", "begin_checkout", "purchase"].map((value) => ({
-              type: "event",
-              value,
-            })),
-          },
-          filters,
-        ),
-      ),
+      captureSection(sections, errors, "purchaseGoal", purchaseGoal(stepFilters)),
+      // Reconciling Umami purchases with paid orders measures the tracker, not a
+      // segment: the orders ledger is never filtered, so neither is this count.
+      ...(Object.keys(stepFilters).length
+        ? [captureSection(sections, errors, "purchaseGoalAll", purchaseGoal({}))]
+        : []),
+      captureSection(sections, errors, "coreFunnel", () => funnel(UMAMI_FUNNELS.core)),
+      captureSection(sections, errors, "checkoutFunnel", () => funnel(UMAMI_FUNNELS.checkout)),
+      captureSection(sections, errors, "paymentFunnel", () => funnel(UMAMI_FUNNELS.payment)),
     ]);
+    // Older admin builds still read the three-step discovery funnel.
+    if (Array.isArray(sections.coreFunnel)) {
+      sections.discoveryFunnel = funnelPrefix(
+        sections.coreFunnel as Array<Record<string, any>>,
+        UMAMI_FUNNELS.discovery.steps.length,
+      );
+    }
   } else if (kind === "content") {
     await Promise.all([
-      captureSection(sections, errors, "journeys", () =>
-        client.report("journey", { ...dates, steps: 4 }, filters),
+      captureSection(sections, errors, "journeys", async () =>
+        visitorJourneys(await client.report("journey", { ...dates, steps: 4 }, filters)),
       ),
       ...(Object.keys(propertyFilters).length
         ? [
@@ -781,9 +1174,14 @@ export async function getUmamiBehaviorReport(
         : []),
     ]);
   } else if (kind === "audience") {
-    await captureSection(sections, errors, "retention", () =>
-      client.report("retention", { ...dates, timezone: UMAMI_REPORT_TIMEZONE }, filters),
-    );
+    await Promise.all([
+      captureSection(sections, errors, "retention", () =>
+        client.report("retention", { ...dates, timezone: UMAMI_REPORT_TIMEZONE }, filters),
+      ),
+      captureSection(sections, errors, "weekly", async () =>
+        weeklyGrid(await client.weeklyTraffic(range, undefined, filters), range),
+      ),
+    ]);
   } else if (kind === "performance") {
     await captureSection(sections, errors, "performance", () =>
       client.report(
@@ -802,6 +1200,171 @@ export async function getUmamiBehaviorReport(
   };
 }
 
+export const BREAKDOWN_DIMENSIONS = ["device", "os", "browser"] as const;
+export type BreakdownDimension = (typeof BREAKDOWN_DIMENSIONS)[number];
+const MAX_TREND_BUCKETS = 12;
+const MAX_BREAKDOWN_SEGMENTS = 5;
+
+export type ConversionDetailRequest =
+  | { detail: "trend"; funnel: DetailFunnel }
+  | { detail: "breakdown"; funnel: DetailFunnel; dimension: BreakdownDimension }
+  | { detail: "journey"; step: string };
+
+const FUNNEL_STEP_EVENTS = new Set<string>(
+  DETAIL_FUNNELS.flatMap((key) => [...UMAMI_FUNNELS[key].steps]),
+);
+
+/**
+ * Reads the optional conversion drill-down from a query string. Returns null
+ * when none is asked for, and throws `INVALID_CONVERSION_DETAIL` for anything
+ * outside the allowlists so a typo is never silently served the full report.
+ */
+export function parseConversionDetail(
+  query: Record<string, unknown>,
+): ConversionDetailRequest | null {
+  const detail = String(query.detail ?? "").trim();
+  if (!detail) return null;
+  const funnel = String(query.funnel ?? "core").trim() as DetailFunnel;
+  if (detail === "journey") {
+    const step = String(query.step ?? "").trim();
+    if (!FUNNEL_STEP_EVENTS.has(step)) throw new Error("INVALID_CONVERSION_DETAIL");
+    return { detail, step };
+  }
+  if (!DETAIL_FUNNELS.includes(funnel)) throw new Error("INVALID_CONVERSION_DETAIL");
+  if (detail === "trend") return { detail, funnel };
+  if (detail === "breakdown") {
+    const dimension = String(query.dimension ?? "").trim() as BreakdownDimension;
+    if (!BREAKDOWN_DIMENSIONS.includes(dimension)) throw new Error("INVALID_CONVERSION_DETAIL");
+    return { detail, funnel, dimension };
+  }
+  throw new Error("INVALID_CONVERSION_DETAIL");
+}
+
+export function conversionDetailKey(request: ConversionDetailRequest): string {
+  if (request.detail === "journey") return `journey:${request.step}`;
+  if (request.detail === "trend") return `trend:${request.funnel}`;
+  return `breakdown:${request.funnel}:${request.dimension}`;
+}
+
+function addDays(ymd: string, days: number): string {
+  return ymdUtc(new Date(parseYmdUtc(ymd).getTime() + days * DAY_MS));
+}
+
+/**
+ * Buckets for the conversion trend: daily up to two weeks, weekly up to twelve
+ * weeks, then equal spans that keep the count at twelve. A bucket still open
+ * today (Tehran) or shorter than its siblings is flagged, because its sessions
+ * have not had the full window to convert.
+ */
+export function conversionTrendBuckets(range: UmamiRange, today = toYyyyMmDd(new Date())) {
+  const days = inclusiveDays(range);
+  const size = days <= 14 ? 1 : days <= 7 * MAX_TREND_BUCKETS ? 7 : Math.ceil(days / MAX_TREND_BUCKETS);
+  const buckets: Array<{
+    startDate: string;
+    endDate: string;
+    days: number;
+    incomplete: boolean;
+  }> = [];
+  for (let offset = 0; offset < days; offset += size) {
+    const startDate = addDays(range.startDate, offset);
+    const candidateEnd = addDays(startDate, size - 1);
+    const endDate = candidateEnd > range.endDate ? range.endDate : candidateEnd;
+    const length = inclusiveDays({ startDate, endDate });
+    buckets.push({ startDate, endDate, days: length, incomplete: endDate >= today || length < size });
+  }
+  return buckets;
+}
+
+/** Drill-downs of the conversion view, loaded only when the admin opens them. */
+export async function getUmamiConversionDetail(
+  request: ConversionDetailRequest,
+  range: UmamiRange,
+  options: { filters?: Record<string, unknown> } = {},
+): Promise<UmamiBehaviorPayload> {
+  const kind = `conversion-${request.detail}`;
+  if (!isUmamiConfigured()) {
+    return { kind, range, sections: {}, errors: { source: "UMAMI_CONFIG_MISSING" } };
+  }
+  const client = getUmamiClient();
+  const scope = stepFilterScope(standardUmamiFilters(normalizeUmamiFilters(options.filters)));
+  const sections: Record<string, unknown> = { stepFilters: stepFilterSummary(scope) };
+  const errors: Record<string, string> = {};
+
+  if (request.detail === "journey") {
+    await captureSection(sections, errors, "journeys", async () =>
+      visitorJourneys(
+        await client.report(
+          "journey",
+          { ...reportParameters(range), steps: 4, startStep: request.step },
+          scope.applied,
+        ),
+      ),
+    );
+    return { kind, range, sections: { ...sections, step: request.step }, errors };
+  }
+
+  const definition = UMAMI_FUNNELS[request.funnel];
+  sections.funnel = request.funnel;
+  sections.window = definition.window;
+
+  if (request.detail === "trend") {
+    const dataStart = umamiDataStart();
+    const buckets = conversionTrendBuckets(range);
+    const results = await Promise.all(
+      buckets.map(async (bucket) => {
+        // No behavior data exists before the data-start date: an empty bucket
+        // there is "no data", which must not be drawn as a 0% conversion.
+        if (bucket.endDate < dataStart) return { ...bucket, beforeDataStart: true };
+        const dates = reportParameters(bucket);
+        const [steps, goal] = await Promise.allSettled([
+          runFunnel(client, dates, definition, scope.applied),
+          client.report("goal", { ...dates, type: "event", value: "purchase" }, scope.applied),
+        ]);
+        return withoutNulls({
+          ...bucket,
+          steps: steps.status === "fulfilled" ? steps.value : null,
+          purchaseGoal: goal.status === "fulfilled" ? goalCounts(goal.value) : null,
+          failed: steps.status === "rejected" ? true : null,
+        });
+      }),
+    );
+    sections.buckets = results;
+    const failed = results.filter((bucket) => "failed" in bucket).length;
+    if (failed && failed === results.length) errors.trend = "UMAMI_UNAVAILABLE";
+    else if (failed) errors.trend = "UMAMI_PARTIAL";
+    return { kind, range, sections, errors };
+  }
+
+  const dates = reportParameters(range);
+  sections.dimension = request.dimension;
+  try {
+    const top = metricRows(
+      await client.metrics(request.dimension, range, undefined, 20, scope.applied),
+      request.dimension,
+    )
+      .filter((row) => row.label && row.label !== "Unknown")
+      .sort((left, right) => (right.visitors ?? 0) - (left.visitors ?? 0))
+      .slice(0, MAX_BREAKDOWN_SEGMENTS);
+    const funnels = await Promise.allSettled(
+      top.map((row) =>
+        runFunnel(client, dates, definition, { ...scope.applied, [request.dimension]: row.label }),
+      ),
+    );
+    sections.segments = top.map((row, index) => {
+      const result = funnels[index];
+      return withoutNulls({
+        value: row.label,
+        visitors: row.visitors ?? null,
+        steps: result.status === "fulfilled" ? result.value : null,
+      });
+    });
+    if (funnels.some((result) => result.status === "rejected")) errors.breakdown = "UMAMI_PARTIAL";
+  } catch (error: any) {
+    errors.breakdown = String(error?.message || error).slice(0, 80);
+  }
+  return { kind, range, sections, errors };
+}
+
 export async function getUmamiRealtimeReport(): Promise<{
   activeVisitors: number;
   topPages: Array<{ path: string; visitors: number }>;
@@ -812,11 +1375,21 @@ export async function getUmamiRealtimeReport(): Promise<{
   }
   try {
     const raw = await getUmamiClient().realtime();
+    const events = rows(raw.events);
+    // The backend's own session (server diagnostics) is not a visitor.
+    const serverSessions = new Set(
+      events
+        .filter((event) => isServerStep(event.urlPath) || isServerStep(event.eventName))
+        .map((event) => String(event.sessionId || "").trim()),
+    );
     const visitorsByPath = new Map<string, Set<string>>();
-    for (const event of rows(raw.events)) {
+    const activeSessions = new Set<string>();
+    for (const event of events) {
       const path = String(event.urlPath || "").trim();
       const sessionId = String(event.sessionId || "").trim();
       if (!path || path.length > 500 || /[\u0000-\u001f\u007f]/.test(path) || !sessionId) continue;
+      if (serverSessions.has(sessionId)) continue;
+      activeSessions.add(sessionId);
       const sessions = visitorsByPath.get(path) || new Set<string>();
       sessions.add(sessionId);
       visitorsByPath.set(path, sessions);
@@ -828,15 +1401,22 @@ export async function getUmamiRealtimeReport(): Promise<{
       visitorsByPath.size
         ? Array.from(visitorsByPath, ([path, sessions]) => ({ path, visitors: sessions.size }))
         : Object.entries(fallbackUrls).flatMap(([path, value]) =>
-            path && path.length <= 500 && !/[\u0000-\u001f\u007f]/.test(path)
+            path && path.length <= 500 && !/[\u0000-\u001f\u007f]/.test(path) && !isServerStep(path)
               ? [{ path, visitors: normalizeNumber(value) }]
               : [],
           )
     )
       .sort((a, b) => b.visitors - a.visitors)
       .slice(0, 20);
+    // Totals cover every active session even when the events list is capped;
+    // subtract only the backend's own diagnostic session(s).
+    const totalVisitors = numberOrNull(raw.totals?.visitors ?? raw.visitors ?? raw.activeVisitors);
+    const serverSessionCount = Array.from(serverSessions).filter(Boolean).length;
     return {
-      activeVisitors: normalizeNumber(raw.totals?.visitors ?? raw.visitors ?? raw.activeVisitors),
+      activeVisitors:
+        totalVisitors !== null
+          ? Math.max(0, totalVisitors - serverSessionCount)
+          : activeSessions.size,
       topPages,
     };
   } catch (error: any) {
@@ -850,8 +1430,15 @@ export async function getUmamiRealtimeReport(): Promise<{
 
 export const __private = {
   validBaseUrl,
+  funnelSteps,
+  funnelPrefix,
+  trendSeries,
+  weeklyGrid,
   decodeJwtExpiry,
   metricRows,
+  utmGroups,
+  attributionGroups,
+  visitorJourneys,
   toTimestamp,
   normalizeUmamiFilters,
 };

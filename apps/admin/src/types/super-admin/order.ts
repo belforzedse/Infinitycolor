@@ -79,6 +79,7 @@ export interface SuperAdminOrderDetail {
   shippingWeight?: number;
   shippingBoxSizeId?: number;
   anipoBarcodeState?: AnipoBarcodeState;
+  anipoBarcodeData?: { expectedCount: number; barcodes: string[] } | null;
   anipoSubmittedAt?: string;
   anipoLastCheckedAt?: string;
   anipoPollingDeadlineAt?: string;

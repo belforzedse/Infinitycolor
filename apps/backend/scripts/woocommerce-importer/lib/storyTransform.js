@@ -248,6 +248,51 @@ function flattenWpStories(circles) {
 }
 
 /**
+ * Convert each WP rail circle into one canonical story with ordered items.
+ * Existing flattened Strapi rows are deliberately not consulted here; the importer
+ * handles those conflicts before writing the grouped story.
+ * @param {object[]} circles
+ * @returns {object[]}
+ */
+function groupWpStories(circles) {
+  if (!Array.isArray(circles)) return [];
+
+  const groups = [];
+  for (const circle of circles) {
+    const sourceItems = Array.isArray(circle?.items) ? circle.items : [];
+    const validItems = sourceItems.flatMap((item, itemIndex) => {
+      const mediaUrl = String(item?.src || "").trim();
+      const mediaType = resolveMediaType(item?.type, mediaUrl);
+      const sourceId = resolveWpStoryId(circle, item);
+      if (!mediaUrl || !mediaType || !sourceId) return [];
+      const index = Number.isFinite(Number(item?.index)) ? Number(item.index) : itemIndex;
+      return [{
+        sourceId,
+        itemIndex: index,
+        key: `wp:${sourceId}:${index}`,
+        mediaType,
+        mediaUrl,
+        durationMs: durationMsFromLength(item?.length),
+        ctaLabel: truncate(item?.linkText || "", 60) || undefined,
+        ctaUrl: rewriteCtaUrl(item?.link),
+      }];
+    });
+    if (validItems.length === 0) continue;
+
+    const wpStoryId = validItems[0].sourceId;
+    groups.push({
+      wpStoryId,
+      slug: `wp-group-${wpStoryId}`,
+      title: truncate(circle?.name || "", 100) || `Story ${wpStoryId}`,
+      thumbnailUrl: String(circle?.photo || "").trim() || undefined,
+      sortOrder: groups.length,
+      items: validItems.map(({ sourceId: _sourceId, ...item }) => item),
+    });
+  }
+  return groups;
+}
+
+/**
  * Import last-first so newest-first storefront sort matches the WP rail.
  * @param {object[]} slides
  * @returns {object[]}
@@ -266,5 +311,6 @@ module.exports = {
   durationMsFromLength,
   rewriteCtaUrl,
   flattenWpStories,
+  groupWpStories,
   reverseForNewestFirst,
 };

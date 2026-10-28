@@ -4,6 +4,7 @@ import {
   getProductAvailabilityJoinContext,
 } from "../../../utils/productAvailability";
 import { expandSearchTermVariants } from "../../../utils/searchTermVariants";
+import { publicProductFilters } from "../../../utils/productVisibility";
 
 export const PRODUCT_CARD_FIELDS = [
   "id",
@@ -62,6 +63,9 @@ export type FindProductCardsParams = {
   // non-empty, these are surfaced first in this exact order (stably partitioned by
   // stock, see applyAvailabilityAwareOrder) ahead of the normal algorithmic ordering.
   curatedProductIds?: number[];
+  // Names a storefront offer listing whose dataset and default ranking the server owns.
+  // Only "newest" exists (see NEWEST_OFFER); anything else is ignored.
+  offer?: unknown;
   requireCoverImage?: unknown;
   pagination?: {
     page?: number | string;
@@ -142,6 +146,8 @@ const PRODUCT_COLUMN_MAP: Record<string, string> = {
   createdAt: "created_at",
   updatedAt: "updated_at",
   removedAt: "removed_at",
+  // Staff catalog reads exclude permanently deleted tombstones with this.
+  purgedAt: "purged_at",
   LastEditedByAdminAt: "last_edited_by_admin_at",
   PublishedAt: "published_at",
 };
@@ -213,6 +219,35 @@ const toFiniteNumber = (value: unknown): number | undefined => {
 
 export const isEnabledCardParam = (value: unknown): boolean =>
   value === true || value === "true" || value === 1 || value === "1";
+
+/**
+ * The storefront "Newest" listing (`/offer?type=newest` and the homepage rail). One
+ * dataset and one ranking for both: the manually curated `homeNewestProductIds` in
+ * their exact admin order, then every other eligible product by listing date. Discounted
+ * and Oppsi products are never part of it.
+ */
+export const NEWEST_OFFER = "newest" as const;
+
+export const isNewestOffer = (offer: unknown): boolean => offer === NEWEST_OFFER;
+
+// When a product first went live: `published_at` is stamped once by the first publish
+// and survives unpublish/republish; legacy and imported rows predate it and fall back
+// to `created_at` (WooCommerce's own creation date for imports). Deliberately not
+// `last_edited_by_admin_at`, which every product or variation edit re-stamps.
+// `published_at` is timestamptz while Strapi writes `created_at` as UTC without a zone,
+// so the fallback is pinned to UTC instead of the session TimeZone.
+export const NEWEST_LISTED_AT_SQL = "COALESCE(p.published_at, p.created_at AT TIME ZONE 'UTC')";
+
+// Oppsi ("زده‌دار", flawed stock) is clearance by definition, so it stays out of Newest even
+// when nobody has entered a discount price for it yet.
+const NEWEST_EXCLUDED_TITLE_TERM = "oppsi";
+
+// The same eligibility the storefront PLP requests (plp.ts buildPLPProductsQuery), held
+// server-side so the homepage rail and the Newest page cannot drift apart.
+const newestOfferFilters = () => ({
+  ...publicProductFilters(),
+  product_variations: { IsPublished: { $eq: true }, Price: { $gt: 0 } },
+});
 
 export function parseCardPriceFilter(price: FindProductCardsParams["price"]) {
   if (!price || typeof price !== "object") return {};
@@ -480,7 +515,7 @@ const applyVariationFilter = (
   });
 };
 
-const applyProductFilters = (
+export const applyProductFilters = (
   knex: any,
   query: any,
   strapi: any,
@@ -638,6 +673,16 @@ export const applyExcludeDiscountFilter = (
   query.whereNotExists(predicate);
 };
 
+// Newest shows no discounted product, by the same rule as the `hasDiscount` listing, and no
+// Oppsi product ("oppsi" anywhere in the title, any case) whether or not it carries a
+// discount. Plain WHERE clauses, so they apply before pagination and the count, and to
+// curated picks too.
+export const applyNewestOfferExclusion = (knex: any, query: any, strapi: any) => {
+  query
+    .whereNotExists(buildDiscountedVariationExistsPredicate(knex, strapi))
+    .whereRaw("LOWER(COALESCE(p.title, '')) NOT LIKE ?", [`%${NEWEST_EXCLUDED_TITLE_TERM}%`]);
+};
+
 const applySearchFilter = (query: any, q: unknown) => {
   const variants = expandSearchTermVariants(q);
   if (variants.length === 0) return;
@@ -712,6 +757,45 @@ export const applyAvailabilityAwareOrder = (
   query.orderBy("p.id", direction);
 };
 
+/**
+ * Newest's own ranking. The default (no sort, or the storefront's "newest" option) is the
+ * curated picks in their exact admin order -- stock does not move them -- followed by the
+ * rest of the catalog in-stock first, each group newest listing first. "Oldest" reverses
+ * the listing date without the curated block, and any other sort a shopper picks orders
+ * the same dataset the way every PLP does.
+ */
+export const applyNewestOfferOrder = (
+  knex: any,
+  query: any,
+  strapi: any,
+  sortKey: string | undefined,
+  curatedProductIds?: number[],
+) => {
+  const [rawField, rawDirection] = (sortKey?.trim() || "LastEditedByAdminAt:desc").split(":");
+  if (rawField !== "LastEditedByAdminAt" && rawField !== "createdAt") {
+    applyAvailabilityAwareOrder(knex, query, strapi, sortKey);
+    return;
+  }
+
+  const direction = rawDirection === "asc" ? "asc" : "desc";
+  if (direction === "desc" && curatedProductIds && curatedProductIds.length > 0) {
+    // Ids are unique, so array_position totally orders the curated block and the
+    // clauses after it only ever rank the rest of the catalog.
+    const curatedIdsCsv = curatedProductIds.join(",");
+    query.orderByRaw(`CASE WHEN p.id = ANY(string_to_array(?, ',')::integer[]) THEN 0 ELSE 1 END`, [
+      curatedIdsCsv,
+    ]);
+    query.orderByRaw(`array_position(string_to_array(?, ',')::integer[], p.id) ASC NULLS LAST`, [
+      curatedIdsCsv,
+    ]);
+  }
+
+  const ctx = getProductAvailabilityJoinContext(strapi);
+  query.orderByRaw(`${buildProductAvailabilityExistsSql(knex, ctx, "p").toQuery()} DESC`);
+  query.orderByRaw(`${NEWEST_LISTED_AT_SQL} ${direction.toUpperCase()}`);
+  query.orderBy("p.id", direction);
+};
+
 // The client only hints that exclusion may apply; whether it actually does is decided
 // here, off the `hideDiscountedOnDefaultNewestPlp` site setting, so the effective on/off
 // switch stays admin-side (Strapi content manager / DB) rather than client-controllable.
@@ -729,7 +813,12 @@ export async function findOrderedProductIds(strapi: any, params: OrderedProductI
   const { limit, page, start, withCount } = parseFindProductCardsPagination(params.pagination);
   const filters = params.filters || {};
   const sortKey = parseQuerySortKey(params.sort);
-  const excludeDiscount = await resolveExcludeDiscountFlag(strapi, params.excludeDiscount);
+  const newestOffer = isNewestOffer(params.offer);
+  // Newest always leaves discounted and Oppsi products out (applyNewestOfferExclusion),
+  // curated or not; the /plp display toggle behind `excludeDiscount` never applies to it.
+  const excludeDiscount = newestOffer
+    ? false
+    : await resolveExcludeDiscountFlag(strapi, params.excludeDiscount);
   const curatedProductIds =
     Array.isArray(params.curatedProductIds) && params.curatedProductIds.length > 0
       ? params.curatedProductIds
@@ -743,12 +832,20 @@ export async function findOrderedProductIds(strapi: any, params: OrderedProductI
     applyDisplayPriceFilter(knex, query, strapi, params.price);
     applyDiscountOnlyFilter(knex, query, strapi, params.hasDiscount);
     applyExcludeDiscountFilter(knex, query, strapi, excludeDiscount, curatedProductIds);
-    applyRequireCoverImageFilter(query, params.requireCoverImage);
+    applyRequireCoverImageFilter(query, newestOffer || params.requireCoverImage);
+    if (newestOffer) {
+      applyProductFilters(knex, query, strapi, newestOfferFilters());
+      applyNewestOfferExclusion(knex, query, strapi);
+    }
     return query;
   };
 
   const idQuery = buildBaseQuery().select("p.id");
-  applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey, curatedProductIds);
+  if (newestOffer) {
+    applyNewestOfferOrder(knex, idQuery, strapi, sortKey, curatedProductIds);
+  } else {
+    applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey, curatedProductIds);
+  }
   idQuery.limit(limit).offset(start);
 
   const countQuery = buildBaseQuery().countDistinct({ total: "p.id" }).first();

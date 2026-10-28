@@ -6,6 +6,7 @@ import { MapPin } from "lucide-react";
 import type { SalesBreakdownRow } from "@/services/super-admin/reports/salesBreakdown";
 import { priceFormatter } from "@/utils/price";
 import { faNum } from "@/utils/faNum";
+import { SEQUENTIAL_RAMP } from "./chartTheme";
 
 // `react-iran-maps` uses framer-motion + DOM-measuring tooltips; never SSR.
 const ChoroplethMap = dynamic(
@@ -13,14 +14,12 @@ const ChoroplethMap = dynamic(
   { ssr: false },
 );
 
-/** Sequential blue ramp (light → dark) for choropleth magnitude. */
-export const GEOGRAPHY_MAP_COLORS = [
-  "#cde2fb",
-  "#86b6ef",
-  "#3987e5",
-  "#1c5cab",
-  "#0d366b",
-] as const;
+/**
+ * Choropleth magnitude on the reports' one sequential ramp (navy, light →
+ * dark), so a province map and an hour heatmap read the same way. The
+ * near-white first step is skipped: it would vanish against the map's land.
+ */
+export const GEOGRAPHY_MAP_COLORS = SEQUENTIAL_RAMP.slice(2);
 
 const MAP_ASPECT_RATIO = 1.23;
 const MAP_MIN_HEIGHT = 560;

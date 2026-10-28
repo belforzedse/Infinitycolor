@@ -13,6 +13,7 @@ import {
   isSnappayHardenedInitiationEnabled,
 } from "../services/snappay-orchestrator";
 import { buildPaymentCapabilities } from "../../cart/services/lib/payment-allocation";
+import { chargeableVariationPrice } from "../../../utils/productAvailability";
 import {
   isWalletSnappaySplitEnabled,
   isWalletSplitEnabled,
@@ -23,7 +24,7 @@ export default factories.createCoreController(
   ({ strapi }: { strapi: Strapi }) => ({
     async availableGateways(ctx) {
       try {
-        const gateways = await getAvailableCheckoutGateways(strapi);
+        const gateways = await getAvailableCheckoutGateways(strapi, Number(ctx.state?.user?.id));
         // Reported alongside the gateways so the storefront renders what the
         // server will actually accept, instead of inferring a feature flag from
         // a field that happens to be missing from a later response.
@@ -159,11 +160,8 @@ export default factories.createCoreController(
 
           let cartSubtotal = 0;
           for (const item of cart.cart_items) {
-            const price =
-              item?.product_variation?.DiscountPrice ??
-              item?.product_variation?.Price ??
-              0;
-            cartSubtotal += Number(price) * Number(item?.Count || 0);
+            const price = chargeableVariationPrice(item?.product_variation);
+            cartSubtotal += price * Number(item?.Count || 0);
           }
 
           // A discount can only lower the payable total, shipping can only raise
@@ -227,13 +225,11 @@ export default factories.createCoreController(
         }
 
         // Compute subtotal from cart (same logic as applyDiscount)
-        // Use DiscountPrice if available, otherwise fall back to Price (same logic as order item creation)
         let subtotal = 0;
         for (const item of cart.cart_items) {
-          const price =
-            item?.product_variation?.DiscountPrice ?? item?.product_variation?.Price ?? 0;
+          const price = chargeableVariationPrice(item?.product_variation);
           const count = Number(item?.Count || 0);
-          subtotal += Number(price) * count;
+          subtotal += price * count;
 
         }
 

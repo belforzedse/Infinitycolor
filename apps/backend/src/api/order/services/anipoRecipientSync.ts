@@ -1,3 +1,4 @@
+import { effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
 import type { Strapi } from "@strapi/strapi";
 import { buildAnipoOrderRecipient } from "../controllers/helpers/anipoOrder";
 import {
@@ -18,7 +19,7 @@ type AnipoService = {
 };
 
 async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
-  return strapi.db.query("api::order.order").findOne({
+  const order = await strapi.db.query("api::order.order").findOne({
     where: { id: orderId },
     populate: {
       user: { populate: { user_info: true } },
@@ -31,6 +32,8 @@ async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
       order_items: { populate: { product_variation: { populate: { product: true } } } },
     },
   });
+  if (!order) return null;
+  return { ...order, delivery_address: await effectiveOrderDeliveryAddress(strapi, Number(order.id), order.delivery_address) };
 }
 
 function isActiveRegistration(order: any): boolean {
@@ -39,13 +42,14 @@ function isActiveRegistration(order: any): boolean {
 
 function buildPayload(order: any): AnipoCreateOrderPayload {
   const recipient = buildAnipoOrderRecipient(order);
+  // No postal code check: the placeholder is omitted, exactly as when the
+  // barcode workflow registered the order in the first place.
   if (
     !recipient.receiverName ||
     !recipient.provinceName ||
     !recipient.cityName ||
     !recipient.mobile ||
-    !recipient.fullAddress ||
-    !recipient.postalCode
+    !recipient.fullAddress
   ) {
     throw new Error("اطلاعات گیرنده برای همگام‌سازی آنیپو کامل نیست");
   }
@@ -97,6 +101,10 @@ export async function processAnipoRecipientSync(
 ) {
   const order = await loadOrder(strapi, orderId);
   if (!order) return { status: "missing" as const };
+  if (order.reserve_shipment?.id) {
+    const { syncReserveParcelRecipient } = await import("./anipoReserveParcel");
+    return syncReserveParcelRecipient(strapi, Number(order.reserve_shipment.id));
+  }
   if (Number(order.AnipoRecipientRevision || 0) !== Number(expectedRevision)) {
     return { status: "stale" as const };
   }
@@ -156,6 +164,7 @@ export async function runAnipoRecipientSyncReconciliation(strapi: Strapi) {
   const now = Date.now();
   const rows = (await strapi.db.query("api::order.order").findMany({
     where: {
+      reserve_shipment: { id: { $null: true } },
       AnipoSubmittedAt: { $notNull: true },
       AnipoRecipientSyncState: { $in: ["Pending", "NeedsAttention"] },
     },

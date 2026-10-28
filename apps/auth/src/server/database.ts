@@ -26,7 +26,11 @@ export function getAuthPool(): Pool {
     );
     Sentry.captureException(error, { tags: { reasonCode } });
   });
-  if (env.nodeEnv !== "production") globalThis.__infinityAuthPool = pool;
+  // One pool per process in every environment. Caching it only outside
+  // production made each /api/health/ready call open a new pool whose
+  // connection idled for 30 s; a 5 req/s probe exhausted Postgres's 100
+  // connections on staging within 18 s (2026-09-24).
+  globalThis.__infinityAuthPool = pool;
   return pool;
 }
 

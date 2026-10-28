@@ -6,8 +6,9 @@ import { HOMEPAGE_RENDER_LIMIT } from "@/constants/homepage";
 import { getProductSummariesByIds } from "@/services/super-admin/product/get";
 import {
   getHomepageProductSettings,
-  updateHomepageProductSettings,
 } from "@/services/super-admin/settings/homepageProducts";
+import { normalizeSettingsApiResponse } from "@/services/super-admin/settings/get";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 import type { SuperAdminSettings } from "@/types/super-admin/settings";
 import { faNum } from "@/utils/faNum";
 
@@ -67,6 +68,7 @@ type Props = {
  * are called out in the UI, because neither is obvious from a checkbox.
  */
 export default function ProductHomepageSectionsCard({ productId }: Props) {
+  const { client, canEdit } = useProductEditor();
   const [lists, setLists] = useState<Lists | null>(null);
   const [checked, setChecked] = useState<Checked | null>(null);
   const [saving, setSaving] = useState(false);
@@ -127,31 +129,26 @@ export default function ProductHomepageSectionsCard({ productId }: Props) {
   );
 
   const handleSave = async () => {
-    if (!checked || saving) return;
+    if (!checked || saving || !canEdit || !lists) return;
     setSaving(true);
     try {
-      // Re-read instead of trusting the mount-time snapshot: this card sits on a page an
-      // operator can leave open for a long time, and /products/homepage writes the same
-      // rows. Applying our one-product delta to the freshly read arrays keeps whatever
-      // reordering happened in between.
-      const fresh = await getHomepageProductSettings();
-      const freshLists = listsFromSettings(fresh);
-      const payload: Partial<Record<SectionField, number[]>> = {};
+      const payload: Partial<Record<SectionField, boolean>> = {};
 
       SECTIONS.forEach(({ field }) => {
-        const current = freshLists[field];
-        const without = current.filter((id) => id !== productId);
+        const current = lists[field];
         if (current.includes(productId) === checked[field]) return;
-        payload[field] = checked[field] ? [productId, ...without] : without;
+        payload[field] = checked[field];
       });
 
       if (Object.keys(payload).length === 0) {
-        applySettings(fresh);
         toast("تغییری برای ذخیره وجود ندارد");
         return;
       }
 
-      applySettings(await updateHomepageProductSettings(payload));
+      const response = await client.put(`/products/${productId}/editor/homepage`, { data: payload }, { retries: 0 });
+      const settings = normalizeSettingsApiResponse(response);
+      if (!settings) throw new Error("Invalid homepage response");
+      applySettings(settings);
       toast.success("بخش‌های صفحه اصلی این محصول ذخیره شد");
     } catch {
       toast.error("خطا در ذخیره بخش‌های صفحه اصلی");
@@ -208,7 +205,7 @@ export default function ProductHomepageSectionsCard({ productId }: Props) {
                       type="checkbox"
                       checked={checked[field]}
                       onChange={() => toggle(field)}
-                      disabled={saving}
+                      disabled={saving || !canEdit}
                       data-testid={`homepage-section-${field}`}
                       className="h-4 w-4 rounded border-slate-300 accent-infinity-primary"
                     />
@@ -269,7 +266,7 @@ export default function ProductHomepageSectionsCard({ productId }: Props) {
       <button
         type="button"
         onClick={() => void handleSave()}
-        disabled={saving || !isDirty}
+        disabled={saving || !isDirty || !canEdit}
         data-testid="homepage-sections-save"
         className="rounded-lg bg-actions-primary px-4 py-2 text-sm font-medium text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
       >

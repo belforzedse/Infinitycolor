@@ -14,7 +14,7 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("react-hot-toast", () => ({
   __esModule: true,
-  default: { error: jest.fn(), success: jest.fn() },
+  default: Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn() }),
 }));
 
 jest.mock("@sentry/nextjs", () => ({
@@ -67,9 +67,12 @@ const mockSetStockNotice = jest.fn(
   },
 );
 
+let mockIsCartReady = true;
+
 jest.mock("@/contexts/CartContext", () => ({
   useCart: () => ({
     ...mockCartState,
+    isCartReady: mockIsCartReady,
     clearCart: jest.fn(),
     openDrawer: jest.fn(),
     refreshCart: mockRefreshCart,
@@ -118,6 +121,8 @@ jest.mock("@/lib/analytics", () => ({
   getAnalyticsCorrelationId: jest.fn(() => "guest-test-correlation"),
   trackFunnelStep: jest.fn(),
   trackAnalyticsEvent: jest.fn(),
+  trackCheckoutFailure: jest.fn(),
+  checkoutFailureCategoryForCode: jest.fn(() => "unknown"),
 }));
 
 jest.mock("./InformationForm", () => ({
@@ -128,6 +133,7 @@ jest.mock("./InformationForm", () => ({
         type="button"
         data-testid="select-checkout-customer"
         onClick={() => {
+          setValue("fullName", "حدیث شعبانی");
           setValue("phoneNumber", "09123456789");
           setValue("address", { id: 5, label: "Test address" });
         }}
@@ -269,6 +275,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     localStorage.clear();
     window.history.pushState({}, "", "/checkout");
     mockStockNotice = null;
+    mockIsCartReady = true;
     mockCartState = {
       totalPrice: 100_000,
       totalItems: 1,
@@ -365,6 +372,44 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(CartService.getAvailableGateways).not.toHaveBeenCalled();
     expect(CartService.getSnappEligible).not.toHaveBeenCalled();
     expect(WalletService.getMyWallet).not.toHaveBeenCalled();
+  });
+
+  it("waits for the post-login cart merge before checking stock or pricing a restored discount", async () => {
+    localStorage.setItem("discountCode", "RESTORED10");
+    mockIsCartReady = false;
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    const { rerender } = render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(CartService.checkCartStock).not.toHaveBeenCalled();
+    expect(CartService.applyDiscount).not.toHaveBeenCalled();
+
+    // CartProvider finished merging the guest cart (or gave up — it flips either way).
+    mockIsCartReady = true;
+    rerender(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.checkCartStock).toHaveBeenCalledTimes(1);
+      expect(CartService.applyDiscount).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "RESTORED10" }),
+      );
+    });
   });
 
   it("does not duplicate an already-applied discount preview from the coupon component", async () => {
@@ -577,10 +622,14 @@ describe("ShoppingCartBillForm auth gate", () => {
     await waitFor(() => {
       expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
     });
+    // The typed recipient travels with a saved address too, so the order doesn't
+    // show whoever that address was first used for.
+    const recipient = { FullName: "حدیث شعبانی", Phone: "09123456789" };
     expect(CartService.getCheckoutQuote).toHaveBeenCalledWith(
       expect.objectContaining({
         shipping: 7,
         addressId: 5,
+        recipient,
         gateway: "snappay",
         mobile: "09123456789",
       }),
@@ -589,6 +638,7 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect.objectContaining({
         shipping: 7,
         addressId: 5,
+        recipient,
         gateway: "snappay",
         mobile: "09123456789",
         quoteHash: "sha256:snappay-quote",
@@ -1923,7 +1973,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(captureCheckoutMessage).not.toHaveBeenCalled();
   });
 
-  it("keeps the stored attempt when reservation lookup fails instead of treating stock as gone", async () => {
+  it("keeps the stored attempt and reports an unowned reservation lookup failure", async () => {
     window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
     window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
     await submitCheckoutWithError("RESERVATION_LOOKUP_FAILED");
@@ -1935,6 +1985,23 @@ describe("ShoppingCartBillForm auth gate", () => {
     });
     expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("دوباره تلاش کنید");
     expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+    expect(captureCheckoutMessage).toHaveBeenCalledTimes(1);
+    expect(captureCheckoutMessage).toHaveBeenCalledWith(
+      "checkout.error:RESERVATION_LOOKUP_FAILED",
+      expect.objectContaining({ level: "error" }),
+    );
+  });
+
+  it("keeps the stored attempt without duplicating a backend-owned reservation lookup failure", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("RESERVATION_LOOKUP_FAILED", { telemetryOwner: "backend" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("دوباره تلاش کنید");
+    });
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+    expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
     expect(captureCheckoutMessage).not.toHaveBeenCalled();
   });
 
@@ -2195,4 +2262,141 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(express.quoteHash).toBe("sha256:express-shipping");
     expect(express.shipping).toBe(8);
   });
+
+  describe("analytics", () => {
+    const analyticsMock = jest.requireMock("@/lib/analytics") as {
+      trackFunnelStep: jest.Mock;
+      trackAnalyticsEvent: jest.Mock;
+      trackCheckoutFailure: jest.Mock;
+    };
+    const actions = () =>
+      analyticsMock.trackAnalyticsEvent.mock.calls.map(([event]) => event.action);
+
+    async function renderSignedIn() {
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      render(
+        <Provider store={store}>
+          <ShoppingCartBillForm />
+        </Provider>,
+      );
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+    }
+
+    it("counts begin_checkout once per visit and add_payment_info only for an explicit choice", async () => {
+      (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+        gateways: ["samankish", "mellat"],
+        paymentCapabilities: {
+          walletEnabled: false,
+          splitEnabled: false,
+          splitDisabledReason: "disabled",
+          splitGateways: [],
+          gatewayMinimumsToman: {},
+        },
+      });
+      await renderSignedIn();
+      await waitFor(() => expect(screen.getByTestId("select-mellat")).toBeInTheDocument());
+
+      const beginCheckouts = analyticsMock.trackFunnelStep.mock.calls.filter(
+        ([step]) => step === "begin_checkout",
+      );
+      expect(beginCheckouts).toHaveLength(1);
+      // The default gateway is not the shopper's action.
+      expect(actions()).not.toContain("add_payment_info");
+
+      fireEvent.click(screen.getByTestId("select-mellat"));
+      fireEvent.click(screen.getByTestId("select-mellat"));
+      expect(analyticsMock.trackAnalyticsEvent.mock.calls.filter(([e]) => e.action === "add_payment_info"))
+        .toEqual([[expect.objectContaining({ properties: { gateway: "mellat" } })]]);
+
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      await waitFor(() => expect(actions()).toContain("add_shipping_info"));
+      expect(analyticsMock.trackFunnelStep.mock.calls.filter(([step]) => step === "begin_checkout"))
+        .toHaveLength(1);
+    });
+
+    it("reports a validation failure and emits no later checkout event", async () => {
+      await renderSignedIn();
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+
+      await waitFor(() =>
+        expect(analyticsMock.trackCheckoutFailure).toHaveBeenCalledWith("validation", "samankish"),
+      );
+      expect(actions()).not.toContain("place_order_attempt");
+      expect(actions()).not.toContain("payment_redirect");
+      expect(CartService.finalizeCart).not.toHaveBeenCalled();
+      // A fixable form error is analytics only, never a Sentry event.
+      expect(captureCheckoutMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("payment handoff submit guard", () => {
+    beforeEach(() => {
+      jest.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => undefined);
+      (CartService.getCheckoutQuote as jest.Mock).mockReset().mockResolvedValue({
+        quoteHash: "sha256:handoff", financialSummary: { total: 120_000 },
+      });
+      (CartService.finalizeCart as jest.Mock).mockReset().mockResolvedValue({
+        success: true, orderId: 91, redirectUrl: "https://bank.example/pay",
+        redirectMethod: "POST", formFields: { RefId: "opaque-reference" },
+      });
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it("blocks another finalize during handoff and unlocks on bfcache return", async () => {
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      const view = render(<Provider store={store}><ShoppingCartBillForm /></Provider>);
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+      await waitFor(() => expect(HTMLFormElement.prototype.submit).toHaveBeenCalledTimes(1));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+      act(() => window.dispatchEvent(new Event("pageshow")));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+      fireEvent.submit(view.container.querySelector("form")!);
+      await act(async () => { await Promise.resolve(); });
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+      const restored = new Event("pageshow");
+      Object.defineProperty(restored, "persisted", { value: true });
+      act(() => window.dispatchEvent(restored));
+      expect(screen.getByTestId("checkout-submit")).toBeEnabled();
+    });
+
+    it("unlocks when Next hides checkout in <Activity> after a client-side result navigation", async () => {
+      // cacheComponents hides the page instead of unmounting it, and router.push
+      // fires no pageshow, so only the hide itself can clear the guard.
+      (CartService.finalizeCart as jest.Mock).mockReset().mockResolvedValue({
+        success: true, orderId: 92, redirectUrl: "",
+      });
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      const page = (mode: "visible" | "hidden") => (
+        <Provider store={store}>
+          <React.Activity mode={mode}><ShoppingCartBillForm /></React.Activity>
+        </Provider>
+      );
+      const view = render(page("visible"));
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=92"));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+
+      view.rerender(page("hidden"));
+      view.rerender(page("visible"));
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeEnabled());
+    });
+  });
+
 });

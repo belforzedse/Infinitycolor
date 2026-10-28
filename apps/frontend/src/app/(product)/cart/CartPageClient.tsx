@@ -6,7 +6,9 @@ import ShoppingCartDesktopTable from "@/components/ShoppingCart/Table/Desktop";
 import ShoppingCartMobileTable from "@/components/ShoppingCart/Table/Mobile";
 import CartSkeleton from "@/components/Skeletons/CartSkeleton";
 import EmptyShoppingCart from "@/components/ShoppingCart/Empty";
-import React, { useEffect, useMemo, useState } from "react";
+import CartStockNotice from "@/components/ShoppingCart/CartStockNotice";
+import AuthRecoveryNotice from "@/components/ShoppingCart/AuthRecoveryNotice";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { ProductCardProps } from "@/components/Product/Card";
 import { getRandomProducts } from "@/services/product/homepage";
@@ -23,7 +25,7 @@ const OffersListHomePage = dynamic(() => import("@/components/PDP/OffersListHome
 });
 
 export default function CartPageClient() {
-  const { cartItems, isLoading } = useCart();
+  const { cartItems, isLoading, isCartReady, authRecoveryUnavailable } = useCart();
   const isCartShellReady = useCartShellReady();
   useEffect(() => {
     if (isCartShellReady && !isLoading && consumeCartScrollTop()) {
@@ -63,9 +65,14 @@ export default function CartPageClient() {
     [cartItems],
   );
 
+  // One view_cart per visit to /cart, once the cart has loaded with items.
+  // Editing quantities here is not another view.
+  const viewCartTrackedRef = useRef(false);
   useEffect(() => {
+    if (viewCartTrackedRef.current) return;
     if (isLoading) return;
     if (cartItems.length <= 0) return;
+    viewCartTrackedRef.current = true;
     trackAnalyticsEvent({
       category: "ecommerce",
       action: "view_cart",
@@ -73,9 +80,15 @@ export default function CartPageClient() {
       properties: {
         quantity: cartItems.reduce((sum, item) => sum + item.quantity, 0),
       },
-      onceKey: `view-cart:${cartItems.length}:${Math.round(totalValue)}`,
     });
-  }, [isLoading, cartItems.length, totalValue]);
+  }, [isLoading, cartItems, totalValue]);
+
+  if (!isCartReady && authRecoveryUnavailable)
+    return (
+      <PageContainer variant="wide">
+        <AuthRecoveryNotice />
+      </PageContainer>
+    );
 
   if (!isCartShellReady || isLoading) {
     return (
@@ -84,12 +97,17 @@ export default function CartPageClient() {
       </PageContainer>
     );
   }
+  // The stock check that runs when the cart loads removes lines whose product
+  // left the store or sold out, and shortens lines that no longer fit. It can
+  // empty the cart outright, so the notice sits above the empty state too, or
+  // the shopper's items vanish without a word.
   if (cartItems.length === 0) {
     return (
       <PageContainer
         variant="wide"
-        className="flex min-h-[60vh] items-center justify-center pb-16 pt-8"
+        className="flex min-h-[60vh] flex-col items-center justify-center gap-6 pb-16 pt-8"
       >
+        <CartStockNotice />
         <EmptyShoppingCart />
       </PageContainer>
     );
@@ -98,6 +116,7 @@ export default function CartPageClient() {
   return (
     <section>
       <PageContainer variant="wide" className="space-y-6 pb-16 pt-8">
+        <CartStockNotice />
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
           <div className="flex-1">
             <div className="flex flex-col gap-6">

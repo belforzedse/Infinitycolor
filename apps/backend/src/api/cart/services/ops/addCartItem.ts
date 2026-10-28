@@ -1,5 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
+import { productUnavailableReason } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 export const addCartItemOp = async (
   strapi: Strapi,
@@ -30,17 +32,23 @@ export const addCartItemOp = async (
     return { success: false, message: "Product variation is not available" };
   }
 
+  // A variation without a price (e.g. just generated, not priced yet) is never for sale.
+  if (chargeableVariationPrice(productVariation) <= 0) {
+    return { success: false, message: "Product variation is not available" };
+  }
+
   // Validate product exists and is not soft-deleted or inactive
   const product = productVariation.product;
-  if (!product) {
+  const unavailableReason = productUnavailableReason(product);
+  if (unavailableReason === "PRODUCT_NOT_FOUND") {
     return { success: false, message: "Product not found" };
   }
 
-  if (product.removedAt) {
+  if (unavailableReason === "PRODUCT_DELETED") {
     return { success: false, message: "Product is no longer available" };
   }
 
-  if (product.Status !== "Active") {
+  if (unavailableReason) {
     return { success: false, message: "Product is currently unavailable" };
   }
 

@@ -109,6 +109,18 @@ export default {
     },
     {
       method: "POST",
+      path: "/orders/reserve-groups/:groupKey/anipo-barcode",
+      handler: "order.generateReserveParcelBarcode",
+      config: { auth: { scope: [] }, policies: capabilityPolicy("order.shipping.manage") },
+    },
+    {
+      method: "POST",
+      path: "/orders/reserve-groups/:groupKey/anipo-barcode/check",
+      handler: "order.checkReserveParcelBarcode",
+      config: { auth: { scope: [] }, policies: capabilityPolicy("order.shipping.manage") },
+    },
+    {
+      method: "POST",
       path: "/orders/:id/anipo-barcode/check",
       handler: "order.checkAnipoBarcode",
       config: {
@@ -165,6 +177,17 @@ export default {
       method: "GET",
       path: "/orders/:id/admin/payment-operations/:operationId",
       handler: "order.adminPaymentOperation",
+      config: {
+        auth: { scope: [] },
+        // Outer gate only: the handler decides which operation types this
+        // operator may read (financial read, or the kind they can queue).
+        policies: capabilityPolicy("order.read"),
+      },
+    },
+    {
+      method: "GET",
+      path: "/orders/:id/admin/wallet-recovery",
+      handler: "order.adminWalletRecovery",
       config: {
         auth: { scope: [] },
         policies: capabilityPolicy("order.financial.read"),

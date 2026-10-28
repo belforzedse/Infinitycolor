@@ -63,7 +63,7 @@ npm run catalog:sync -- --env production --skip-media
 # Compare stores by external_id
 node catalog/cli.js verify --env production
 
-# Tests (no network, no install — Node ≥ 18 built-in runner)
+# Tests (no network, no install — Node ≥ 20.9.0 built-in runner)
 npm test            # → node --test catalog/__tests__/*.test.js
 ```
 

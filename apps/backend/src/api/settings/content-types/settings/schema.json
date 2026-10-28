@@ -264,7 +264,7 @@
     "homeNewestProductIds": {
       "type": "json",
       "default": [],
-      "description": "Curated product IDs for the 'جدیدترین ها' section, in priority order. Drives both the homepage rail (first 20) and the full '/plp' View all listing (curated items first, then the algorithmic fallback). Empty array = fully algorithmic. Capped at 100 ids."
+      "description": "Curated product IDs for the 'جدیدترین ها' section, in priority order. Leads the Newest listing shared by the homepage rail (first 20 in stock) and '/offer?type=newest' (curated items in this exact order, then every other product by listing date). Empty array = fully algorithmic. Capped at 100 ids."
     },
     "homeFavoriteProductIds": {
       "type": "json",
@@ -420,6 +420,11 @@
       "type": "boolean",
       "default": false,
       "description": "Hidden operational toggle, not surfaced in any admin UI (edit via Strapi content manager or direct DB write only). When enabled, discounted products are excluded from the public PLP at the exact unfiltered default-sort URL (/plp with sort=LastEditedByAdminAt:desc and no other filters applied)."
+    },
+    "HomepageProductsRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
     }
   }
 }

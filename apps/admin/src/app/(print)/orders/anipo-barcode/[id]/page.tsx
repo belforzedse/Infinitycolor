@@ -10,6 +10,10 @@ type Order = {
   id: string;
   attributes: {
     ShippingBarcode?: string;
+    ShippingWeight?: number;
+    ShippingBoxSizeId?: number;
+    AnipoSubmittedAt?: string;
+    AnipoIssuedAt?: string;
     Description?: string;
     createdAt: string;
     user: {
@@ -33,6 +37,7 @@ type Order = {
           FullAddress: string;
           FullName?: string;
           Phone?: string;
+          PostalCode?: string;
           shipping_city: {
             data: {
               attributes: {
@@ -77,7 +82,10 @@ export default function AnipoBarcodePrintPage() {
         const normalized = unwrapEntity((res as any).data);
         setOrder(
           normalized
-            ? ({ id: String(normalized.id ?? id), attributes: normalized } as unknown as Order)
+            ? ({
+                id: String(normalized.id ?? id),
+                attributes: normalized,
+              } as unknown as Order)
             : null,
         );
       } finally {
@@ -122,36 +130,33 @@ export default function AnipoBarcodePrintPage() {
     `${userProfile?.FirstName || ""} ${userProfile?.LastName || ""}`.trim();
   const cityData = unwrapEntity(addressData?.shipping_city);
   const provinceData = unwrapEntity(cityData?.shipping_province);
-  const city = cityData?.Title || "گرگان";
+  const city = cityData?.Title || "";
   const province = provinceData?.Title || "";
 
-  const amount = unwrapEntity(order.attributes.contract)?.Amount || 0;
-  const orderDate = new Date(order.attributes.createdAt);
-
-  // Format date and time in Persian
-  const formattedDate = orderDate.toLocaleDateString("fa-IR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const formattedTime = orderDate.toLocaleTimeString("fa-IR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
+  const issuedAt = order.attributes.AnipoIssuedAt;
+  const date = issuedAt ? new Date(issuedAt) : null;
   const labelProps = {
-    packageNumber: id?.toString() || "1",
-    packageSize: "سایز بسته ۱",
-    origin: "میدا",
-    destination: city,
-    weight: "۱۰۰ گرم",
-    time: formattedTime,
-    date: formattedDate,
-    fare: `${amount.toLocaleString()} ریال`,
+    packageNumber: String(id),
+    packageSize:
+      order.attributes.AnipoSubmittedAt && order.attributes.ShippingBoxSizeId
+        ? `سایز ${order.attributes.ShippingBoxSizeId.toLocaleString("fa-IR")}`
+        : undefined,
+    destination: [province, city].filter(Boolean).join("، "),
+    weight:
+      order.attributes.AnipoSubmittedAt && order.attributes.ShippingWeight
+        ? `${order.attributes.ShippingWeight.toLocaleString("fa-IR")} گرم`
+        : undefined,
+    date: date?.toLocaleDateString("fa-IR"),
+    time: date?.toLocaleTimeString("fa-IR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
     barcodeNumber: order.attributes.ShippingBarcode,
     recipientName: fullName,
-    recipientPhone: addressData?.Phone || userInfo?.Phone || userInfo?.phone || "",
-    recipientAddress: [addressData?.FullAddress, city, province].filter(Boolean).join(" - "),
+    recipientPhone:
+      addressData?.Phone || userInfo?.Phone || userInfo?.phone || "",
+    recipientAddress: addressData?.FullAddress || "",
+    postalCode: addressData?.PostalCode || undefined,
   };
 
   return <AnipoBarcodeLabel {...labelProps} />;

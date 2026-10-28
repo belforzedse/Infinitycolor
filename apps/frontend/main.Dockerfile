@@ -1,6 +1,6 @@
 # syntax=docker.arvancloud.ir/docker/dockerfile:1.7
 # Node 22: avoids "controller[kState].transformAlgorithm is not a function" when cache handler handles streams under load
-FROM docker.arvancloud.ir/library/node:22-alpine AS builder
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS builder
 
 WORKDIR /repo
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -16,19 +16,26 @@ RUN chmod +x /usr/local/bin/fallback-registry.sh
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY patches ./patches
 COPY apps/frontend/package.json ./apps/frontend/package.json
-COPY packages ./packages
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/auth-core/package.json ./packages/auth-core/package.json
+COPY packages/auth-ui/package.json ./packages/auth-ui/package.json
+COPY packages/brand/package.json ./packages/brand/package.json
+COPY packages/fonts/package.json ./packages/fonts/package.json
+COPY packages/social-posts/package.json ./packages/social-posts/package.json
+COPY packages/story-rail/package.json ./packages/story-rail/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+COPY packages/video-player/package.json ./packages/video-player/package.json
+COPY tools/eslint/package.json ./tools/eslint/package.json
 RUN --mount=type=cache,target=/root/.npm \
-    --mount=type=cache,id=infinity-pnpm-store,target=/pnpm-store \
+    --mount=type=cache,id=infinity-pnpm-node22,target=/pnpm-store,sharing=shared \
     --mount=type=cache,target=/root/.cache/node/corepack \
     fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm install --filter @repo/frontend... --frozen-lockfile --store-dir /pnpm-store
-# Same corepack cache and registry fallback as every other pnpm invocation
-# here. Without them this line calls bare `pnpm`, corepack tries to fetch
-# pnpm from registry.npmjs.org, and the build dies on a Cloudflare address
-# that is not reachable from this network. The layer cache hid it until a
-# change under packages/ invalidated it.
+COPY packages ./packages
+COPY tools/eslint ./tools/eslint
+# Registry fallback is only for package retrieval. Compilation failures must
+# remain single, original application failures.
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
-    /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm --filter @repo/auth-core build
 
 COPY apps/frontend ./apps/frontend
@@ -49,6 +56,11 @@ ARG NEXT_PUBLIC_UMAMI_URL=""
 ARG NEXT_PUBLIC_UMAMI_WEBSITE_ID=""
 ARG NEXT_PUBLIC_UMAMI_ENABLE_DEV="false"
 ARG NEXT_PUBLIC_SENTRY_DSN=""
+ARG SENTRY_ORG="alpagency"
+ARG SENTRY_PROJECT="infinitycolor-frontend"
+ARG SENTRY_URL="https://errors.alpagency.net"
+ARG NEXT_PUBLIC_SENTRY_EXPECTED_EVENTS_TO_LOGS="false"
+ARG NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID=""
 ARG NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=""
 ARG NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=""
 ARG NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ENABLED="true"
@@ -82,6 +94,11 @@ ENV NEXT_PUBLIC_UMAMI_URL=${NEXT_PUBLIC_UMAMI_URL}
 ENV NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID}
 ENV NEXT_PUBLIC_UMAMI_ENABLE_DEV=${NEXT_PUBLIC_UMAMI_ENABLE_DEV}
 ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
+ENV SENTRY_ORG=${SENTRY_ORG}
+ENV SENTRY_PROJECT=${SENTRY_PROJECT}
+ENV SENTRY_URL=${SENTRY_URL}
+ENV NEXT_PUBLIC_SENTRY_EXPECTED_EVENTS_TO_LOGS=${NEXT_PUBLIC_SENTRY_EXPECTED_EVENTS_TO_LOGS}
+ENV NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID=${NEXT_PUBLIC_SENTRY_DIAGNOSTICS_PROBE_ID}
 ENV NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE}
 ENV NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE}
 ENV NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ENABLED=${NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ENABLED}
@@ -107,13 +124,23 @@ ENV NEXT_DEPLOYMENT_ID=${GITHUB_SHA}
 
 WORKDIR /repo/apps/frontend
 ENV NODE_ENV=production
+# Secret values do not invalidate BuildKit's cache; their availability must.
+ARG SENTRY_UPLOAD_ENABLED="false"
 RUN --mount=type=cache,id=infinity-frontend-next-16.3.2-node22,target=/repo/apps/frontend/.next/cache,sharing=locked \
     --mount=type=cache,target=/root/.cache/node/corepack \
-    fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm run build
+    --mount=type=secret,id=sentry_auth_token \
+    if [ "$SENTRY_UPLOAD_ENABLED" = "true" ]; then test -s /run/secrets/sentry_auth_token || exit 1; fi; \
+    export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token 2>/dev/null || true)"; \
+    pnpm run build && \
+    node scripts/check-sentry-server-maps.mjs && \
+    node --test scripts/upload-sentry-server-maps.node-check.cjs && \
+    node scripts/upload-sentry-server-maps.cjs
 RUN grep -q '"/api/_health/route"' .next/server/app-paths-manifest.json
+RUN node scripts/check-sentry-server-hook.mjs
+RUN node scripts/check-sentry-server-maps.mjs
+RUN node scripts/check-sentry-probe-exclusion.mjs
 
-FROM docker.arvancloud.ir/library/node:22-alpine AS runner
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS runner
 WORKDIR /app
 
 # Runtime env: STRAPI_INTERNAL_URL, FRONTEND_REDIS_URL (STRAPI_BUILD_TIME_URL is build-only).

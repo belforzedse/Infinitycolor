@@ -6,6 +6,7 @@ const {
   decodeHtml,
   durationMsFromLength,
   flattenWpStories,
+  groupWpStories,
   parseHomepageStories,
   reverseForNewestFirst,
   rewriteCtaUrl,
@@ -93,6 +94,22 @@ test("flattenWpStories: one Strapi slide per WP item with stable slugs", () => {
   assert.equal(slides[2].title, "اورال دامنی (2)");
   assert.equal(slides[2].sortOrder, 2);
   assert.equal(slides[2].ctaUrl, "/pdp/کت-کراپ");
+});
+
+test("groupWpStories: one story per circle with stable ordered item keys", () => {
+  const groups = groupWpStories(SAMPLE_CIRCLES);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].slug, "wp-group-1200188");
+  assert.equal(groups[0].items.length, 1);
+  assert.equal(groups[0].items[0].key, "wp:1200188:0");
+  assert.equal(groups[1].slug, "wp-group-1294460");
+  assert.equal(groups[1].title, "اورال دامنی");
+  assert.equal(groups[1].sortOrder, 1);
+  assert.deepEqual(groups[1].items.map((item) => item.key), ["wp:1294460:0", "wp:1294460:1"]);
+  assert.deepEqual(groups[1].items.map((item) => item.ctaUrl), [
+    "/pdp/ural-dominyy00780",
+    "/pdp/کت-کراپ",
+  ]);
 });
 
 test("reverseForNewestFirst: last homepage slide is imported first", () => {

@@ -23,7 +23,10 @@ export interface UserAccountOverview {
     recent: OverviewOrder[];
   };
   wallet: {
+    /** Spendable credit, in IRR. Never the posted balance. */
     balance: number;
+    /** Committed to an unfinished payment, in IRR. */
+    held: number;
   };
   favorites: {
     count: number;
@@ -44,6 +47,7 @@ const defaultOverview: UserAccountOverview = {
   },
   wallet: {
     balance: 0,
+    held: 0,
   },
   favorites: {
     count: 0,
@@ -120,7 +124,7 @@ export default function useUserAccountOverview() {
           lastOrderDate: null,
           recent: [],
         },
-        wallet: { balance: 0 },
+        wallet: { balance: 0, held: 0 },
         favorites: { count: 0 },
         addresses: { count: 0 },
       };
@@ -176,7 +180,15 @@ export default function useUserAccountOverview() {
       }
 
       if (walletResult.status === "fulfilled") {
-        overview.wallet.balance = Number(walletResult.value?.data?.balance || 0);
+        const posted = Number(walletResult.value?.data?.balance || 0);
+        const held = Number(walletResult.value?.data?.heldBalance || 0);
+        overview.wallet.held = held;
+        // Spendable, not posted: the overview card is a "what can I use"
+        // figure, and showing the gross balance while part of it is committed
+        // is what made held credit look like it had vanished.
+        overview.wallet.balance = Number(
+          walletResult.value?.data?.availableBalance ?? Math.max(0, posted - held),
+        );
       }
 
       if (addressesResult.status === "fulfilled") {

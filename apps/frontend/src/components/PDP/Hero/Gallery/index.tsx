@@ -4,21 +4,14 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import ThumbnailList from "./ThumbnailList";
 import SingleImage from "./SingleImage";
 import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
-
+import type { GalleryAsset } from "@/services/product/product";
 type Props = {
-  assets: {
-    id: string;
-    type: "video" | "image";
-    src: string;
-    thumbnail: string;
-    alt: string;
-  }[];
+  assets: GalleryAsset[];
+  initialImageId?: string;
 };
-
 export default function PDPHeroGallery(props: Props) {
-  const { assets } = props;
-
-  const [selectedImage, setSelectedImage] = useState<string>(assets[0]?.id ?? "");
+  const { assets, initialImageId } = props;
+  const [selectedImage, setSelectedImage] = useState<string>(initialImageId ?? assets[0]?.id ?? "");
   const quality = useAdaptiveQuality();
 
   // Memoize a lookup map to avoid repeated finds
@@ -133,9 +126,10 @@ export default function PDPHeroGallery(props: Props) {
         key={`${selectedAsset?.id ?? "empty"}:${selectedAsset?.src ?? ""}`}
         type={selectedAsset?.type || "image"}
         src={selectedAsset?.src || ""}
+        video={selectedAsset?.video}
         thumb={selectedAsset?.thumbnail || ""}
         alt={selectedAsset?.alt || ""}
-        priority={selectedImage === assets[0]?.id}
+        priority={selectedImage === (initialImageId ?? assets[0]?.id)}
         goToNextImage={goToNextImage}
         goToPreviousImage={goToPreviousImage}
       />

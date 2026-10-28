@@ -1,4 +1,7 @@
 // @ts-nocheck
+import { reconcileMellatOrder } from "../../payment-gateway/services/mellat-coordinator";
+import { captureOrderDeliverySnapshot, effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
+import { parseOrderAddressInput, OrderAddressValidationError } from "./helpers/adminUpdateAddress";
 /**
  * order controller (slim delegator)
  */
@@ -7,12 +10,14 @@ import { factories } from "@strapi/strapi";
 import { Strapi } from "@strapi/strapi";
 import { generateAnipoBarcodeHandler } from "./helpers/generateBarcode";
 import { checkAnipoBarcodeHandler } from "./helpers/checkAnipoBarcode";
+import { reserveParcelAnipoHandler } from "./helpers/anipoReserveParcel";
 import { verifyPaymentHandler } from "./helpers/payment";
 import { snappayCallbackHandler } from "./helpers/snappayCallback";
 import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
 import { adminCancelOrderHandler } from "./helpers/adminCancel";
 import { adminPaymentOperationHandler } from "./helpers/adminPaymentOperation";
 import { adminVoidBarcodeHandler } from "./helpers/adminVoidBarcode";
+import { adminWalletRecoveryHandler } from "./helpers/adminWalletRecovery";
 import { adminUpdateAddressHandler } from "./helpers/adminUpdateAddress";
 import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
@@ -25,6 +30,7 @@ import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/ad
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { adminTransitionOrderHandler } from "./helpers/adminTransition";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import { walletHoldStateFor } from "../../payment-attempt/services/payment-attempt-outcome";
 import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import {
@@ -37,6 +43,7 @@ import {
   projectOrderReserve,
   withReserveProjection,
 } from "../../reserve-group/lib/reserve-group";
+import { summarizeSettledCharges } from "./helpers/settledCharges";
 
 // Business fields captured as admin activity on a generic `PUT /orders/:id` edit. Whitelisted on
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
@@ -233,6 +240,9 @@ export default factories.createCoreController(
           }
         }
 
+        // Snapshot fields are read only after the existing order authorization.
+        const effectiveDelivery = await effectiveOrderDeliveryAddress(strapi, Number(order.id), order.delivery_address);
+
         // Transform the response to match the frontend's expected structure
         // Check both order.user_info (legacy) and order.user.user_info (correct structure)
         const userInfo = order.user?.user_info || order.user_info;
@@ -257,6 +267,7 @@ export default factories.createCoreController(
             : userInfo;
         const transformedOrder = {
           ...order,
+          delivery_address: effectiveDelivery,
           // The reserve columns on the row are frozen at creation; the live view
           // comes from the group. Without this the admin detail screen would
           // offer fulfillment actions the server refuses (and vice versa).
@@ -293,6 +304,14 @@ export default factories.createCoreController(
             : null,
         };
 
+        if (order.reserve_shipment?.id) {
+          const { getReserveParcelSummary } = await import("../services/anipoReserveParcel");
+          const parcel = await getReserveParcelSummary(strapi, Number(order.reserve_shipment.id));
+          if (["Started", "Done", "Shipment"].includes(order.Status)) {
+            Object.assign(transformedOrder, parcel.workflow);
+            if (parcel.barcode) transformedOrder.ShippingBarcode = parcel.barcode;
+          }
+        }
         ctx.body = { data: transformedOrder };
       } catch (error) {
         ctx.badRequest("Error fetching order", {
@@ -310,12 +329,41 @@ export default factories.createCoreController(
      * orders are logged; customer checkout creates orders through cart finalize (which uses
      * `entityService.create` and bypasses this controller), so there is no double-logging.
      */
-    async create(ctx) {
+    async create(ctx: any) {
       if (!(await requireCapability(ctx, strapi, "order.manual.create"))) return;
+      const requestData = (ctx.request?.body as any)?.data ?? {};
+      let deliveryInput: ReturnType<typeof parseOrderAddressInput> | undefined;
+      if (requestData.deliveryAddress !== undefined) {
+        try { deliveryInput = parseOrderAddressInput(requestData.deliveryAddress); }
+        catch (error) {
+          if (error instanceof OrderAddressValidationError) return ctx.badRequest(error.message);
+          throw error;
+        }
+      }
+      const city = deliveryInput ? await strapi.db.query("api::shipping-city.shipping-city").findOne({
+        where: { id: deliveryInput.shippingCityId }, populate: { shipping_province: true },
+      }) : null;
+      if (deliveryInput && !city?.shipping_province) return ctx.badRequest("استان و شهر معتبر نیست");
       return strapi.db.transaction(async ({ trx }) => {
+        // This small input is not an order-schema attribute. Persist its address
+        // first so both the relation and immutable order-time snapshot commit.
+        if (deliveryInput) {
+          const address = await strapi.db.query("api::local-user-address.local-user-address").create({ data: {
+            shipping_city: deliveryInput.shippingCityId, FullAddress: deliveryInput.fullAddress,
+            PostalCode: deliveryInput.postalCode, FullName: deliveryInput.recipientName,
+            Phone: deliveryInput.recipientPhone, IsTemporary: true,
+            user: requestData.user || undefined,
+          }, transacting: trx } as any);
+          const { deliveryAddress, ...orderInput } = requestData;
+          ctx.request.body.data = { ...orderInput, delivery_address: address.id };
+        }
         const response = await super.create(ctx);
         const actorId = ctx.state?.user?.id ? Number(ctx.state.user.id) : null;
         const orderId = Number((response as any)?.data?.id ?? (response as any)?.id);
+        if (orderId) {
+          const addressId = Number((ctx.request?.body as any)?.data?.delivery_address) || undefined;
+          await captureOrderDeliverySnapshot(strapi, orderId, addressId, trx, "manual");
+        }
         if (actorId && orderId) {
           const requestData = (ctx.request?.body as any)?.data ?? {};
           const ip = getClientIp(ctx);
@@ -398,6 +446,12 @@ export default factories.createCoreController(
 
     async checkAnipoBarcode(ctx) {
       return checkAnipoBarcodeHandler(strapi as any, ctx);
+    },
+    async generateReserveParcelBarcode(ctx) {
+      return reserveParcelAnipoHandler(strapi, ctx);
+    },
+    async checkReserveParcelBarcode(ctx) {
+      return reserveParcelAnipoHandler(strapi, ctx, true);
     },
 
     async verifyPayment(ctx) {
@@ -484,6 +538,11 @@ export default factories.createCoreController(
       return adminPaymentOperationHandler(strapi as any, ctx);
     },
 
+    /** Read-only operator diagnostics for an order's wallet hold and recovery. */
+    async adminWalletRecovery(ctx) {
+      return adminWalletRecoveryHandler(strapi as any, ctx);
+    },
+
     async adminTransition(ctx) {
       return adminTransitionOrderHandler(strapi as any, ctx);
     },
@@ -494,6 +553,26 @@ export default factories.createCoreController(
 
     async decrementStockManual(ctx) {
       return decrementManualOrderStockHandler(strapi as any, ctx);
+    },
+
+    /**
+     * Latest moment a live hold can still be held.
+     *
+     * SnappPay attempts are bounded by the reservation deferral ceiling, which
+     * the expiry sweep enforces from the attempt's own age; every other gateway
+     * is bounded by the order's reservation expiry. Read from the environment
+     * at call time, exactly as the job does.
+     */
+    walletHoldBoundAt(attempt: any, order: any): string | undefined {
+      if (isSnappayGatewayValue(attempt?.Gateway || order?.PaymentGateway)) {
+        if (!attempt?.createdAt) return undefined;
+        const hours = Number(process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS || 1.5);
+        const ceilingMs = (Number.isFinite(hours) && hours > 0 ? hours : 1.5) * 60 * 60 * 1000;
+        return new Date(new Date(attempt.createdAt).getTime() + ceilingMs).toISOString();
+      }
+      return order?.ReservedUntil
+        ? new Date(order.ReservedUntil).toISOString()
+        : undefined;
     },
 
     async checkPaymentStatus(ctx) {
@@ -551,6 +630,13 @@ export default factories.createCoreController(
                 ? "Failed"
                 : "Unknown");
         const isPaid = paymentStatus === "Succeeded";
+        // What was actually charged, from the settled legs. The storefront's
+        // revenue-bearing analytics `purchase` reads these; `amountIrr` below is
+        // the attempt total fixed at checkout. A paid order status counts too:
+        // a SnappPay order can be Started while its attempt row still reads
+        // Pending, and the result page already treats that order as paid.
+        const orderIsPaid = ["Started", "Shipment", "Done"].includes(order.Status);
+        const settledCharges = isPaid || orderIsPaid ? summarizeSettledCharges(txList) : null;
         const canRetry = ["Failed", "Cancelled", "Expired"].includes(paymentStatus);
         const shippingMethodCode =
           order.ShippingMethodCode || (order as any).shipping?.Code || null;
@@ -591,6 +677,12 @@ export default factories.createCoreController(
             // alongside it so the result page can show what came from the
             // wallet and what the bank carried.
             amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
+            ...(settledCharges && settledCharges.amountIrr > 0
+              ? {
+                  paidAmountIrr: settledCharges.amountIrr,
+                  paidAt: settledCharges.settledAt ?? undefined,
+                }
+              : {}),
             // Whether this checkout still has the shopper's credit committed.
             // "Active" is what makes the abandon action worth offering; once it
             // is Released or Captured the money is no longer in limbo.
@@ -613,6 +705,22 @@ export default factories.createCoreController(
               attempt?.failureMessage ||
               (isSnappay && !attempt ? "SnappPay payment requires reconciliation" : undefined),
             lastReconciledAt: attempt?.lastReconciledAt || undefined,
+            // How the hold reads to the shopper right now, and the latest
+            // moment it can still be held. The result page needs both to
+            // promise an automatic release honestly instead of implying one it
+            // cannot bound.
+            ...(attempt?.WalletHoldStatus === "Active"
+              ? {
+                  walletHoldState: walletHoldStateFor(attempt),
+                  walletHoldBoundAt: this.walletHoldBoundAt(attempt, order),
+                  // The result page holds the manual release button back for a
+                  // couple of minutes after the hold is taken, so a shopper who
+                  // is still mid-payment is not offered a way to cancel it.
+                  walletHeldAt: attempt.WalletHeldAt
+                    ? new Date(attempt.WalletHeldAt).toISOString()
+                    : undefined,
+                }
+              : {}),
             authoritative: !isSnappay || Boolean(attempt),
           },
         };
@@ -654,6 +762,13 @@ export default factories.createCoreController(
         (body?.abandon === true || body?.abandon === "true") &&
         String(order.Status) === "Paying";
       let walletReleaseRequested = false;
+      // Named so the storefront can tell "we queued your release" from "there
+      // is nothing this button can do here". Only SnappPay has a provider call
+      // behind the shopper's claim; a bank-gateway checkout is resolved by its
+      // callback or by the reservation timeout, and offering a button that
+      // silently does nothing is worse than not offering one.
+      let walletReleaseReason: "queued" | "already_resolved" | "not_applicable" =
+        "not_applicable";
       if (isSnappayGatewayValue(order.PaymentGateway)) {
         const orchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
         if (abandon) {
@@ -663,9 +778,13 @@ export default factories.createCoreController(
             "customer_abandoned_checkout",
           );
           walletReleaseRequested = outcome?.accepted === true;
+          walletReleaseReason = walletReleaseRequested ? "queued" : "already_resolved";
         } else {
           await orchestrator.reconcileOrder(orderId, "customer_request");
         }
+      }
+      if (String(order.PaymentGateway).toLowerCase() === "mellat") {
+        await reconcileMellatOrder(strapi, orderId);
       }
       const response = await this.checkPaymentStatus(ctx);
       // Only ever reported for a claim that was actually recorded. A shopper
@@ -673,6 +792,7 @@ export default factories.createCoreController(
       // release, because none was queued and none is coming.
       if (abandon && response?.data) {
         response.data.walletReleaseRequested = walletReleaseRequested;
+        response.data.walletReleaseReason = walletReleaseReason;
       }
       return response;
     },

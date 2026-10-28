@@ -1,5 +1,8 @@
+import { reportExpectedDiagnostic } from "../../../utils/diagnostic-log";
 import type { Strapi } from "@strapi/strapi";
 import { createHash } from "node:crypto";
+import * as Sentry from "@sentry/node";
+import { formatCancellationReasonForSms } from "../../../services/sms/notifications";
 import { releaseOrderReservation } from "../../../utils/stockReservations";
 import { enqueueSnappayOperation } from "../../../queue/snappay";
 import { mapToSnappayCategory } from "./snappay-category-mapper";
@@ -49,12 +52,36 @@ import {
 } from "./snappay-security";
 import {
   decideSnappayRecovery,
+  evaluateSnappayNotFound,
   normalizeSnappayProviderStatus,
   SNAPPAY_RECONCILIATION_DELAYS_MS,
   type SnappayCallbackState,
+  type SnappayNotFoundConfirmation,
   type SnappayProviderStatus,
   type SnappayRecoveryAction,
 } from "./snappay-state-machine";
+import {
+  getRecoveryMode,
+  getRecoveryReadiness,
+  recoveryConfig,
+  type RecoveryMode,
+  type RecoveryPath,
+} from "./snappay-recovery-mode";
+import { evaluateReleaseBreakers } from "./snappay-recovery-breakers";
+import {
+  listAttemptsAwaitingFollowup,
+  listEvidenceForAttempt,
+  listNotFoundReads,
+  recordEvidence,
+  recordEvidenceSafely,
+  summarizeRecentEvidence,
+  LATE_SUCCESS_KINDS,
+  NOT_FOUND_KINDS,
+  REGISTERED_KINDS,
+  type EvidenceDecision,
+  type EvidenceKind,
+  type StoredEvidence,
+} from "../../payment-attempt-evidence/services/evidence";
 import {
   applySnappayCancellation,
   applySnappayAdminUpdate,
@@ -67,6 +94,8 @@ import {
   readPaymentAttemptLegs,
 } from "../../payment-attempt/services/payment-legs";
 import { planSnappayTenderAdjustment } from "./snappay-split-tender";
+import { incrementMetric } from "../../../utils/metrics";
+import { auditWalletHoldConsistency } from "../../local-user-wallet/services/wallet-holds";
 
 const ATTEMPT_UID = "api::payment-attempt.payment-attempt" as const;
 const TX_UID = "api::contract-transaction.contract-transaction" as const;
@@ -117,6 +146,19 @@ type AttemptBundle = {
   order: any;
   contract: any;
   transaction: any;
+  /**
+   * Append-only recovery evidence for this attempt, oldest first.
+   *
+   * This — not `provider_response.generation.terminalEvidence` — is the source
+   * of truth for "we already ended this attempt". The JSON marker is a cache:
+   * the observation writer merges shallowly and guards only
+   * `status <> 'Succeeded'`, and a generation rotation replaces the whole
+   * `generation` object including the marker, so a terminal fact stored only
+   * there can be overwritten by any later read.
+   *
+   * Loaded lazily: only the paths that ask about terminality pay for it.
+   */
+  evidence?: StoredEvidence[];
 };
 
 type OperationObservation = {
@@ -363,6 +405,239 @@ function operationObservation<T>(
       ? { providerCode: result.diagnostic.providerCode }
       : {}),
   };
+}
+
+/**
+ * Mint-time identity of the SnappPay environment a token belongs to.
+ *
+ * A 404/1007 has no body to correlate against, so provenance has to be
+ * established locally. These two values are recorded on the generation when the
+ * token is issued and compared when a 1007 arrives: a token minted against
+ * staging cannot be declared dead by production reading its own (empty)
+ * environment, which is the failure mode that would otherwise cancel live
+ * orders after a config change.
+ */
+function snappayEnvironmentIdentity(): { providerHost: string; clientIdFingerprint: string } {
+  try {
+    const config = getSnappayConfig();
+    return {
+      providerHost: new URL(config.baseUrl).host,
+      clientIdFingerprint: createHash("sha256").update(config.clientId).digest("hex").slice(0, 12),
+    };
+  } catch {
+    return { providerHost: "", clientIdFingerprint: "" };
+  }
+}
+
+/** Age of the *provider token*, not of the attempt row. */
+function snappayTokenAgeMs(bundle: AttemptBundle, now = Date.now()): number {
+  const state = readSnappayGenerationState(bundle.attempt.providerResponse);
+  const issuedAt =
+    state.generation?.dispatchedAt ||
+    bundle.attempt.redirectedAt ||
+    bundle.attempt.createdAt;
+  const parsed = issuedAt ? new Date(issuedAt).getTime() : NaN;
+  return Number.isFinite(parsed) ? Math.max(0, now - parsed) : 0;
+}
+
+/** Newest instant at which the shopper was sent to (or back to) the payment page. */
+function snappayResumedAtMs(bundle: AttemptBundle): number | null {
+  const parsed = bundle.attempt.redirectedAt
+    ? new Date(bundle.attempt.redirectedAt).getTime()
+    : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function attemptEvidence(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+): Promise<StoredEvidence[]> {
+  if (Array.isArray(bundle.evidence)) return bundle.evidence;
+  try {
+    bundle.evidence = await listEvidenceForAttempt(strapi, Number(bundle.attempt.id));
+  } catch (error: any) {
+    strapi.log.error("Failed to load SnappPay recovery evidence", {
+      attemptId: bundle.attempt.attemptId,
+      error: String(error?.message || error).slice(0, 300),
+    });
+    bundle.evidence = [];
+  }
+  return bundle.evidence;
+}
+
+/** Evidence kinds written when *we* ended an attempt rather than the provider. */
+const SYSTEM_TERMINAL_KINDS: EvidenceKind[] = [
+  "not_found_confirmed",
+  "failed_then_not_found",
+  "registered_reverted",
+  "local_ttl",
+  "local_ceiling",
+];
+
+const LOCALLY_TERMINAL_STATUSES = ["Succeeded", "Cancelled", "Failed", "Expired"];
+
+const attemptIsLocallyTerminal = (attempt: any): boolean =>
+  LOCALLY_TERMINAL_STATUSES.includes(String(attempt?.Status || ""));
+
+/**
+ * The attempt is over because *we* ended it, and the provider may still be
+ * holding a live payment for it.
+ *
+ * Derived from the order as well as from the evidence rows, because production
+ * already contains 27 attempts with a provider FAILED callback followed by 1007
+ * and one `CALLBACK_OK`/`Pending` attempt whose order was cancelled 146 hours
+ * ago: all of them predate the evidence table, and all of them are exactly the
+ * case the late-success matrix exists for. An operator cancellation is excluded
+ * — that keeps today's review park, because a human already decided.
+ */
+async function isSystemCancelledLocally(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+): Promise<boolean> {
+  if (String(bundle.attempt.Status || "") === "Succeeded") return false;
+  const orderCancelled = String(bundle.order?.Status || "") === "Cancelled";
+  if (!attemptIsLocallyTerminal(bundle.attempt) && !orderCancelled) return false;
+  const rows = await attemptEvidence(strapi, bundle);
+  if (rows.some((row) => SYSTEM_TERMINAL_KINDS.includes(row.kind) && row.decision === "released")) {
+    return true;
+  }
+  // An attempt SnappPay itself reverted or cancelled — including the customer's
+  // own abandon button, which goes through `performRevert` — is not a local
+  // decision waiting for a late-success handler. The provider has nothing left.
+  if (
+    rows.some(
+      (row) =>
+        (row.kind === "provider_cancel" || row.kind === "provider_revert") &&
+        row.decision === "observed",
+    )
+  ) {
+    return false;
+  }
+  return orderCancelled || attemptIsLocallyTerminal(bundle.attempt);
+}
+
+function evidenceBaseFields(bundle: AttemptBundle) {
+  const state = readSnappayGenerationState(bundle.attempt.providerResponse);
+  const legs = readPaymentAttemptLegs(bundle.attempt);
+  return {
+    attemptId: Number(bundle.attempt.id),
+    orderId: Number(bundle.order?.id) || null,
+    tokenFingerprint: state.generation?.paymentTokenFingerprint || null,
+    generationSeq: state.generation?.seq || state.tokenAttemptSeq || null,
+    walletAmountIrr: legs.walletIrr,
+    gatewayAmountIrr: legs.gatewayIrr,
+  };
+}
+
+/**
+ * Is this 404/1007 provably about *our* token, in *this* environment?
+ *
+ * A 404 has no body, so nothing in the answer identifies what it refers to.
+ * Every clause below therefore compares what we sent against what we recorded
+ * when the token was minted. A token that fails any of them is an
+ * investigation, not a slow confirmation — re-reading it would never make it
+ * provable — so it keeps today's manual-review park.
+ *
+ * Legacy tokens minted before provenance was recorded fail closed for the same
+ * reason. That costs nothing: NOT_FOUND enforcement cannot be earned until a
+ * week of shadow data exists, by which time every live token carries it.
+ */
+function snappayNotFoundProvenance(
+  bundle: AttemptBundle,
+  token: string,
+  result: SnappayCallResult<any>,
+): { ok: boolean; reason: string } {
+  const diagnostic = result.diagnostic || ({} as any);
+  if (diagnostic.timedOut === true || diagnostic.transportError === true) {
+    return { ok: false, reason: "unreadable_call" };
+  }
+  if (Number(diagnostic.httpStatus || 0) !== 404) {
+    return { ok: false, reason: "unexpected_http_status" };
+  }
+  if (Number(diagnostic.providerCode || 0) !== 1007) {
+    return { ok: false, reason: "unexpected_provider_code" };
+  }
+  if (hasValidatedOkCallback(bundle)) {
+    return { ok: false, reason: "ok_callback" };
+  }
+  const state = readSnappayGenerationState(bundle.attempt.providerResponse);
+  const generation = state.generation;
+  if (!generation) return { ok: false, reason: "no_generation" };
+  if (!generation.paymentToken || generation.paymentToken !== token) {
+    return { ok: false, reason: "token_mismatch" };
+  }
+  const trackId = String(bundle.transaction?.TrackId || "");
+  if (!trackId || trackId !== token) {
+    return { ok: false, reason: "track_id_mismatch" };
+  }
+  const activeSeq = state.generation?.seq || state.tokenAttemptSeq || 0;
+  if (!generation.seq || generation.seq !== activeSeq) {
+    return { ok: false, reason: "stale_generation" };
+  }
+  const identity = snappayEnvironmentIdentity();
+  if (!generation.providerHost || generation.providerHost !== identity.providerHost) {
+    return { ok: false, reason: "provider_host_mismatch" };
+  }
+  if (
+    !generation.clientIdFingerprint ||
+    generation.clientIdFingerprint !== identity.clientIdFingerprint
+  ) {
+    return { ok: false, reason: "client_id_mismatch" };
+  }
+  return { ok: true, reason: "proven" };
+}
+
+/**
+ * Which NOT_FOUND class this attempt belongs to.
+ *
+ * A token that received the provider's own FAILED callback and then went
+ * missing is a stronger signal than one that simply went missing, so it gets a
+ * shorter minimum age — but it is still its own class with its own shadow
+ * count, because whether SnappPay lets a shopper retry the same token after a
+ * FAILED callback is one of the three open questions in
+ * `docs/snappay/not-found-semantics.md`.
+ */
+const notFoundKindFor = (bundle: AttemptBundle): EvidenceKind =>
+  hasFailedCallback(bundle) ? "failed_then_not_found" : "not_found_read";
+
+async function writeEvidence(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  row: {
+    kind: EvidenceKind;
+    mode: RecoveryMode;
+    decision: EvidenceDecision;
+    result?: SnappayCallResult<any>;
+    providerStatus?: string | null;
+    callbackState?: string | null;
+    tokenAgeMs?: number | null;
+    details?: Record<string, unknown>;
+  },
+  trx?: any,
+): Promise<{ id: number } | null> {
+  const identity = snappayEnvironmentIdentity();
+  const payload = {
+    ...evidenceBaseFields(bundle),
+    kind: row.kind,
+    mode: row.mode,
+    decision: row.decision,
+    providerHost: identity.providerHost,
+    clientIdFingerprint: identity.clientIdFingerprint,
+    httpStatus: row.result?.diagnostic?.httpStatus ?? null,
+    providerCode: row.result?.diagnostic?.providerCode ?? null,
+    providerStatus: row.providerStatus ?? null,
+    callbackState: row.callbackState ?? null,
+    tokenAgeMs: row.tokenAgeMs ?? null,
+    observedAt: new Date(),
+    details: row.details ?? null,
+  } as any;
+  // A money-moving decision commits with its financial transaction and must be
+  // allowed to abort it; everything else is an audit line that may never fail a
+  // recovery run.
+  if (trx || row.decision === "released" || row.decision === "reverted") {
+    return recordEvidence(strapi, payload, trx);
+  }
+  return recordEvidenceSafely(strapi, payload);
 }
 
 async function loadAttemptBundle(
@@ -741,7 +1016,12 @@ async function failInitiation(
     const now = new Date();
     await strapi.db.query(ORDER_UID).update({
       where: { id: bundle.order.id },
-      data: { Status: "Cancelled" },
+      data: {
+        Status: "Cancelled",
+        // Never `message` here: it can echo adapter/HTTP error text from
+        // SnappPay's own response, which must not reach the customer verbatim.
+        CancellationReason: formatCancellationReasonForSms(undefined, "payment_gateway_declined"),
+      },
       transacting: trx,
     } as any);
     await strapi.db.query(CONTRACT_UID).update({
@@ -939,6 +1219,7 @@ async function persistIssuedToken(
       callbackNonceHash,
       paymentTokenFingerprint: fingerprint,
       paymentToken,
+      ...snappayEnvironmentIdentity(),
     }),
   );
   strapi.log.info(
@@ -1074,6 +1355,25 @@ async function resumeExistingPaymentPage(
   resumeUrl: string,
   options: { refreshReservation?: boolean } = {},
 ): Promise<InitiateSnappayResult> {
+  // Reopening the stored payment page puts the shopper back inside the SnappPay
+  // flow, so it is a sign of life and the NOT_FOUND confirm sequence must start
+  // over. Nothing recorded that before: `redirectedAt` was stamped only when a
+  // token was minted, so a resumed session looked identical to an abandoned one
+  // and two reads taken around it would have "confirmed" a shopper who was
+  // still paying.
+  await strapi.db
+    .query(ATTEMPT_UID)
+    .update({
+      where: { id: bundle.attempt.id, Status: { $ne: "Succeeded" } },
+      data: { redirectedAt: new Date() },
+    } as any)
+    .catch((error: any) => {
+      strapi.log.warn("Failed to stamp the SnappPay payment-page resume", {
+        attemptId: bundle.attempt.attemptId,
+        error: String(error?.message || error).slice(0, 300),
+      });
+    });
+
   // Observe/resume must not clear leaseUntil. Another request may hold the
   // exclusive mint lease (POST /token / retarget); only that holder — or
   // terminal fail/unknown paths after a claim — may release it.
@@ -1688,7 +1988,16 @@ async function createOrReuseOperation(
     }
   }
   if (!shouldEnqueue) return operation;
-  if (input.metadata?.previousGeneration !== true) {
+  // A terminal attempt keeps its resolution. The late-success matrix and the
+  // shadow follow-up probe both queue operations against attempts that are
+  // already `Cancelled` or `Expired`, and writing `nextAction` back onto one
+  // would un-park it — enough, for a parked NOT_FOUND attempt, to stop the
+  // reservation sweep recognising it and to defer its stock to the ceiling
+  // instead of freeing it at the TTL.
+  if (
+    input.metadata?.previousGeneration !== true &&
+    !attemptIsLocallyTerminal(bundle.attempt)
+  ) {
     await strapi.db.query(ATTEMPT_UID).update({
       where: { id: bundle.attempt.id },
       data: {
@@ -1715,14 +2024,18 @@ async function createOrReuseOperation(
           nextRunAt: new Date(Date.now() + 60_000),
         },
       } as any),
-      strapi.db.query(ATTEMPT_UID).update({
-        where: { id: bundle.attempt.id },
-        data: {
-          Status: operatorAction ? bundle.attempt.Status : "Unknown",
-          nextAction: operatorAction ? "operator_queue_recovery" : "queue_recovery",
-          nextActionAt: new Date(Date.now() + 60_000),
-        },
-      } as any),
+      // Same reasoning as the enqueue path above: a queue outage must not
+      // un-resolve an attempt that is already terminal.
+      attemptIsLocallyTerminal(bundle.attempt)
+        ? Promise.resolve(undefined)
+        : strapi.db.query(ATTEMPT_UID).update({
+            where: { id: bundle.attempt.id },
+            data: {
+              Status: operatorAction ? bundle.attempt.Status : "Unknown",
+              nextAction: operatorAction ? "operator_queue_recovery" : "queue_recovery",
+              nextActionAt: new Date(Date.now() + 60_000),
+            },
+          } as any),
     ]);
     strapi.log.error("Failed to enqueue SnappPay operation", {
       operationId: operation.id,
@@ -1832,17 +2145,61 @@ export async function acceptSnappayCallback(
       redirectUrl: paymentResultUrl(orderId, "recorded"),
     };
   }
-  const locallyTerminal = ["Succeeded", "Cancelled", "Failed", "Expired"].includes(
-    String(bundle.attempt.Status),
-  );
+  const locallyTerminal = attemptIsLocallyTerminal(bundle.attempt);
+  const evidence = locallyTerminal ? await attemptEvidence(strapi, bundle) : undefined;
   if (
     locallyTerminal &&
-    !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId)
+    !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId, evidence)
   ) {
     return {
       accepted: true,
       orderId,
       redirectUrl: paymentResultUrl(orderId, "recorded"),
+    };
+  }
+
+  // The attempt is over on our side but SnappPay may still be holding a live
+  // payment for it — a shopper who completed the flow after the reservation
+  // sweep cancelled their order, or after a confirmed NOT_FOUND released their
+  // wallet. Production already contains this case: 27 attempts with a FAILED
+  // callback followed by 1007, and one `CALLBACK_OK` attempt whose order was
+  // cancelled 146 hours ago.
+  //
+  // Two things must not happen here. The callback must not fall through to the
+  // `Status: "Pending" / nextAction: "verify"` write below, which would
+  // resurrect a terminal attempt and send the worker to `verify` — the
+  // commit-to-fulfil call — for an order whose stock is already gone. And it
+  // must not be silently swallowed, which is what would happen if the sweep
+  // stamped attempts terminal without this branch existing: a real payment
+  // would vanish. So it is recorded and routed to the late-success matrix in
+  // every mode; only the automatic revert is mode-gated.
+  if (locallyTerminal || String(bundle.order?.Status || "") === "Cancelled") {
+    await writeEvidence(strapi, bundle, {
+      kind: "late_success_observed",
+      mode: getRecoveryMode("late_success"),
+      decision: "observed",
+      callbackState: state,
+      tokenAgeMs: snappayTokenAgeMs(bundle),
+      details: { attemptStatus: String(bundle.attempt.Status), source: "callback" },
+    });
+    await enqueueCallbackReconcile(strapi, bundle, {
+      callbackState: state,
+      callbackReceivedAt: new Date().toISOString(),
+      transactionId,
+      locallyCancelled: true,
+      purpose: "late_success",
+      generationSeq: readSnappayGenerationState(bundle.attempt.providerResponse).generation?.seq,
+    });
+    strapi.log.error("SnappPay callback arrived for a locally cancelled attempt", {
+      attemptId: bundle.attempt.attemptId,
+      orderId,
+      callbackState: state,
+      attemptStatus: String(bundle.attempt.Status),
+    });
+    return {
+      accepted: true,
+      orderId,
+      redirectUrl: paymentResultUrl(orderId, "processing"),
     };
   }
   if (
@@ -2000,6 +2357,71 @@ async function queueSnappayReconcileOperation(
   }
   await resumeExistingReconcile(strapi, bundle, existing, metadata);
   return { attempt: bundle.attempt, claimAccepted };
+}
+
+/** Minimum gap between two storefront-triggered pulls of the same attempt. */
+const STOREFRONT_PULL_THROTTLE_MS = 60_000;
+
+/**
+ * Nudges the reconcile for an attempt whose hold the shopper is currently
+ * looking at.
+ *
+ * The storefront polls `/local-user-wallet/me` and the checkout quote far more
+ * often than the reconciliation ladder runs, so a customer sitting on the
+ * wallet page would otherwise wait out a 40-minute backoff to learn their money
+ * is back. This lets a page view move the work forward without becoming the
+ * work: it never calls SnappPay on the request path, it is throttled per
+ * attempt, and the resulting run is marked as a pull so it cannot consume a
+ * ladder slot.
+ *
+ * Returns whether a pull was actually issued. Callers ignore it; it exists for
+ * the tests and the metric.
+ */
+export async function requestSnappayStorefrontPull(
+  strapi: Strapi,
+  attemptDbId: number,
+): Promise<boolean> {
+  try {
+    const operation: any = await strapi.db.query(OPERATION_UID).findOne({
+      where: {
+        attemptKey: attemptDbId,
+        OperationType: "RECONCILE",
+        Status: { $in: ["Queued", "Processing", "Unknown"] },
+      },
+      orderBy: { id: "desc" },
+    } as any);
+    if (!operation?.id) return false;
+
+    const lastPullMs = operation.metadata?.lastCustomerPullAt
+      ? new Date(operation.metadata.lastCustomerPullAt).getTime()
+      : 0;
+    if (Number.isFinite(lastPullMs) && Date.now() - lastPullMs < STOREFRONT_PULL_THROTTLE_MS) {
+      return false;
+    }
+
+    const outcome = await requeueParkedSnappayReconcile(strapi, {
+      operationId: Number(operation.id),
+      attemptId: attemptDbId,
+      metadata: { lastCustomerPullAt: new Date().toISOString() },
+      nextRunAt: new Date(),
+    });
+    if (!shouldEnqueueSnappayReconcileResume(outcome)) return false;
+    await enqueueSnappayOperation(
+      Number(operation.id),
+      Number(operation.retryCount || 0),
+      0,
+      { jobIdSalt: "pull" },
+    );
+    incrementMetric(strapi, "checkout.wallet_hold_self_heal_pull");
+    return true;
+  } catch (error: any) {
+    // A page decoration must never fail the page.
+    strapi.log.warn("Storefront-triggered SnappPay pull failed", {
+      attemptDbId,
+      error: String(error?.message || error).slice(0, 300),
+    });
+    return false;
+  }
 }
 
 export async function requestSnappayReconciliation(
@@ -2301,6 +2723,33 @@ async function updateAttemptUnlessSettled(
   }
 }
 
+/**
+ * Parks the *attempt* for review, leaving the operation alone.
+ *
+ * Split out of `markManualReview` because the NOT_FOUND confirm protocol needs
+ * exactly this half: the attempt must stay `nextAction = "manual_review"` in
+ * every mode, because `isSnappayAttemptParkedForReview` is what makes the
+ * reservation sweep release stock and wallet at the 30-minute TTL instead of
+ * deferring them to the 1.5-hour ceiling. Changing that field would itself be a
+ * reservation mutation caused by a NOT_FOUND decision, which shadow mode is not
+ * allowed to make.
+ */
+async function parkAttemptForReview(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  code: string,
+  message: string,
+) {
+  await updateAttemptUnlessSettled(strapi, bundle, {
+    Status: "Unknown",
+    nextAction: "manual_review",
+    nextActionAt: null,
+    failureCode: code,
+    failureMessage: message.slice(0, 500),
+    lastReconciledAt: new Date(),
+  });
+}
+
 async function markManualReview(
   strapi: Strapi,
   operation: any,
@@ -2318,14 +2767,7 @@ async function markManualReview(
         failureMessage: message.slice(0, 500),
       },
     } as any),
-    updateAttemptUnlessSettled(strapi, bundle, {
-      Status: "Unknown",
-      nextAction: "manual_review",
-      nextActionAt: null,
-      failureCode: code,
-      failureMessage: message.slice(0, 500),
-      lastReconciledAt: new Date(),
-    }),
+    parkAttemptForReview(strapi, bundle, code, message),
   ]);
   strapi.log.error("SnappPay operation requires manual review", {
     operationId: operation.id,
@@ -2334,6 +2776,56 @@ async function markManualReview(
     transactionId: bundle.attempt.providerReference,
     code,
   });
+}
+
+/**
+ * Re-schedules a reconcile operation *without* advancing the retry ladder.
+ *
+ * The confirming re-read is not a retry — nothing failed — so it must not
+ * consume one of the five ladder slots, or a token would exhaust its
+ * reconciliation budget while waiting to be confirmed. The BullMQ job id is
+ * salted per read for the same reason the existing `"pull"` salt exists: the id
+ * carries a one-minute bucket, so two schedules for the same operation inside
+ * one minute would otherwise dedupe and the later one would silently never run.
+ */
+async function rescheduleOperationWithoutRetry(
+  strapi: Strapi,
+  operation: any,
+  input: {
+    delayMs: number;
+    metadata: Record<string, unknown>;
+    jobIdSalt: string;
+    reason: string;
+  },
+): Promise<Date> {
+  const nextRunAt = new Date(Date.now() + Math.max(0, input.delayMs));
+  await strapi.db.query(OPERATION_UID).update({
+    where: { id: operation.id },
+    data: {
+      Status: "Queued",
+      nextRunAt,
+      leaseUntil: null,
+      failureMessage: input.reason.slice(0, 500),
+      metadata: {
+        ...(operation.metadata || {}),
+        ...input.metadata,
+        scheduledFor: nextRunAt.toISOString(),
+      },
+    },
+  } as any);
+  await enqueueSnappayOperation(
+    Number(operation.id),
+    Number(operation.retryCount || 0),
+    Math.max(0, input.delayMs),
+    { jobIdSalt: input.jobIdSalt },
+  ).catch((error: any) => {
+    strapi.log.error("Failed to enqueue SnappPay follow-up read", {
+      operationId: operation.id,
+      jobIdSalt: input.jobIdSalt,
+      error: String(error?.message || error).slice(0, 300),
+    });
+  });
+  return nextRunAt;
 }
 
 async function markOperatorOperation(
@@ -2415,6 +2907,49 @@ export function isSnappayReconciliationExhausted(retryCount: unknown): boolean {
   );
 }
 
+/**
+ * Did this run happen because the ladder scheduled it, or because something
+ * pulled it forward?
+ *
+ * Result-page polling (every fourth tick), the reservation sweep's deferral
+ * tick, the storefront self-heal and a bare-GET return all call
+ * `reconcileOrder`, which re-queues the operation to *now*. Counting those runs
+ * as retries is why production attempts reach `RECONCILIATION_EXHAUSTED` after
+ * a median of 10 minutes instead of running the intended 5m/40m/3h/12h/24h
+ * ladder: a customer watching the result page burns their own recovery budget.
+ *
+ * A pulled run therefore reschedules at the same ladder index. The five-second
+ * tolerance absorbs the gap between the scheduled instant and the worker
+ * actually claiming the job.
+ */
+function operationRunWasPulled(operation: any, now = Date.now()): boolean {
+  const metadata = operation?.metadata || {};
+  const scheduledForMs = metadata.scheduledFor ? new Date(metadata.scheduledFor).getTime() : NaN;
+  if (!Number.isFinite(scheduledForMs)) {
+    // No recorded schedule: fall back to the pull marker alone, so operations
+    // created before this accounting existed keep today's behaviour.
+    return Boolean(metadata.pulledAt);
+  }
+  // Running before the ladder asked for it *is* the signal — a pull sets both
+  // `next_run_at` and `pulledAt` to now, so the run lands early. The five-second
+  // tolerance absorbs the gap between the scheduled instant and the worker
+  // claiming the job.
+  return now < scheduledForMs - 5_000;
+}
+
+/**
+ * Wall-clock bound on reconciliation, independent of the retry count.
+ *
+ * With pulled runs no longer advancing the ladder, a token that is polled often
+ * enough could otherwise be reconciled indefinitely. This ends it at
+ * `SNAPPAY_RECONCILE_MAX_AGE_HOURS` regardless of how many slots remain.
+ */
+function reconciliationExceededMaxAge(bundle: AttemptBundle, now = Date.now()): boolean {
+  const createdAt = bundle.attempt?.createdAt ? new Date(bundle.attempt.createdAt).getTime() : NaN;
+  if (!Number.isFinite(createdAt)) return false;
+  return now - createdAt > recoveryConfig().reconcileMaxAgeHours * 60 * 60 * 1000;
+}
+
 async function scheduleOperationRetry(
   strapi: Strapi,
   operation: any,
@@ -2422,6 +2957,15 @@ async function scheduleOperationRetry(
   delayMs: number,
   reason: string,
 ) {
+  if (reconciliationExceededMaxAge(bundle)) {
+    return markManualReview(
+      strapi,
+      operation,
+      bundle,
+      "SNAPPAY_RECONCILIATION_EXHAUSTED",
+      `Automatic reconciliation passed its wall-clock bound: ${reason}`.slice(0, 500),
+    );
+  }
   if (isSnappayReconciliationExhausted(operation.retryCount)) {
     return markManualReview(
       strapi,
@@ -2431,7 +2975,10 @@ async function scheduleOperationRetry(
       `Automatic reconciliation exhausted: ${reason}`.slice(0, 500),
     );
   }
-  const retryCount = Number(operation.retryCount || 0) + 1;
+  const pulled = operationRunWasPulled(operation);
+  const retryCount = pulled
+    ? Number(operation.retryCount || 0)
+    : Number(operation.retryCount || 0) + 1;
   const nextRunAt = new Date(Date.now() + delayMs);
   await Promise.all([
     strapi.db.query(OPERATION_UID).update({
@@ -2442,6 +2989,14 @@ async function scheduleOperationRetry(
         nextRunAt,
         leaseUntil: null,
         failureMessage: reason.slice(0, 500),
+        metadata: {
+          ...(operation.metadata || {}),
+          // Recorded so the *next* run can tell a scheduled execution from a
+          // pulled one. Without it every run looks scheduled and the ladder
+          // burns exactly as it does today.
+          scheduledFor: nextRunAt.toISOString(),
+          pulledAt: null,
+        },
       },
     } as any),
     updateAttemptUnlessSettled(strapi, bundle, {
@@ -2452,7 +3007,12 @@ async function scheduleOperationRetry(
       failureMessage: reason.slice(0, 500),
     }),
   ]);
-  await enqueueSnappayOperation(Number(operation.id), retryCount, delayMs).catch((error: any) => {
+  await enqueueSnappayOperation(Number(operation.id), retryCount, delayMs, {
+    // A pulled run reschedules at the same retry index, so the job id would
+    // otherwise collide with the one already queued for this minute bucket and
+    // BullMQ would drop the new schedule.
+    ...(pulled ? { jobIdSalt: "resched" } : {}),
+  }).catch((error: any) => {
     strapi.log.error("Failed to enqueue delayed SnappPay retry", {
       operationId: operation.id,
       retryCount,
@@ -2914,6 +3474,546 @@ async function performOperatorUpdate(
   );
 }
 
+/** Closes the operation without touching the attempt. */
+async function parkOperationOnly(
+  strapi: Strapi,
+  operation: any,
+  code: string,
+  message: string,
+) {
+  await strapi.db.query(OPERATION_UID).update({
+    where: { id: operation.id },
+    data: {
+      Status: "Unknown",
+      leaseUntil: null,
+      nextRunAt: null,
+      failureMessage: `${code}:${message}`.slice(0, 500),
+    },
+  } as any);
+}
+
+type RecoveryContext = {
+  notFoundKind: EvidenceKind;
+  notFoundMode: RecoveryMode;
+  registeredMode: RecoveryMode;
+  lateSuccessMode: RecoveryMode;
+  tokenAgeMs: number;
+  statusResult: SnappayCallResult<any>;
+  providerStatus: SnappayProviderStatus;
+  callbackState?: SnappayCallbackState;
+  provenance: { ok: boolean; reason: string };
+  locallyCancelled: boolean;
+};
+
+/**
+ * A proven 1007 that is not yet confirmable.
+ *
+ * The attempt is parked exactly as today — `Unknown` / `manual_review` /
+ * `SNAPPAY_STATUS_NOT_FOUND` — in shadow *and* enforce, so the reservation
+ * sweep still ends it at the 30-minute TTL and neither mode changes what the
+ * customer experiences until a release is actually earned. Only the operation
+ * differs: instead of parking with `next_run_at NULL` and never being looked at
+ * again, it is scheduled for the confirming re-read.
+ */
+async function handleConfirmNotFound(
+  strapi: Strapi,
+  operation: any,
+  bundle: AttemptBundle,
+  context: RecoveryContext,
+): Promise<void> {
+  const config = recoveryConfig();
+  const minAgeMs =
+    context.notFoundKind === "failed_then_not_found"
+      ? config.failedNotFoundMinTokenAgeMs
+      : config.notFoundMinTokenAgeMs;
+
+  await writeEvidence(strapi, bundle, {
+    kind: context.notFoundKind,
+    mode: context.notFoundMode,
+    decision: context.provenance.ok ? "observed" : "refused_unproven",
+    result: context.statusResult,
+    callbackState: context.callbackState ?? null,
+    tokenAgeMs: context.tokenAgeMs,
+    details: { provenance: context.provenance.reason },
+  });
+
+  await parkAttemptForReview(
+    strapi,
+    bundle,
+    context.provenance.ok ? "SNAPPAY_STATUS_NOT_FOUND" : "SNAPPAY_STATUS_NOT_FOUND_UNPROVEN",
+    "SnappPay reports no transaction for this token; confirming before any release",
+  );
+
+  const reads = await listNotFoundReads(strapi, Number(bundle.attempt.id), context.notFoundKind);
+  const firstReadAt = reads[0]?.observedAt ?? new Date().toISOString();
+  const delayMs = Math.max(minAgeMs - context.tokenAgeMs, config.notFoundConfirmDelayMs);
+  const nextRunAt = await rescheduleOperationWithoutRetry(strapi, operation, {
+    delayMs,
+    jobIdSalt: `confirm${Math.min(99, reads.length)}`,
+    reason: "Confirming a SnappPay NOT_FOUND read before any release",
+    metadata: {
+      purpose: "confirm_not_found",
+      confirmNotFound: { firstReadAt, reads: reads.length },
+    },
+  });
+  strapi.log.warn(
+    `SnappPay NOT_FOUND read recorded ${JSON.stringify({
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order?.id,
+      mode: context.notFoundMode,
+      kind: context.notFoundKind,
+      reads: reads.length,
+      tokenAgeMs: context.tokenAgeMs,
+      minAgeMs,
+      confirmAt: nextRunAt.toISOString(),
+    })}`,
+  );
+}
+
+/**
+ * A confirmed 1007. In enforce this is the local cancel that frees the wallet
+ * and the stock; in shadow it is the row that proves it would have.
+ *
+ * There is no provider call: a token SnappPay has no record of cannot be
+ * reverted or cancelled, so the decision is entirely local. That is also why a
+ * crash here is harmless — the next confirming read repeats it.
+ */
+async function handleCancelLocalNotFound(
+  strapi: Strapi,
+  operation: any,
+  bundle: AttemptBundle,
+  context: RecoveryContext,
+): Promise<void> {
+  const legs = readPaymentAttemptLegs(bundle.attempt);
+  const confirmedKind: EvidenceKind =
+    context.notFoundKind === "failed_then_not_found"
+      ? "failed_then_not_found"
+      : "not_found_confirmed";
+
+  const breaker = await evaluateReleaseBreakers(strapi, {
+    path: "not_found",
+    mode: context.notFoundMode,
+    kinds: NOT_FOUND_KINDS,
+    walletAmountIrr: legs.walletIrr,
+  });
+
+  if (breaker.open && context.notFoundMode === "enforce") {
+    await writeEvidence(strapi, bundle, {
+      kind: confirmedKind,
+      mode: context.notFoundMode,
+      decision: breaker.decision,
+      result: context.statusResult,
+      tokenAgeMs: context.tokenAgeMs,
+      details: { reason: breaker.reason },
+    });
+    // Parked exactly as an unconfirmed read is, so the reservation sweep still
+    // ends the attempt at its usual TTL. A tripped breaker costs latency, never
+    // money.
+    return markManualReview(
+      strapi,
+      operation,
+      bundle,
+      "SNAPPAY_AUTO_RELEASE_BREAKER",
+      `Automatic release refused: ${breaker.reason}`,
+    );
+  }
+
+  if (context.notFoundMode !== "enforce") {
+    // Shadow records the decision it reached, and notes separately whether a
+    // breaker would have stopped it.
+    //
+    // It deliberately does *not* downgrade the row to `refused_breaker_*`: the
+    // wallet-value breaker is fail-closed and unset by default, so a shadow run
+    // on a wallet-bearing attempt would otherwise never produce a
+    // `would_release` row — and "≥ 100 would_release rows" is the prerequisite
+    // for ever enabling enforcement. The breaker would have made enforcement
+    // safe; suppressing the measurement would only have made it unreachable.
+    await writeEvidence(strapi, bundle, {
+      kind: confirmedKind,
+      mode: context.notFoundMode,
+      decision: "would_release",
+      result: context.statusResult,
+      callbackState: context.callbackState ?? null,
+      tokenAgeMs: context.tokenAgeMs,
+      details: {
+        wouldReleaseWalletIrr: legs.walletIrr,
+        breakerWouldRefuse: breaker.open ? breaker.reason : null,
+      },
+    });
+    reportExpectedDiagnostic("snappay.not_found.shadow_decision", {
+      level: "info",
+      tags: { kind: confirmedKind, gateway: "snappay" },
+      extra: {
+        attemptId: bundle.attempt.attemptId,
+        orderId: bundle.order?.id,
+        tokenAgeMs: context.tokenAgeMs,
+        walletAmountIrr: legs.walletIrr,
+      },
+    });
+    return markManualReview(
+      strapi,
+      operation,
+      bundle,
+      "SNAPPAY_STATUS_NOT_FOUND",
+      "SnappPay NOT_FOUND confirmed; shadow mode made no change",
+    );
+  }
+
+  await applySnappayCancellation(
+    strapi,
+    idsFrom(bundle),
+    "NOT_FOUND",
+    "provider_not_found_confirmed",
+    {
+      walletReleaseReason: "provider_not_found_confirmed",
+      // Written inside the cancellation transaction, so the row exists if and
+      // only if the release committed — and a duplicate violates the partial
+      // unique index and aborts the whole cancel instead of releasing twice.
+      evidence: {
+        ...evidenceBaseFields(bundle),
+        kind: confirmedKind,
+        mode: "enforce",
+        decision: "released",
+        httpStatus: context.statusResult.diagnostic?.httpStatus ?? null,
+        providerCode: context.statusResult.diagnostic?.providerCode ?? null,
+        providerStatus: "NOT_FOUND",
+        callbackState: context.callbackState ?? null,
+        tokenAgeMs: context.tokenAgeMs,
+        observedAt: new Date(),
+        details: { reads: operation.metadata?.confirmNotFound?.reads ?? null },
+      },
+    },
+  );
+  bundle.attempt.Status = "Cancelled";
+  await markOperationSucceeded(strapi, operation.id, "NOT_FOUND");
+  reportExpectedDiagnostic("snappay.not_found.auto_released", {
+    level: "info",
+    tags: { kind: confirmedKind, gateway: "snappay" },
+    extra: {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order?.id,
+      tokenAgeMs: context.tokenAgeMs,
+      walletAmountIrr: legs.walletIrr,
+    },
+  });
+}
+
+/**
+ * An aged `REGISTERED` token.
+ *
+ * `REGISTERED` means the shopper never reached the first-installment bank step,
+ * and revert cannot touch a `registered` token — SnappPay answers 1011 with
+ * "consider the order not finalized and wait 30 min to revert it again". So
+ * this loop cannot end a session a shopper is still inside; it can only
+ * establish that there is nothing to end.
+ *
+ * The status read that produced `REGISTERED` in this same run *is* the required
+ * pre-check: it happened moments ago in `processSnappayOperation`, so a second
+ * call would add a round trip without adding a guarantee. The revert is never
+ * blind.
+ */
+async function handleRevertRegisteredAged(
+  strapi: Strapi,
+  operation: any,
+  bundle: AttemptBundle,
+  token: string,
+  context: RecoveryContext,
+): Promise<void> {
+  const legs = readPaymentAttemptLegs(bundle.attempt);
+
+  if (context.registeredMode !== "enforce") {
+    // Same reasoning as the NOT_FOUND shadow row: record the decision, note the
+    // breaker beside it, and leave the readiness statistics computable.
+    const wouldRefuse = await evaluateReleaseBreakers(strapi, {
+      path: "registered",
+      mode: context.registeredMode,
+      kinds: REGISTERED_KINDS,
+      walletAmountIrr: legs.walletIrr,
+    });
+    await writeEvidence(strapi, bundle, {
+      kind: "registered_aged",
+      mode: context.registeredMode,
+      decision: "would_revert",
+      result: context.statusResult,
+      providerStatus: "REGISTERED",
+      tokenAgeMs: context.tokenAgeMs,
+      details: {
+        wouldReleaseWalletIrr: legs.walletIrr,
+        breakerWouldRefuse: wouldRefuse.open ? wouldRefuse.reason : null,
+      },
+    });
+    reportExpectedDiagnostic("snappay.registered.shadow_decision", {
+      level: "info",
+      tags: { gateway: "snappay" },
+      extra: {
+        attemptId: bundle.attempt.attemptId,
+        orderId: bundle.order?.id,
+        tokenAgeMs: context.tokenAgeMs,
+      },
+    });
+    // Falls through to today's outcome: keep reconciling, let the sweep bound it.
+    return scheduleOperationRetry(
+      strapi,
+      operation,
+      bundle,
+      reconciliationDelay(Number(operation.retryCount || 0)),
+      "SnappPay token is still registered",
+    );
+  }
+
+  const breaker = await evaluateReleaseBreakers(strapi, {
+    path: "registered",
+    mode: context.registeredMode,
+    kinds: REGISTERED_KINDS,
+    walletAmountIrr: legs.walletIrr,
+  });
+  if (breaker.open) {
+    await writeEvidence(strapi, bundle, {
+      kind: "registered_aged",
+      mode: "enforce",
+      decision: breaker.decision,
+      result: context.statusResult,
+      providerStatus: "REGISTERED",
+      tokenAgeMs: context.tokenAgeMs,
+      details: { reason: breaker.reason },
+    });
+    return markManualReview(
+      strapi,
+      operation,
+      bundle,
+      "SNAPPAY_AUTO_RELEASE_BREAKER",
+      `Automatic revert refused: ${breaker.reason}`,
+    );
+  }
+
+  await writeEvidence(strapi, bundle, {
+    kind: "registered_aged",
+    mode: "enforce",
+    decision: "observed",
+    result: context.statusResult,
+    providerStatus: "REGISTERED",
+    tokenAgeMs: context.tokenAgeMs,
+  });
+
+  const adapter = createSnappayAdapter(strapi);
+  const revertResult = await adapter.revert(token);
+  await updateProviderObservation(
+    strapi,
+    bundle,
+    revertResult,
+    revertResult.successful ? "REVERT" : undefined,
+  );
+  if (revertResult.successful) {
+    await applySnappayCancellation(
+      strapi,
+      idsFrom(bundle),
+      // Not "REVERT": that reads as "SnappPay reverted this", which is how a
+      // FAILED-callback revert is recorded. This one says *we* decided an aged
+      // registered token was never going to be paid, and the order log and
+      // failure code say so.
+      "REGISTERED_REVERTED",
+      "registered_reverted",
+      {
+        walletReleaseReason: "registered_reverted",
+        evidence: {
+          ...evidenceBaseFields(bundle),
+          kind: "registered_reverted",
+          mode: "enforce",
+          decision: "reverted",
+          httpStatus: revertResult.diagnostic?.httpStatus ?? null,
+          providerCode: revertResult.diagnostic?.providerCode ?? null,
+          providerStatus: "REVERT",
+          tokenAgeMs: context.tokenAgeMs,
+          observedAt: new Date(),
+        },
+      },
+    );
+    bundle.attempt.Status = "Cancelled";
+    await markOperationSucceeded(strapi, operation.id, "REVERT");
+    reportExpectedDiagnostic("snappay.registered.reverted", {
+      level: "info",
+      tags: { gateway: "snappay" },
+      extra: { attemptId: bundle.attempt.attemptId, orderId: bundle.order?.id },
+    });
+    return;
+  }
+
+  const code = Number(revertResult.diagnostic?.providerCode || 0);
+  const reportedStatus = revertResult.diagnostic?.transactionStatus;
+  if (code === 1007) {
+    // The token vanished between the pre-check and the revert. That is the
+    // NOT_FOUND class, not a revert failure.
+    return handleConfirmNotFound(strapi, operation, bundle, {
+      ...context,
+      statusResult: revertResult,
+    });
+  }
+  if (code === 1011 && (reportedStatus === "REGISTERED" || !reportedStatus)) {
+    // Workbook revert/1011 from `registered`: wait 30 minutes and try again.
+    // An unrecognised body is deliberately treated the same way rather than as
+    // "never reached the bank" — the field name is unverified against a live
+    // 1011, and mistaking an unparsed body for a terminal answer would turn an
+    // ambiguous revert into a false unpaid decision.
+    await writeEvidence(strapi, bundle, {
+      kind: "registered_aged",
+      mode: "enforce",
+      decision: "observed",
+      result: revertResult,
+      providerStatus: reportedStatus ?? "REGISTERED",
+      tokenAgeMs: context.tokenAgeMs,
+      details: { revertRetryInMinutes: 30, transactionStatus: reportedStatus ?? null },
+    });
+    return scheduleOperationRetry(
+      strapi,
+      operation,
+      bundle,
+      recoveryConfig().registeredRevertAfterMs,
+      "SnappPay revert is still registered; waiting before retrying",
+    );
+  }
+  return markActionManualReview(
+    strapi,
+    operation,
+    bundle,
+    code ? `SNAPPAY_REGISTERED_REVERT_${code}` : "SNAPPAY_REGISTERED_REVERT_AMBIGUOUS",
+    "SnappPay refused to revert an aged registered token",
+    operationObservation(revertResult, reportedStatus),
+  );
+}
+
+/**
+ * The provider still holds a live payment for an attempt we already ended.
+ *
+ * Nothing here may touch the wallet, the order or the stock: invariant 3 and
+ * `SNAPPAY_LOCAL_STATE_CONFLICT` keep a locally cancelled order unfulfillable,
+ * and the customer's money was returned when we cancelled. The only question is
+ * what to do on SnappPay's side, and the answer is strictly what SnappPay
+ * documents an operation for.
+ *
+ * This deliberately does *not* reuse `performRevert`: that function falls
+ * through a `VERIFY` status to `performSettle(..., true)`, which would settle
+ * the payment and then cancel it — creating and voiding a real installment
+ * contract for a customer who is not getting the goods.
+ */
+async function handleLateSuccess(
+  strapi: Strapi,
+  operation: any,
+  bundle: AttemptBundle,
+  token: string,
+  context: RecoveryContext,
+  action: "LATE_SUCCESS_REVERT" | "LATE_SUCCESS_REVIEW",
+): Promise<void> {
+  const reviewTags = {
+    gateway: "snappay",
+    state: context.providerStatus,
+    ...(context.providerStatus === "VERIFY" ? { deadline: "nightly_settle" } : {}),
+  };
+
+  const park = async (kind: EvidenceKind, decision: EvidenceDecision, detail: string) => {
+    await writeEvidence(strapi, bundle, {
+      kind,
+      mode: context.lateSuccessMode,
+      decision,
+      result: context.statusResult,
+      providerStatus: context.providerStatus,
+      callbackState: context.callbackState ?? null,
+      tokenAgeMs: context.tokenAgeMs,
+      details: { detail },
+    });
+    Sentry.captureMessage("snappay.late_success.review", {
+      level: "warning",
+      tags: reviewTags,
+      extra: {
+        attemptId: bundle.attempt.attemptId,
+        orderId: bundle.order?.id,
+        providerStatus: context.providerStatus,
+        detail,
+      },
+    });
+    // Only the operation is parked. The attempt is already terminal and must
+    // stay that way: writing to it would un-resolve a cancelled checkout.
+    await parkOperationOnly(
+      strapi,
+      operation,
+      "SNAPPAY_LATE_SUCCESS_REVIEW",
+      `Provider is ${context.providerStatus} on a locally cancelled attempt`,
+    );
+  };
+
+  if (action === "LATE_SUCCESS_REVIEW") {
+    // `cancel` is documented and proven from `SETTLE` (10 operator cancels on
+    // production), but voiding a live installment contract the customer is now
+    // paying off is an operator's decision.
+    return park("late_success_review", "review", "settled_contract_needs_operator");
+  }
+
+  if (context.lateSuccessMode !== "enforce") {
+    return park(
+      "late_success_observed",
+      "would_revert",
+      `revert_available_from_${context.providerStatus}`,
+    );
+  }
+
+  const adapter = createSnappayAdapter(strapi);
+  const revertResult = await adapter.revert(token);
+  if (revertResult.successful) {
+    await writeEvidence(strapi, bundle, {
+      kind: "late_success_reverted",
+      mode: "enforce",
+      decision: "reverted",
+      result: revertResult,
+      providerStatus: "REVERT",
+      callbackState: context.callbackState ?? null,
+      tokenAgeMs: context.tokenAgeMs,
+      details: { revertedFrom: context.providerStatus },
+    });
+    await markOperationSucceeded(strapi, operation.id, "REVERT");
+    reportExpectedDiagnostic("snappay.late_success.reverted", {
+      level: "warning",
+      tags: reviewTags,
+      extra: {
+        attemptId: bundle.attempt.attemptId,
+        orderId: bundle.order?.id,
+        revertedFrom: context.providerStatus,
+      },
+    });
+    return;
+  }
+
+  // A failed revert from `VERIFY` is time-critical: SnappPay auto-settles a
+  // lingering verify overnight, so an operator has until then to act.
+  return park(
+    "late_success_review",
+    "review",
+    `revert_failed_from_${context.providerStatus}`,
+  );
+}
+
+async function handleObserve(
+  strapi: Strapi,
+  operation: any,
+  bundle: AttemptBundle,
+  context: RecoveryContext,
+): Promise<void> {
+  const kind: EvidenceKind =
+    context.providerStatus === "CANCEL"
+      ? "provider_cancel"
+      : context.providerStatus === "REVERT"
+        ? "provider_revert"
+        : "late_success_observed";
+  await writeEvidence(strapi, bundle, {
+    kind,
+    mode: context.lateSuccessMode,
+    decision: "observed",
+    result: context.statusResult,
+    providerStatus: context.providerStatus,
+    callbackState: context.callbackState ?? null,
+    tokenAgeMs: context.tokenAgeMs,
+  });
+  await markOperationSucceeded(strapi, operation.id, context.providerStatus);
+}
+
 async function executeRecoveryAction(
   strapi: Strapi,
   operation: any,
@@ -2921,6 +4021,7 @@ async function executeRecoveryAction(
   token: string,
   action: SnappayRecoveryAction,
   revertReason = "failed_callback",
+  context?: RecoveryContext,
 ) {
   switch (action) {
     case "VERIFY":
@@ -2983,6 +4084,37 @@ async function executeRecoveryAction(
         reconciliationDelay(Number(operation.retryCount || 0)),
         "SnappPay status is not yet authoritative",
       );
+    case "CONFIRM_NOT_FOUND":
+      if (!context) return markManualReview(strapi, operation, bundle, "SNAPPAY_STATUS_NOT_FOUND", "SnappPay reports no transaction for this token");
+      return handleConfirmNotFound(strapi, operation, bundle, context);
+    case "CANCEL_LOCAL_NOT_FOUND":
+      if (!context) return markManualReview(strapi, operation, bundle, "SNAPPAY_STATUS_NOT_FOUND", "SnappPay reports no transaction for this token");
+      return handleCancelLocalNotFound(strapi, operation, bundle, context);
+    case "REVERT_REGISTERED_AGED":
+      if (!context) {
+        return scheduleOperationRetry(
+          strapi,
+          operation,
+          bundle,
+          reconciliationDelay(Number(operation.retryCount || 0)),
+          "SnappPay token is still registered",
+        );
+      }
+      return handleRevertRegisteredAged(strapi, operation, bundle, token, context);
+    case "LATE_SUCCESS_REVERT":
+    case "LATE_SUCCESS_REVIEW":
+      if (!context) {
+        return parkOperationOnly(
+          strapi,
+          operation,
+          "SNAPPAY_LATE_SUCCESS_REVIEW",
+          "Provider still holds a payment for a locally cancelled attempt",
+        );
+      }
+      return handleLateSuccess(strapi, operation, bundle, token, context, action);
+    case "OBSERVE":
+      if (!context) return markOperationSucceeded(strapi, operation.id, bundle.attempt.providerStatus);
+      return handleObserve(strapi, operation, bundle, context);
   }
 }
 
@@ -3014,10 +4146,58 @@ export async function processSnappayOperation(
       return { status: "completed", operationId };
     }
     const operatorAction = operation.metadata?.operatorAction === true;
+    const purpose = String(operation.metadata?.purpose || "");
+    const isRecoveryRead = purpose === "confirm_not_found" || purpose === "followup";
+    const carriesLateSuccess = operation.metadata?.locallyCancelled === true;
+
+    // A run that arrived before the ladder asked for it — a result-page poll,
+    // the reservation sweep's deferral tick, a bare-GET return — is put back to
+    // its scheduled time without calling the provider. It must not count as one
+    // of the two confirming reads, because a customer refreshing the result page
+    // would otherwise manufacture the confirmation that releases their own
+    // wallet.
+    //
+    // Runs that carry new information are exempt: a callback (in particular the
+    // `OK` that rescued 56 settled production orders) and an explicit customer
+    // abandonment both have to be acted on now, not in half an hour.
+    if (!operatorAction && operationRunWasPulled(operation)) {
+      const carriesNewInformation =
+        Boolean(operation.metadata?.callbackState) ||
+        operation.metadata?.customerAbandoned === true;
+      const scheduledForMs = operation.metadata?.scheduledFor
+        ? new Date(operation.metadata.scheduledFor).getTime()
+        : NaN;
+      if (!carriesNewInformation && isRecoveryRead && Number.isFinite(scheduledForMs)) {
+        await rescheduleOperationWithoutRetry(strapi, operation, {
+          delayMs: scheduledForMs - Date.now(),
+          jobIdSalt: "requeue",
+          reason: "Pulled before the scheduled confirming read; re-queued unchanged",
+          metadata: { purpose, pulledAt: null },
+        });
+        return { status: "skipped", reason: "pulled_before_scheduled_read" };
+      }
+    }
+
+    // The replay short-circuit still ends every ordinary operation on a
+    // terminal attempt. Three narrow classes pass it, and they are the ones
+    // that only exist *because* the attempt is terminal: the confirming read of
+    // a NOT_FOUND sequence (the sweep usually stamps the attempt `Expired` at
+    // ~+31 min, just before the +30 min re-read lands — without this, shadow
+    // mode would collect nothing at all), the +24h follow-up probe, and a late
+    // provider success on a checkout we already cancelled. What they may do is
+    // constrained by the attempt's state further down, not by the flag here.
     if (
       !operatorAction &&
-      ["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(bundle.attempt.Status))
+      !isRecoveryRead &&
+      !carriesLateSuccess &&
+      LOCALLY_TERMINAL_STATUSES.includes(String(bundle.attempt.Status))
     ) {
+      await markOperationSucceeded(strapi, operation.id, bundle.attempt.providerStatus);
+      return { status: "completed", replayed: true };
+    }
+    // A settled attempt is never revisited by any of them: there is nothing to
+    // reverse and everything to lose.
+    if (String(bundle.attempt.Status) === "Succeeded" && !operatorAction) {
       await markOperationSucceeded(strapi, operation.id, bundle.attempt.providerStatus);
       return { status: "completed", replayed: true };
     }
@@ -3046,7 +4226,15 @@ export async function processSnappayOperation(
     const adapter = createSnappayAdapter(strapi);
     const statusResult = await adapter.status(token);
     const providerStatus = normalizeSnappayProviderStatus(statusResult.response?.status);
-    await updateProviderObservation(strapi, bundle, statusResult, providerStatus);
+    const attemptAlreadyTerminal = attemptIsLocallyTerminal(bundle.attempt);
+    // A recovery read on an attempt that is already over is exactly that — a
+    // read. `mergeSnappayAttemptObservation` guards only `status <> 'Succeeded'`
+    // and writes `provider_status` and `last_reconciled_at`, so letting it run
+    // here would mutate a cancelled attempt from a path that is supposed to
+    // observe. The evidence row carries everything that matters instead.
+    if (!(isRecoveryRead && attemptAlreadyTerminal)) {
+      await updateProviderObservation(strapi, bundle, statusResult, providerStatus);
+    }
     if (operatorAction) {
       if (!statusResult.successful) {
         const code = Number(statusResult.diagnostic.providerCode || 0);
@@ -3160,6 +4348,64 @@ export async function processSnappayOperation(
     // the provider, so the state machine consults it only for a token SnappPay
     // still reports as uncommitted.
     const customerAbandoned = operation.metadata?.customerAbandoned === true;
+
+    const config = recoveryConfig();
+    const notFoundMode = getRecoveryMode("not_found");
+    const registeredMode = getRecoveryMode("registered");
+    const lateSuccessMode = getRecoveryMode("late_success");
+    const tokenAgeMs = snappayTokenAgeMs(bundle);
+    const notFoundKind = notFoundKindFor(bundle);
+    const providerCode = Number(statusResult.diagnostic.providerCode || 0);
+    const locallyCancelled =
+      carriesLateSuccess || (await isSystemCancelledLocally(strapi, bundle));
+
+    // Confirmation state is read from the append-only evidence table rather
+    // than from a counter on the operation row: operation rows are updated in
+    // place (847 of 4,349 on production), so two workers racing the same read
+    // could double-count or lose one there.
+    // Computed even for an attempt that is already over: on production under
+    // shadow the reservation sweep ends the attempt at about +31 minutes while
+    // the confirming read is due at +30, so most shadow data points are reads
+    // on an already-`Expired` attempt. Without this they would all record a
+    // bare `observed` and the readiness statistics would never reach their
+    // threshold. The state machine still refuses to act on a cancelled attempt.
+    let notFound: SnappayNotFoundConfirmation | undefined;
+    let provenance = { ok: false, reason: "not_evaluated" };
+    if (providerCode === 1007 && notFoundMode !== "off") {
+      provenance = snappayNotFoundProvenance(bundle, token, statusResult);
+      const priorReads = await listNotFoundReads(
+        strapi,
+        Number(bundle.attempt.id),
+        notFoundKind,
+      );
+      notFound = evaluateSnappayNotFound({
+        provenanceOk: provenance.ok,
+        // The read happening right now is part of the sequence.
+        reads: [
+          ...priorReads.map((read) => ({
+            observedAtMs: read.observedAt ? new Date(read.observedAt).getTime() : 0,
+            tokenAgeMs: Number(read.tokenAgeMs || 0),
+          })),
+          { observedAtMs: Date.now(), tokenAgeMs },
+        ],
+        tokenAgeMs,
+        minTokenAgeMs:
+          notFoundKind === "failed_then_not_found"
+            ? config.failedNotFoundMinTokenAgeMs
+            : config.notFoundMinTokenAgeMs,
+        confirmDelayMs: config.notFoundConfirmDelayMs,
+        resumedAtMs: snappayResumedAtMs(bundle),
+        hasOkCallback: hasValidatedOkCallback(bundle),
+      });
+    }
+
+    const registeredAged =
+      providerStatus === "REGISTERED" &&
+      !callbackState &&
+      tokenAgeMs >= config.registeredRevertAfterMs &&
+      (snappayResumedAtMs(bundle) === null ||
+        Date.now() - (snappayResumedAtMs(bundle) as number) >= config.registeredRevertAfterMs);
+
     const action = decideSnappayRecovery({
       callbackState,
       customerAbandoned,
@@ -3170,15 +4416,100 @@ export async function processSnappayOperation(
       // never produced one.
       providerCode: statusResult.diagnostic.providerCode,
       attemptAgeMs: attemptCreatedAt !== null ? Date.now() - attemptCreatedAt : null,
+      locallyCancelled,
+      notFoundMode,
+      registeredMode,
+      notFound,
+      registeredAged,
     });
+
+    const context: RecoveryContext = {
+      notFoundKind,
+      notFoundMode,
+      registeredMode,
+      lateSuccessMode,
+      tokenAgeMs,
+      statusResult,
+      providerStatus,
+      callbackState,
+      provenance,
+      locallyCancelled,
+    };
+
+    // An attempt that is already terminal is only ever *observed* by a
+    // confirming read or a follow-up probe. On production under shadow the
+    // reservation sweep cancels the order and stamps the attempt `Expired` at
+    // about +31 minutes, while the confirming read is due at +30, so most
+    // shadow data points land here: "enforce would have released this at +30;
+    // the sweep did it at +31". Recording that is the whole purpose of the run.
+    if (isRecoveryRead && attemptAlreadyTerminal) {
+      const releasedBy = (await attemptEvidence(strapi, bundle)).some(
+        (row) => row.decision === "released" && row.kind !== "local_ttl" && row.kind !== "local_ceiling",
+      )
+        ? "worker"
+        : "sweep";
+      await writeEvidence(strapi, bundle, {
+        kind: purpose === "followup" ? "followup" : notFoundKind === "failed_then_not_found" ? "failed_then_not_found" : "not_found_confirmed",
+        mode: notFoundMode,
+        decision:
+          purpose === "followup"
+            ? "observed"
+            : notFound?.confirmed && notFoundMode !== "enforce"
+              ? "would_release"
+              : "observed",
+        result: statusResult,
+        providerStatus,
+        callbackState: callbackState ?? null,
+        tokenAgeMs,
+        details: {
+          already_released_by: releasedBy,
+          attemptStatus: String(bundle.attempt.Status),
+          confirmation: notFound?.reason ?? null,
+        },
+      });
+      // A follow-up probe that finds a live payment is a late success and has
+      // to be routed, not just noted.
+      if (
+        purpose === "followup" &&
+        (providerStatus === "PENDING" ||
+          providerStatus === "VERIFY" ||
+          providerStatus === "SETTLE")
+      ) {
+        await handleLateSuccess(
+          strapi,
+          operation,
+          bundle,
+          token,
+          context,
+          providerStatus === "SETTLE" ? "LATE_SUCCESS_REVIEW" : "LATE_SUCCESS_REVERT",
+        );
+        return { status: "completed", operationId, providerStatus, action: "LATE_SUCCESS" };
+      }
+      await markOperationSucceeded(strapi, operation.id, providerStatus);
+      return { status: "completed", operationId, providerStatus, observedOnly: true };
+    }
+
     if (action === "MANUAL_REVIEW") {
       const code = Number(statusResult.diagnostic.providerCode || 0);
       const reviewCode =
         code === 1048
           ? "SNAPPAY_VENTURE_MISMATCH"
           : code === 1007
-            ? "SNAPPAY_STATUS_NOT_FOUND"
+            ? provenance.ok === false && provenance.reason !== "not_evaluated"
+              ? "SNAPPAY_STATUS_NOT_FOUND_UNPROVEN"
+              : "SNAPPAY_STATUS_NOT_FOUND"
             : "SNAPPAY_MANUAL_REVIEW";
+      if (code === 1007 && notFoundMode !== "off") {
+        await writeEvidence(strapi, bundle, {
+          kind: notFoundKind,
+          mode: notFoundMode,
+          decision: "refused_unproven",
+          result: statusResult,
+          callbackState: callbackState ?? null,
+          tokenAgeMs,
+          details: { provenance: provenance.reason },
+        });
+      }
       await markManualReview(
         strapi,
         operation,
@@ -3197,6 +4528,7 @@ export async function processSnappayOperation(
       customerAbandoned && callbackState !== "FAILED"
         ? "customer_abandoned_checkout"
         : "failed_callback",
+      context,
     );
     return { status: "completed", operationId, providerStatus, action };
   } catch (error: any) {
@@ -3285,6 +4617,137 @@ async function recoverOrphanedSideEffects(strapi: Strapi): Promise<number> {
   return recovered;
 }
 
+/** How long a shadow decision is left alone before it is checked against reality. */
+const SHADOW_FOLLOWUP_AFTER_MS = 24 * 60 * 60 * 1000;
+let lastRecoverySummaryAt = 0;
+let lastWalletAuditAt = 0;
+
+/**
+ * Hourly assertion of the wallet-hold invariants.
+ *
+ * Invariant 8 — `held_balance` equals the sum of a wallet's Active holds — has
+ * only ever been checked by hand. So has "an Active hold belongs to an order
+ * that is still paying". Both are the kind of drift that is cheap to detect
+ * and very expensive to discover from a customer complaint, so they are
+ * asserted on a schedule and reported; nothing is repaired automatically.
+ */
+async function auditWalletHolds(strapi: Strapi): Promise<void> {
+  const now = Date.now();
+  if (now - lastWalletAuditAt < 60 * 60 * 1000) return;
+  lastWalletAuditAt = now;
+  try {
+    const audit = await auditWalletHoldConsistency(strapi);
+    strapi.log.info(
+      `wallet.holds.summary ${JSON.stringify({
+        activeHolds: audit.activeHolds,
+        heldIrr: audit.heldIrr,
+        ageMs: audit.ageMs,
+        byGateway: audit.byGateway,
+      })}`,
+    );
+    for (const mismatch of audit.ledgerMismatches) {
+      strapi.log.error(
+        `wallet.ledger_mismatch ${JSON.stringify(mismatch)}`,
+      );
+      Sentry.captureMessage("wallet.ledger_mismatch", {
+        level: "error",
+        tags: { walletId: String(mismatch.walletId) },
+        extra: mismatch,
+      });
+    }
+    for (const stuck of audit.stuckHolds) {
+      strapi.log.error(`wallet.hold_stuck ${JSON.stringify(stuck)}`);
+      Sentry.captureMessage("wallet.hold_stuck", {
+        level: "error",
+        tags: { orderStatus: stuck.orderStatus },
+        extra: stuck,
+      });
+    }
+  } catch (error: any) {
+    strapi.log.error("Wallet hold audit failed", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+  }
+}
+
+/**
+ * Schedules the read-only probe that decides whether shadow mode was right.
+ *
+ * Every `would_release` / `would_revert` / `review` row is a claim that an
+ * automatic decision was safe. The claim is worthless unless something later
+ * asks the provider what actually happened to that token, which is what makes
+ * "≥ 100 rows, zero contradicted" a prerequisite for enforcing rather than a
+ * hope. The probe never executes a recovery action; it reads and records.
+ */
+async function scheduleShadowFollowupProbes(strapi: Strapi): Promise<void> {
+  let candidates: Array<{ attemptId: number; orderId: number | null }> = [];
+  try {
+    candidates = await listAttemptsAwaitingFollowup(strapi, {
+      olderThanMs: SHADOW_FOLLOWUP_AFTER_MS,
+      limit: 25,
+    });
+  } catch (error: any) {
+    strapi.log.error("Failed to list SnappPay shadow decisions awaiting a follow-up", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+    return;
+  }
+  for (const candidate of candidates) {
+    try {
+      const bundle = await loadAttemptBundle(strapi, { id: candidate.attemptId });
+      if (!bundle) continue;
+      await createOrReuseOperation(strapi, bundle, {
+        type: "RECONCILE",
+        idempotencyKey: `followup:${candidate.attemptId}`,
+        metadata: {
+          purpose: "followup",
+          shadow: true,
+          scheduledFor: new Date().toISOString(),
+        },
+      });
+    } catch (error: any) {
+      strapi.log.error("Failed to schedule a SnappPay shadow follow-up probe", {
+        attemptId: candidate.attemptId,
+        error: String(error?.message || error).slice(0, 300),
+      });
+    }
+  }
+}
+
+/**
+ * Hourly recovery summary.
+ *
+ * Written as JSON inside the message rather than as logger metadata because
+ * Strapi's logger drops the metadata object, so anything that has to be
+ * greppable in production must live in the string itself.
+ */
+async function logRecoverySummary(strapi: Strapi): Promise<void> {
+  const now = Date.now();
+  if (now - lastRecoverySummaryAt < 60 * 60 * 1000) return;
+  lastRecoverySummaryAt = now;
+  try {
+    const rows = await summarizeRecentEvidence(strapi, { windowMs: 24 * 60 * 60 * 1000 });
+    const readiness = getRecoveryReadiness();
+    strapi.log.info(
+      `snappay.recovery.summary ${JSON.stringify({
+        window: "24h",
+        modes: {
+          notFound: readiness.paths.not_found.effective,
+          registered: readiness.paths.registered.effective,
+          lateSuccess: readiness.paths.late_success.effective,
+        },
+        measuredTailMs: readiness.measuredTailMs,
+        shadowWouldRelease: readiness.shadowWouldReleaseCount,
+        evidence: rows,
+      })}`,
+    );
+  } catch (error: any) {
+    strapi.log.error("Failed to summarise SnappPay recovery evidence", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+  }
+}
+
 export async function sweepSnappayOperations(strapi: Strapi): Promise<{
   queued: number;
   health: {
@@ -3341,6 +4804,9 @@ export async function sweepSnappayOperations(strapi: Strapi): Promise<{
   }
 
   await recoverOrphanedSideEffects(strapi);
+  await scheduleShadowFollowupProbes(strapi);
+  await logRecoverySummary(strapi);
+  await auditWalletHolds(strapi);
 
   const rows: any[] = await strapi.db.query(OPERATION_UID).findMany({
     where: {
@@ -3404,6 +4870,8 @@ export function createSnappayOrchestrator(strapi: Strapi) {
     queueAdminUpdate: (input: Parameters<typeof queueSnappayAdminUpdate>[1]) =>
       queueSnappayAdminUpdate(strapi, input),
     processOperation: (operationId: number) => processSnappayOperation(strapi, operationId),
+    /** Throttled, fire-and-forget nudge from a storefront page view. */
+    pullForHold: (attemptDbId: number) => requestSnappayStorefrontPull(strapi, attemptDbId),
     sweep: () => sweepSnappayOperations(strapi),
   };
 }

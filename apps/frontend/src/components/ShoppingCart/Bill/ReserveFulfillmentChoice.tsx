@@ -17,6 +17,8 @@ export interface ActiveReserveSummary {
   orderCount: number;
   shippingMethodTitle?: string | null;
   destination?: string | null;
+  /** Who the reserve shipment is addressed to; merged orders ship to them too. */
+  recipientName?: string | null;
   rootOrderId?: number | null;
 }
 

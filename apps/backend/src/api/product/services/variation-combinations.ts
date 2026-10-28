@@ -22,6 +22,11 @@ type VariationCombination = {
 const MAX_AXES = 12;
 const MAX_TERMS_PER_AXIS = 250;
 export const MAX_VARIATION_COMBINATIONS = 5_000;
+/**
+ * First key of the per-product advisory lock every write to a product's set of
+ * variation signatures takes, so generation and colour replacement serialise.
+ */
+export const PRODUCT_VARIATIONS_LOCK_KEY = 845_733;
 
 const asPositiveId = (value: unknown): number | null => {
   const id = Number(value);
@@ -146,10 +151,60 @@ export function signatureFromVariation(variation: any): string {
   return buildAttributeSignature(tokens);
 }
 
-const generatedSku = (productId: number, signature: string): string => {
+/**
+ * Deterministic SKU for a generated variation. Exported because re-pointing a
+ * variation's colour must move a generated SKU along with its signature: left
+ * behind, it would collide with the SKU a later generation of the old signature
+ * computes.
+ */
+export const generatedSku = (productId: number, signature: string): string => {
   const digest = createHash("sha256").update(`${productId}:${signature}`).digest("hex").slice(0, 20);
   return `GEN-${productId}-${digest}`;
 };
+
+export type VariationWithSignature = {
+  id: number;
+  signature: string;
+  SKU?: string | null;
+  IsPublished?: boolean | null;
+  colorId: number | null;
+  variation: any;
+};
+
+/**
+ * Every variation of a product with the signature it occupies. Imported rows can
+ * lack a stored `AttributeSignature`, so it is rebuilt from the relations then,
+ * the same way generation always has. Run inside `strapi.db.transaction` to read
+ * under that transaction's lock.
+ */
+export async function loadProductVariationsWithSignatures(
+  strapi: any,
+  productId: number,
+): Promise<VariationWithSignature[]> {
+  const rows = await strapi.entityService.findMany("api::product-variation.product-variation", {
+    filters: { product: { id: productId } },
+    fields: ["id", "AttributeSignature", "SKU", "IsPublished", "Price"],
+    populate: {
+      product_variation_color: { fields: ["id", "Title"] },
+      product_variation_size: { fields: ["id", "Title"] },
+      product_variation_model: { fields: ["id", "Title"] },
+      selected_attribute_terms: {
+        fields: ["id", "Title"],
+        populate: { product_attribute: { fields: ["id"] } },
+      },
+    },
+    limit: MAX_VARIATION_COMBINATIONS,
+  } as any);
+
+  return ((rows as any[]) || []).map((variation) => ({
+    id: Number(variation.id),
+    signature: String(variation.AttributeSignature || signatureFromVariation(variation)).trim(),
+    SKU: variation.SKU ?? null,
+    IsPublished: variation.IsPublished ?? null,
+    colorId: relationId(attrsOf(variation).product_variation_color),
+    variation,
+  }));
+}
 
 const validateLegacyAxis = async (strapi: any, axis: NormalizedAxis) => {
   const uidByType: Record<string, string> = {
@@ -223,33 +278,12 @@ export async function generateVariationCombinations(
   const combinations = buildVariationCombinations(axes);
 
   return strapi.db.transaction(async ({ trx }: { trx: any }) => {
-    await trx.raw("SELECT pg_advisory_xact_lock(?, ?)", [845_733, productId]);
+    await trx.raw("SELECT pg_advisory_xact_lock(?, ?)", [PRODUCT_VARIATIONS_LOCK_KEY, productId]);
 
-    const existing = await strapi.entityService.findMany(
-      "api::product-variation.product-variation",
-      {
-        filters: { product: { id: productId } },
-        fields: ["id", "AttributeSignature"],
-        populate: {
-          product_variation_color: { fields: ["id"] },
-          product_variation_size: { fields: ["id"] },
-          product_variation_model: { fields: ["id"] },
-          selected_attribute_terms: {
-            fields: ["id"],
-            populate: { product_attribute: { fields: ["id"] } },
-          },
-        },
-        limit: MAX_VARIATION_COMBINATIONS,
-        transacting: trx,
-      } as any,
-    );
+    const existing = await loadProductVariationsWithSignatures(strapi, productId);
 
     const existingSignatures = new Set(
-      (existing as any[])
-        .map((variation) =>
-          String(variation.AttributeSignature || signatureFromVariation(variation)).trim(),
-        )
-        .filter(Boolean),
+      existing.map((variation) => variation.signature).filter(Boolean),
     );
     const createdIds: number[] = [];
     const skippedSignatures: string[] = [];

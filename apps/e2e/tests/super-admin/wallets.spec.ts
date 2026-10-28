@@ -122,6 +122,6 @@ test.describe("admin wallets customer search", () => {
     await expect(page.getByTestId("wallet-selected-name")).toHaveText("E2E Founder");
     await expect(page.getByTestId("wallet-selected-phone")).toContainText(founderNational);
     await expect(page.getByTestId("wallet-adjust-customer")).toContainText("E2E Founder");
-    await expect(page.getByRole("heading", { name: "کیف پول کاربر" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "کیف پول کاربر", exact: true })).toBeVisible();
   });
 });

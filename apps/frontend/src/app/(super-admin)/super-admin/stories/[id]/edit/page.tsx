@@ -51,6 +51,7 @@ export default function EditStoryPage() {
           mediaUrl: resolveMediaUrl(story.Media?.url),
           thumbnailId: story.Thumbnail?.id,
           thumbnailUrl: resolveMediaUrl(story.Thumbnail?.url),
+          Items: story.Items,
         });
       } catch (err) {
         toast.error(translateErrorMessage(extractErrorMessage(err), "خطا در دریافت اطلاعات استوری."));

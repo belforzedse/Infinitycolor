@@ -1,0 +1,834 @@
+function IC_createDirectionAdapter(direction) {
+  const isRtl = direction === "rtl";
+  const nextOwnerSign = isRtl ? 1 : -1;
+  return {
+    itemActionForSide(side) {
+      return side === (isRtl ? "left" : "right") ? "next" : "previous";
+    },
+    ownerActionForPhysicalDelta(deltaX) {
+      if (deltaX === 0) return null;
+      return Math.sign(deltaX) === nextOwnerSign ? "next" : "previous";
+    },
+    cubeTargetForOwner(ownerAction) {
+      return ownerAction === "next" ? nextOwnerSign : -nextOwnerSign;
+    },
+    faceAngleForOwner(ownerAction) {
+      return `${-this.cubeTargetForOwner(ownerAction) * 90}deg`;
+    },
+  };
+}
+
+function IC_prefersReducedMotion() {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function IC_waitForTransform(element, duration, callback) {
+  let complete = false;
+  let fallbackId;
+  const finish = () => {
+    if (complete) return;
+    complete = true;
+    element.removeEventListener("transitionend", onEnd);
+    element.removeEventListener("transitioncancel", onCancel);
+    if (fallbackId !== undefined) window.clearTimeout(fallbackId);
+    callback();
+  };
+  const onEnd = (event) => {
+    if (event.target === element && event.propertyName === "transform") finish();
+  };
+  const onCancel = (event) => {
+    if (event.target === element) finish();
+  };
+  if (duration <= 0) requestAnimationFrame(finish);
+  else {
+    element.addEventListener("transitionend", onEnd);
+    element.addEventListener("transitioncancel", onCancel);
+    fallbackId = window.setTimeout(finish, duration + 96);
+  }
+  return () => {
+    if (complete) return;
+    complete = true;
+    element.removeEventListener("transitionend", onEnd);
+    element.removeEventListener("transitioncancel", onCancel);
+    if (fallbackId !== undefined) window.clearTimeout(fallbackId);
+  };
+}
+
+function IC_clearCubeStyles(wrapper) {
+  if (!wrapper) return;
+  wrapper.style.transition = "";
+  wrapper.style.transform = "";
+  wrapper.style.transformStyle = "";
+  wrapper.style.removeProperty("--face-depth");
+  if (wrapper.parentElement) wrapper.parentElement.style.perspective = "";
+}
+
+function IC_resetDismissStyles(container) {
+  const viewport = container?.querySelector(".story-viewer-cube-viewport");
+  const overlay = container?.querySelector(".story-viewer-overlay");
+  if (viewport) {
+    viewport.style.transition = "";
+    viewport.style.transform = "";
+    viewport.style.borderRadius = "";
+    viewport.style.overflow = "";
+    viewport.style.opacity = "";
+  }
+  if (overlay) {
+    overlay.style.transition = "";
+    overlay.style.opacity = "";
+  }
+}
+
+function IC_lockDocument(scrollPositionRef) {
+  const html = document.documentElement;
+  const body = document.body;
+  const scrollX = window.scrollX;
+  const previous = {
+    htmlOverflow: html.style.overflow,
+    htmlOverscroll: html.style.overscrollBehavior,
+    bodyOverflow: body.style.overflow,
+    bodyOverscroll: body.style.overscrollBehavior,
+  };
+  scrollPositionRef.current = window.scrollY;
+  html.style.overflow = "hidden";
+  html.style.overscrollBehavior = "none";
+  body.style.overflow = "hidden";
+  body.style.overscrollBehavior = "none";
+  return () => {
+    html.style.overflow = previous.htmlOverflow;
+    html.style.overscrollBehavior = previous.htmlOverscroll;
+    body.style.overflow = previous.bodyOverflow;
+    body.style.overscrollBehavior = previous.bodyOverscroll;
+    window.scrollTo(scrollX, scrollPositionRef.current);
+  };
+}
+
+function IC_clampOwnerDrag(rawPercentage, ownerAction, currentOwner, ownerCount) {
+  let percentage = Math.max(-0.95, Math.min(0.95, rawPercentage));
+  const atBoundary =
+    (ownerAction === "previous" && currentOwner === 0) ||
+    (ownerAction === "next" && currentOwner === ownerCount - 1);
+  if (atBoundary) percentage *= 0.22;
+  return percentage;
+}
+
+function IC_decideOwnerCommit(percentage, velocity, direction, currentOwner, ownerCount) {
+  const ownerAction = Math.abs(velocity) >= 0.55
+    ? direction.ownerActionForPhysicalDelta(velocity)
+    : direction.ownerActionForPhysicalDelta(percentage);
+  const atBoundary =
+    (ownerAction === "previous" && currentOwner === 0) ||
+    (ownerAction === "next" && currentOwner === ownerCount - 1);
+  return {
+    ownerAction,
+    shouldCommit: !!ownerAction && !atBoundary &&
+      (Math.abs(percentage) >= 0.28 || Math.abs(velocity) >= 0.55),
+  };
+}
+
+var we = V.memo(function StoryViewerPatched({
+  users,
+  initialUserIndex,
+  initialStoryIndex,
+  isOpen: isOpenProp,
+  onClose: onCloseProp,
+  onStoryChange,
+  classNames,
+  progress: externalProgress,
+  dir = "ltr",
+  labels = {},
+}) {
+  const isQueryParamMode = isOpenProp === undefined;
+  const [searchParams, setSearchParams] = tt();
+  const queryIndices = REACT.useMemo(() => {
+    if (!isQueryParamMode || users.length === 0) return null;
+    const params = new URLSearchParams(window.location.search);
+    const userParam = params.get("user");
+    const storyParam = params.get("story");
+    if (!userParam) return null;
+    const userIndex = He(users, userParam);
+    if (userIndex === -1) return null;
+    const storyIndex = storyParam ? Xe(users[userIndex], storyParam) : 0;
+    return { userIndex, storyIndex: storyIndex === -1 ? 0 : storyIndex };
+  }, [isQueryParamMode, searchParams, users]);
+
+  const effectiveUser = isQueryParamMode ? queryIndices?.userIndex ?? 0 : initialUserIndex ?? 0;
+  const effectiveStory = isQueryParamMode ? queryIndices?.storyIndex ?? 0 : initialStoryIndex ?? 0;
+  const isOpen = isQueryParamMode ? queryIndices !== null : isOpenProp ?? false;
+  const onClose = REACT.useCallback(() => {
+    if (isQueryParamMode) setSearchParams({}, { replace: true });
+    else onCloseProp?.();
+  }, [isQueryParamMode, setSearchParams, onCloseProp]);
+
+  const [currentUserIndex, setCurrentUserIndex] = REACT.useState(effectiveUser);
+  const [currentStoryIndex, setCurrentStoryIndex] = REACT.useState(effectiveStory);
+  const [isPaused, setIsPaused] = REACT.useState(false);
+  const [cubeState, setCubeState] = REACT.useState(null);
+  const [transitionState, setTransitionStateValue] = REACT.useState("idle");
+  REACT.useEffect(() => setCurrentUserIndex(effectiveUser), [effectiveUser]);
+  REACT.useEffect(() => setCurrentStoryIndex(effectiveStory), [effectiveStory]);
+
+  const containerRef = REACT.useRef(null);
+  const scrollPositionRef = REACT.useRef(0);
+  const unlockDocumentRef = REACT.useRef(null);
+  const currentDurationRef = REACT.useRef(K);
+  const hasOpenedRef = REACT.useRef(false);
+  const initialNotificationRef = REACT.useRef(true);
+  const cubeWrapperRef = REACT.useRef(null);
+  const gestureRef = REACT.useRef(null);
+  const faceWidthRef = REACT.useRef(0);
+  const transitionStateRef = REACT.useRef("idle");
+  const settleCleanupRef = REACT.useRef(null);
+  const pendingOwnerRef = REACT.useRef(null);
+  const lastViewedStoryRef = REACT.useRef(new Map());
+  const direction = REACT.useMemo(() => IC_createDirectionAdapter(dir), [dir]);
+
+  const currentUser = users[currentUserIndex];
+  const currentStory = currentUser?.stories[currentStoryIndex];
+  const totalStories = currentUser?.stories.length || 0;
+  REACT.useEffect(() => {
+    currentDurationRef.current = currentStory?.duration || K;
+  }, [currentStory?.duration]);
+  REACT.useEffect(() => {
+    lastViewedStoryRef.current.set(currentUserIndex, currentStoryIndex);
+  }, [currentUserIndex, currentStoryIndex]);
+
+  const focusTrapRef = Ze(isOpen);
+  const { preloadStoryItem } = et();
+  const setTransitionState = REACT.useCallback((state) => {
+    transitionStateRef.current = state;
+    setTransitionStateValue(state);
+  }, []);
+  const pause = REACT.useCallback(() => setIsPaused(true), []);
+  const resume = REACT.useCallback(() => setIsPaused(false), []);
+  const nextRef = REACT.useRef();
+  const internalTimer = Qe({
+    duration: currentDurationRef.current || K,
+    onComplete: () => externalProgress === undefined && nextRef.current?.(),
+    autoStart: false,
+  });
+  const timer = externalProgress === undefined ? internalTimer : {
+    progress: internalTimer.progress,
+    pause: internalTimer.pause,
+    resume: () => {},
+    reset: () => {},
+    setDuration: internalTimer.setDuration,
+  };
+  REACT.useEffect(() => timer.setDuration(currentStory?.duration || K), [currentStory?.duration]);
+  const onBufferingChange = REACT.useCallback((buffering) => {
+    if (buffering) timer.pause();
+    else if (!isPaused) timer.resume();
+  }, [timer.pause, timer.resume, isPaused]);
+
+  const buildCubeState = REACT.useCallback(() => ({
+    leftUserIndex: Math.max(0, currentUserIndex - 1),
+    rightUserIndex: Math.min(users.length - 1, currentUserIndex + 1),
+  }), [currentUserIndex, users.length]);
+
+  const clearSettle = REACT.useCallback(() => {
+    settleCleanupRef.current?.();
+    settleCleanupRef.current = null;
+  }, []);
+  const resetToIdle = REACT.useCallback((shouldResume = true) => {
+    clearSettle();
+    IC_clearCubeStyles(cubeWrapperRef.current);
+    IC_resetDismissStyles(containerRef.current);
+    setCubeState(null);
+    faceWidthRef.current = 0;
+    pendingOwnerRef.current = null;
+    setTransitionState("idle");
+    if (shouldResume) resume();
+  }, [clearSettle, resume, setTransitionState]);
+
+  const finalizeCube = REACT.useCallback((targetUserIndex, targetStoryIndex) => {
+    const targetUser = users[targetUserIndex];
+    const safeStoryIndex = Math.max(0, Math.min(
+      targetStoryIndex,
+      Math.max(0, (targetUser?.stories.length || 1) - 1),
+    ));
+    clearSettle();
+    IC_clearCubeStyles(cubeWrapperRef.current);
+    setCurrentUserIndex(targetUserIndex);
+    setCurrentStoryIndex(safeStoryIndex);
+    setCubeState(null);
+    faceWidthRef.current = 0;
+    pendingOwnerRef.current = null;
+    setTransitionState("idle");
+    timer.setDuration(targetUser?.stories[safeStoryIndex]?.duration || K);
+    timer.reset();
+    resume();
+  }, [users, timer.setDuration, timer.reset, clearSettle, resume, setTransitionState]);
+
+  const settleOwner = REACT.useCallback((wrapper, ownerAction, cube) => {
+    const targetUserIndex = ownerAction === "next" ? cube.rightUserIndex : cube.leftUserIndex;
+    const targetStoryIndex = lastViewedStoryRef.current.get(targetUserIndex) ?? 0;
+    pendingOwnerRef.current = { targetUserIndex, targetStoryIndex };
+    setTransitionState("snapping-owner");
+    const duration = IC_prefersReducedMotion() ? 0 : 320;
+    wrapper.style.transition = duration === 0
+      ? "none"
+      : `transform ${duration}ms cubic-bezier(0.32, 0.72, 0.37, 0.98)`;
+    wrapper.style.transform = re(
+      (faceWidthRef.current || wrapper.offsetWidth || 400) / 2,
+      direction.cubeTargetForOwner(ownerAction),
+    );
+    clearSettle();
+    settleCleanupRef.current = IC_waitForTransform(wrapper, duration, () => {
+      settleCleanupRef.current = null;
+      finalizeCube(targetUserIndex, targetStoryIndex);
+    });
+  }, [direction, clearSettle, finalizeCube, setTransitionState]);
+
+  const animateCubeTo = REACT.useCallback((ownerAction) => {
+    if (transitionStateRef.current !== "idle") return;
+    const cube = buildCubeState();
+    const targetUserIndex = ownerAction === "next" ? cube.rightUserIndex : cube.leftUserIndex;
+    if (targetUserIndex === currentUserIndex) return;
+    setCubeState(cube);
+    setTransitionState("snapping-owner");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const wrapper = cubeWrapperRef.current;
+      if (!wrapper) {
+        finalizeCube(targetUserIndex, lastViewedStoryRef.current.get(targetUserIndex) ?? 0);
+        return;
+      }
+      const width = wrapper.offsetWidth || 400;
+      const depth = width / 2;
+      faceWidthRef.current = width;
+      wrapper.style.setProperty("--face-depth", `${depth}px`);
+      if (wrapper.parentElement) wrapper.parentElement.style.perspective = `${depth * 16}px`;
+      wrapper.style.transition = "none";
+      wrapper.style.transform = re(depth, 0);
+      requestAnimationFrame(() => settleOwner(wrapper, ownerAction, cube));
+    }));
+  }, [buildCubeState, currentUserIndex, finalizeCube, settleOwner, setTransitionState]);
+
+  const next = REACT.useCallback(() => {
+    if (!currentUser || cubeState || transitionStateRef.current !== "idle") return;
+    if (currentStoryIndex < totalStories - 1) {
+      const index = currentStoryIndex + 1;
+      setCurrentStoryIndex(index);
+      timer.setDuration(currentUser.stories[index]?.duration || K);
+      timer.reset();
+    } else if (currentUserIndex < users.length - 1) animateCubeTo("next");
+    else onClose();
+  }, [currentUser, cubeState, currentStoryIndex, totalStories, currentUserIndex, users.length, timer.setDuration, timer.reset, animateCubeTo, onClose]);
+
+  const previous = REACT.useCallback(() => {
+    if (!currentUser || cubeState || transitionStateRef.current !== "idle") return;
+    if (currentStoryIndex > 0) {
+      const index = currentStoryIndex - 1;
+      setCurrentStoryIndex(index);
+      timer.setDuration(currentUser.stories[index]?.duration || K);
+      timer.reset();
+    } else if (currentUserIndex > 0) animateCubeTo("previous");
+  }, [currentUser, cubeState, currentStoryIndex, currentUserIndex, timer.setDuration, timer.reset, animateCubeTo]);
+
+  const close = REACT.useCallback(() => {
+    clearSettle();
+    window.scrollTo(0, scrollPositionRef.current);
+    onClose();
+  }, [clearSettle, onClose]);
+  REACT.useEffect(() => { nextRef.current = next; }, [next]);
+
+  const controls = REACT.useMemo(() => ({
+    pause,
+    resume,
+    next,
+    prev: previous,
+    setDuration: (duration) => timer.setDuration(duration),
+  }), [pause, resume, next, previous, timer.setDuration]);
+
+  const runPhysicalItemAction = REACT.useCallback((side) => {
+    if (direction.itemActionForSide(side) === "next") next();
+    else previous();
+  }, [direction, next, previous]);
+  const dragPercentage = REACT.useCallback((deltaX, width) => {
+    const raw = deltaX / Math.max(width, 1);
+    return IC_clampOwnerDrag(
+      raw,
+      direction.ownerActionForPhysicalDelta(raw),
+      currentUserIndex,
+      users.length,
+    );
+  }, [direction, currentUserIndex, users.length]);
+
+  const onPointerDown = REACT.useCallback((event) => {
+    if (event.target.closest(
+      ".story-viewer-overlay, button, a, input, select, textarea, [role=button], [contenteditable]",
+    ) || transitionStateRef.current !== "idle") return;
+    const now = performance.now();
+    gestureRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      lastX: event.clientX,
+      lastTime: now,
+      startTime: now,
+      velocityX: 0,
+      pointerId: event.pointerId,
+      target: event.target,
+    };
+    setTransitionState("pressing");
+    containerRef.current?.setPointerCapture(event.pointerId);
+    pause();
+  }, [pause, setTransitionState]);
+
+  const onPointerMove = REACT.useCallback((event) => {
+    const drag = gestureRef.current;
+    if (!drag || transitionStateRef.current === "snapping-owner") return;
+    const now = performance.now();
+    const elapsed = Math.max(1, now - drag.lastTime);
+    if (elapsed <= 80) drag.velocityX = (event.clientX - drag.lastX) / elapsed;
+    drag.lastX = event.clientX;
+    drag.lastTime = now;
+    drag.currentX = event.clientX;
+    drag.currentY = event.clientY;
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+
+    if (transitionStateRef.current === "pressing") {
+      if (Math.abs(deltaX) > 12 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+        drag.cube = buildCubeState();
+        setTransitionState("dragging-owner");
+        setCubeState(drag.cube);
+      } else if (deltaY > 12 && deltaY > Math.abs(deltaX) * 1.5) {
+        setTransitionState("dismissing");
+      }
+      return;
+    }
+    if (transitionStateRef.current === "dismissing") {
+      const viewport = containerRef.current?.querySelector(".story-viewer-cube-viewport");
+      if (!viewport) return;
+      const y = Math.max(0, deltaY);
+      viewport.style.transition = "none";
+      viewport.style.transform = `translateY(${y}px) scale(${Math.max(0.85, 1 - y / 1500)})`;
+      viewport.style.borderRadius = `${Math.min(24, y / 5)}px`;
+      viewport.style.overflow = "hidden";
+      const overlay = containerRef.current?.querySelector(".story-viewer-overlay");
+      if (overlay) overlay.style.opacity = String(Math.max(0.2, 1 - y / 600));
+      return;
+    }
+    if (transitionStateRef.current !== "dragging-owner") return;
+    const wrapper = cubeWrapperRef.current;
+    if (!wrapper) return;
+    if (!faceWidthRef.current) {
+      faceWidthRef.current = wrapper.offsetWidth || 400;
+      wrapper.style.setProperty("--face-depth", `${faceWidthRef.current / 2}px`);
+    }
+    wrapper.style.transition = "none";
+    wrapper.style.transform = re(
+      faceWidthRef.current / 2,
+      dragPercentage(deltaX, faceWidthRef.current),
+    );
+  }, [buildCubeState, dragPercentage, setTransitionState]);
+
+  const cancelGesture = REACT.useCallback(() => {
+    const drag = gestureRef.current;
+    gestureRef.current = null;
+    if (!drag) return;
+    try {
+      if (containerRef.current?.hasPointerCapture(drag.pointerId)) {
+        containerRef.current.releasePointerCapture(drag.pointerId);
+      }
+    } catch {}
+    const wrapper = cubeWrapperRef.current;
+    if (transitionStateRef.current === "dragging-owner" && wrapper) {
+      setTransitionState("snapping-owner");
+      const duration = IC_prefersReducedMotion() ? 0 : 180;
+      wrapper.style.transition = duration === 0 ? "none" : `transform ${duration}ms ease-out`;
+      wrapper.style.transform = re((faceWidthRef.current || wrapper.offsetWidth || 400) / 2, 0);
+      clearSettle();
+      settleCleanupRef.current = IC_waitForTransform(wrapper, duration, () => {
+        settleCleanupRef.current = null;
+        resetToIdle(true);
+      });
+      return;
+    }
+    resetToIdle(true);
+  }, [clearSettle, resetToIdle, setTransitionState]);
+
+  const onPointerUp = REACT.useCallback((event) => {
+    const drag = gestureRef.current;
+    gestureRef.current = null;
+    if (!drag) return;
+    try {
+      if (containerRef.current?.hasPointerCapture(drag.pointerId)) {
+        containerRef.current.releasePointerCapture(drag.pointerId);
+      }
+    } catch {}
+
+    if (transitionStateRef.current === "dismissing") {
+      const deltaY = event.clientY - drag.startY;
+      const viewport = containerRef.current?.querySelector(".story-viewer-cube-viewport");
+      const overlay = containerRef.current?.querySelector(".story-viewer-overlay");
+      if (deltaY > 120) {
+        const duration = IC_prefersReducedMotion() ? 0 : 250;
+        if (viewport) {
+          viewport.style.transition = duration === 0 ? "none" :
+            `transform ${duration}ms ease-in, opacity ${duration}ms ease-in`;
+          viewport.style.transform = `translateY(${window.innerHeight}px) scale(0.85)`;
+          viewport.style.opacity = "0";
+        }
+        if (overlay) {
+          overlay.style.transition = duration === 0 ? "none" : `opacity ${duration}ms ease-in`;
+          overlay.style.opacity = "0";
+        }
+        if (viewport) {
+          clearSettle();
+          settleCleanupRef.current = IC_waitForTransform(viewport, duration, close);
+        } else close();
+      } else if (viewport) {
+        const duration = IC_prefersReducedMotion() ? 0 : 240;
+        viewport.style.transition = duration === 0 ? "none" :
+          `transform ${duration}ms ease-out, border-radius ${duration}ms ease-out`;
+        viewport.style.transform = "";
+        viewport.style.borderRadius = "";
+        if (overlay) {
+          overlay.style.transition = duration === 0 ? "none" : `opacity ${duration}ms ease-out`;
+          overlay.style.opacity = "";
+        }
+        clearSettle();
+        settleCleanupRef.current = IC_waitForTransform(viewport, duration, () => {
+          settleCleanupRef.current = null;
+          resetToIdle(true);
+        });
+      } else resetToIdle(true);
+      return;
+    }
+
+    const activeCube = drag.cube || cubeState;
+    if (transitionStateRef.current === "dragging-owner" && activeCube) {
+      const width = faceWidthRef.current || 400;
+      const percentage = dragPercentage(event.clientX - drag.startX, width);
+      const totalTime = Math.max(1, performance.now() - drag.startTime);
+      const recentVelocity = performance.now() - drag.lastTime <= 80 ? drag.velocityX : 0;
+      const averageVelocity = (event.clientX - drag.startX) / totalTime;
+      const velocity = Math.abs(recentVelocity) >= Math.abs(averageVelocity)
+        ? recentVelocity
+        : averageVelocity;
+      const { ownerAction, shouldCommit } = IC_decideOwnerCommit(
+        percentage,
+        velocity,
+        direction,
+        currentUserIndex,
+        users.length,
+      );
+      const wrapper = cubeWrapperRef.current;
+      if (!wrapper) resetToIdle(true);
+      else if (shouldCommit) settleOwner(wrapper, ownerAction, activeCube);
+      else {
+        setTransitionState("snapping-owner");
+        const duration = IC_prefersReducedMotion() ? 0 : 220;
+        wrapper.style.transition = duration === 0 ? "none" :
+          `transform ${duration}ms cubic-bezier(0.25, 1, 0.5, 1)`;
+        wrapper.style.transform = re(width / 2, 0);
+        clearSettle();
+        settleCleanupRef.current = IC_waitForTransform(wrapper, duration, () => {
+          settleCleanupRef.current = null;
+          resetToIdle(true);
+        });
+      }
+      return;
+    }
+
+    const heldLongEnoughToPause =
+      transitionStateRef.current === "pressing" && performance.now() - drag.startTime >= 180;
+    setTransitionState("idle");
+    resume();
+    if (heldLongEnoughToPause) return;
+    const target = drag.target || event.target;
+    if (target.closest(
+      ".story-viewer-overlay, button, a, input, select, textarea, [role=button], [contenteditable]",
+    )) return;
+    const content = containerRef.current?.querySelector(".story-viewer-content") ||
+      containerRef.current?.querySelector(".story-viewer-cube-viewport");
+    if (!content) return;
+    const rect = content.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right ||
+        event.clientY < rect.top || event.clientY > rect.bottom) return;
+    runPhysicalItemAction(event.clientX - rect.left < rect.width / 2 ? "left" : "right");
+  }, [cubeState, dragPercentage, direction, currentUserIndex, users.length, settleOwner, clearSettle, resetToIdle, setTransitionState, resume, close, runPhysicalItemAction]);
+
+  REACT.useLayoutEffect(() => {
+    const wrapper = cubeWrapperRef.current;
+    if (!cubeState || !wrapper) return;
+    const width = wrapper.offsetWidth || 400;
+    const depth = width / 2;
+    faceWidthRef.current = width;
+    wrapper.style.setProperty("--face-depth", `${depth}px`);
+    if (wrapper.parentElement) wrapper.parentElement.style.perspective = `${depth * 16}px`;
+    const drag = gestureRef.current;
+    if (transitionStateRef.current === "dragging-owner" && drag) {
+      wrapper.style.transition = "none";
+      wrapper.style.transform = re(depth, dragPercentage(drag.currentX - drag.startX, width));
+    }
+  }, [cubeState, dragPercentage]);
+
+  REACT.useEffect(() => {
+    if (!cubeState) return;
+    const onResize = () => {
+      if (transitionStateRef.current === "dragging-owner") cancelGesture();
+      else if (transitionStateRef.current === "snapping-owner" && pendingOwnerRef.current) {
+        const pending = pendingOwnerRef.current;
+        finalizeCube(pending.targetUserIndex, pending.targetStoryIndex);
+      }
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, [cubeState, cancelGesture, finalizeCube]);
+
+  Ke({
+    onLeft: () => runPhysicalItemAction("left"),
+    onRight: () => runPhysicalItemAction("right"),
+    onSpace: () => isPaused ? resume() : pause(),
+    onEscape: close,
+    enabled: isOpen,
+  });
+
+  REACT.useEffect(() => {
+    if (!isOpen || !currentUser) return;
+    const items = [];
+    if (currentStoryIndex < totalStories - 1) items.push(currentUser.stories[currentStoryIndex + 1]);
+    if (currentUserIndex < users.length - 1) items.push(users[currentUserIndex + 1].stories[0]);
+    if (currentStoryIndex > 0) items.push(currentUser.stories[currentStoryIndex - 1]);
+    else if (currentUserIndex > 0) {
+      const user = users[currentUserIndex - 1];
+      items.push(user.stories[lastViewedStoryRef.current.get(currentUserIndex - 1) ?? 0]);
+    }
+    items.slice(0, 3).forEach((item) => item && preloadStoryItem(item).catch(() => {}));
+  }, [isOpen, currentUser, currentUserIndex, currentStoryIndex, totalStories, users, preloadStoryItem]);
+
+  REACT.useEffect(() => {
+    if (isOpen) {
+      hasOpenedRef.current = true;
+      const unlockDocument = IC_lockDocument(scrollPositionRef);
+      unlockDocumentRef.current = unlockDocument;
+      if (currentStory) preloadStoryItem(currentStory);
+      timer.resume();
+      return () => {
+        unlockDocument();
+        if (unlockDocumentRef.current === unlockDocument) {
+          unlockDocumentRef.current = null;
+        }
+      };
+    }
+    if (!isOpen) {
+      hasOpenedRef.current = false;
+      initialNotificationRef.current = true;
+      unlockDocumentRef.current?.();
+      unlockDocumentRef.current = null;
+      gestureRef.current = null;
+      resetToIdle(false);
+    }
+  }, [isOpen]);
+
+  REACT.useEffect(() => {
+    if (!isOpen) return;
+    if (initialNotificationRef.current) {
+      initialNotificationRef.current = false;
+      onStoryChange?.(currentUserIndex, currentStoryIndex);
+      return;
+    }
+    if (isQueryParamMode && currentUser && currentStory &&
+        (searchParams.get("user") !== currentUser.id || searchParams.get("story") !== currentStory.id)) {
+      setSearchParams({ user: currentUser.id, story: currentStory.id }, { replace: true });
+    }
+    onStoryChange?.(currentUserIndex, currentStoryIndex);
+  }, [currentUserIndex, currentStoryIndex, onStoryChange, isOpen, isQueryParamMode, searchParams, setSearchParams]);
+
+  const onLoadError = REACT.useCallback(() => {
+    console.warn("Story item failed to load, skipping...");
+    window.setTimeout(next, 500);
+  }, [next]);
+
+  if (!isOpen || !currentUser || !currentStory) return null;
+  const previousUserIndex = cubeState?.leftUserIndex;
+  const nextUserIndex = cubeState?.rightUserIndex;
+  const previousUser = previousUserIndex === undefined ? null : users[previousUserIndex];
+  const nextUser = nextUserIndex === undefined ? null : users[nextUserIndex];
+  const previousStoryIndex = previousUserIndex !== undefined && previousUserIndex < currentUserIndex
+    ? lastViewedStoryRef.current.get(previousUserIndex) ?? 0
+    : currentStoryIndex;
+  const nextStoryIndex = nextUserIndex !== undefined && nextUserIndex > currentUserIndex
+    ? lastViewedStoryRef.current.get(nextUserIndex) ?? 0
+    : currentStoryIndex;
+
+  const renderFace = (faceUser, faceStory, faceStoryIndex, faceProgress, isLive) => JSS(JSF, {
+    children: [
+      JSS("div", {
+        className: x("story-viewer-header", classNames?.header),
+        dir,
+        children: [
+          JSX(Ne, {
+            total: faceUser.stories.length,
+            currentIndex: faceStoryIndex,
+            progress: faceProgress,
+            classNames: classNames?.progressBars,
+            labels,
+          }),
+          JSS("div", {
+            className: x("story-viewer-user-info", classNames?.userInfo),
+            dir,
+            children: [
+              JSX("img", {
+                src: faceUser.avatarUrl,
+                alt: `${faceUser.username} avatar`,
+                className: x("story-viewer-avatar", classNames?.avatar),
+              }),
+              JSX("span", {
+                className: x("story-viewer-username", classNames?.username),
+                children: faceUser.username,
+              }),
+            ],
+          }),
+          JSX("button", {
+            className: x("story-viewer-close", classNames?.closeButton),
+            onClick: close,
+            "aria-label": labels.close ?? "Close story viewer",
+            type: "button",
+            children: "×",
+          }),
+        ],
+      }, faceUser.id),
+      JSX("div", {
+        className: x("story-viewer-items", classNames?.items),
+        dir,
+        children: JSX(ke, {
+          item: faceStory,
+          isActive: isLive,
+          isPaused: isLive ? isPaused || transitionStateRef.current !== "idle" : true,
+          onDurationDetected: isLive ? (duration) => timer.setDuration(duration) : undefined,
+          onLoadError: isLive ? onLoadError : undefined,
+          onBufferingChange: isLive ? onBufferingChange : undefined,
+          controls,
+          classNames: classNames?.storyItem,
+        }),
+      }),
+      isLive && JSS("div", {
+        className: "story-viewer-nav-hints",
+        dir,
+        children: [
+          JSX("div", { className: "story-viewer-nav-hint story-viewer-nav-hint-left" }),
+          JSX("div", { className: "story-viewer-nav-hint story-viewer-nav-hint-right" }),
+        ],
+      }),
+    ],
+  });
+
+  const isCube = !!(cubeState && previousUser && nextUser);
+  const depth = isCube
+    ? (faceWidthRef.current || Math.min(typeof window !== "undefined" ? window.innerWidth : 500, 500)) / 2
+    : 0;
+  const faceStyle = (angle) => ({
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    background: "#000",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+    backfaceVisibility: "hidden",
+    transform: `rotateY(${angle}) translateZ(${depth}px)`,
+  });
+
+  const content = JSS("div", {
+    ref: containerRef,
+    className: x("story-viewer", classNames?.root),
+    dir,
+    "data-transition-state": transitionState,
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": labels.dialog?.(currentUser.username || "user") ??
+      `Stories by ${currentUser.username || "user"}`,
+    "aria-describedby": "story-viewer-description",
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    onPointerCancel: cancelGesture,
+    onLostPointerCapture: cancelGesture,
+    children: [
+      JSX("div", { className: x("story-viewer-overlay", classNames?.overlay), onClick: close }),
+      JSX("div", {
+        id: "story-viewer-description",
+        className: "sr-only",
+        children: labels.description ??
+          "Instagram-style stories viewer. Use either side for items, swipe horizontally for people, swipe down to close, and hold to pause.",
+      }),
+      JSX("div", {
+        "aria-live": "polite",
+        "aria-atomic": "true",
+        className: "sr-only",
+        children: labels.announcement?.(
+          currentStoryIndex + 1,
+          totalStories,
+          currentUser.username || "user",
+        ) ?? `Viewing story ${currentStoryIndex + 1} of ${totalStories} by ${currentUser.username}`,
+      }),
+      JSX("div", {
+        className: "story-viewer-cube-viewport",
+        dir,
+        style: isCube ? { perspective: `${depth * 16}px` } : undefined,
+        children: JSS("div", {
+          ref: cubeWrapperRef,
+          className: "story-viewer-cube-wrapper",
+          dir,
+          style: isCube ? { transformStyle: "preserve-3d", transform: re(depth, 0) } : undefined,
+          children: [
+            JSX("div", {
+              ref: focusTrapRef,
+              className: x("story-viewer-content", classNames?.content),
+              dir,
+              style: isCube ? {
+                willChange: "auto",
+                backfaceVisibility: "hidden",
+                transform: `translateZ(${depth}px)`,
+              } : undefined,
+              children: renderFace(
+                currentUser,
+                currentStory,
+                currentStoryIndex,
+                externalProgress ?? timer.progress,
+                !isCube,
+              ),
+            }),
+            isCube && previousUser && JSX("div", {
+              dir,
+              "data-owner-face": "previous",
+              style: faceStyle(direction.faceAngleForOwner("previous")),
+              children: renderFace(
+                previousUser,
+                previousUser.stories[previousStoryIndex],
+                previousStoryIndex,
+                0,
+                false,
+              ),
+            }),
+            isCube && nextUser && JSX("div", {
+              dir,
+              "data-owner-face": "next",
+              style: faceStyle(direction.faceAngleForOwner("next")),
+              children: renderFace(
+                nextUser,
+                nextUser.stories[nextStoryIndex],
+                nextStoryIndex,
+                0,
+                false,
+              ),
+            }),
+          ],
+        }),
+      }),
+    ],
+  });
+  return PORTAL(content, document.body);
+});

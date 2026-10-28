@@ -28,7 +28,6 @@ export async function prepareStorefrontPage(
   await page.route(THIRD_PARTY_ROUTE_PATTERN, (route) => route.abort());
 
   await page.addInitScript(() => {
-    window.localStorage.setItem("analytics-consent", "denied");
     window.localStorage.setItem("pdp_debug", "0");
   });
 

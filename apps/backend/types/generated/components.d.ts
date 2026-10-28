@@ -140,6 +140,58 @@ export interface IdentityStore extends Schema.Component {
   };
 }
 
+export interface ProductColorGallery extends Schema.Component {
+  collectionName: "components_product_color_galleries";
+  info: {
+    displayName: "Color gallery";
+  };
+  attributes: {
+    color: Attribute.Relation<
+      "product.color-gallery",
+      "manyToOne",
+      "api::product-variation-color.product-variation-color"
+    >;
+    Images: Attribute.Media<"images", true>;
+  };
+}
+
+export interface StoryStoryItem extends Schema.Component {
+  collectionName: "components_story_story_items";
+  info: {
+    displayName: "Story item";
+    icon: "play";
+  };
+  attributes: {
+    CtaLabel: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 60;
+      }>;
+    CtaUrl: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 2048;
+      }>;
+    DurationMs: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 1000;
+        },
+        number
+      > &
+      Attribute.DefaultTo<5000>;
+    Key: Attribute.String &
+      Attribute.Required &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    Media: Attribute.Media<"images" | "videos"> & Attribute.Required;
+    MediaType: Attribute.Enumeration<["image", "video"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"image">;
+    Overlays: Attribute.JSON;
+    Thumbnail: Attribute.Media<"images">;
+  };
+}
+
 declare module "@strapi/types" {
   export module Shared {
     export interface Components {
@@ -152,6 +204,8 @@ declare module "@strapi/types" {
       "identity.phone": IdentityPhone;
       "identity.social-link": IdentitySocialLink;
       "identity.store": IdentityStore;
+      "product.color-gallery": ProductColorGallery;
+      "story.story-item": StoryStoryItem;
     }
   }
 }

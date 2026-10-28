@@ -340,6 +340,7 @@ async function authenticate(ctx: any) {
   );
   const ability = await strapi.contentAPI.permissions.engine.generateAbility(permissions);
   ctx.state.user = user;
+  ctx.state.betterAuthSessionId = payload.sid;
   return { authenticated: true, credentials: user, ability };
 }
 

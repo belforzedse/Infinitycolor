@@ -1,3 +1,8 @@
+jest.mock("../../../../utils/orderDeliverySnapshot", () => ({
+  effectiveOrderDeliveryAddress: jest.fn(async (_strapi, _id, address) => address),
+  effectiveOrderDeliveryAddresses: jest.fn(async (_strapi, sources) => new Map(sources.map((source) => [source.id, source.delivery_address]))),
+}));
+import { effectiveOrderDeliveryAddress } from "../../../../utils/orderDeliverySnapshot";
 jest.mock("../../../../queue/anipo-recipient", () => ({
   enqueueAnipoRecipientSync: jest.fn().mockResolvedValue(undefined),
 }));
@@ -43,6 +48,15 @@ function makeStrapi(value = order, provider = { ok: true }) {
 }
 
 describe("Anipo recipient synchronization", () => {
+  it("uses the order snapshot after the shopper changes a saved address", async () => {
+    const linked = { ...order, delivery_address: { ...order.delivery_address, FullAddress: "آدرس پروفایل جدید" } };
+    (effectiveOrderDeliveryAddress as jest.Mock).mockResolvedValueOnce(order.delivery_address);
+    const { strapi, createOrUpdateOrder } = makeStrapi(linked);
+    await processAnipoRecipientSync(strapi, 10, 2);
+    expect(createOrUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ receiver_address: "نشانی جدید و کامل" }));
+    expect(linked.delivery_address.FullAddress).toBe("آدرس پروفایل جدید");
+  });
+
   it("marks the exact revision synced only after provider acceptance and preserves barcode", async () => {
     const { strapi, query, createOrUpdateOrder } = makeStrapi();
     await expect(processAnipoRecipientSync(strapi, 10, 2)).resolves.toEqual({ status: "synced" });
@@ -55,6 +69,16 @@ describe("Anipo recipient synchronization", () => {
     expect(update.where).toEqual({ id: 10, AnipoRecipientRevision: 2 });
     expect(update.data.AnipoRecipientSyncState).toBe("Synced");
     expect(update.data).not.toHaveProperty("ShippingBarcode");
+  });
+
+  it("syncs a placeholder postal code by omitting it, as barcode registration does", async () => {
+    const placeholder = {
+      ...order,
+      delivery_address: { ...order.delivery_address, PostalCode: "0000000000" },
+    };
+    const { strapi, createOrUpdateOrder } = makeStrapi(placeholder);
+    await expect(processAnipoRecipientSync(strapi, 10, 2)).resolves.toEqual({ status: "synced" });
+    expect(createOrUpdateOrder.mock.calls[0][0].receiver_postal_code).toBeUndefined();
   });
 
   it("records retryable failure without discarding the local revision", async () => {

@@ -1,14 +1,14 @@
-import * as Sentry from "@sentry/node";
+import { initializeBackendSentry } from "./utils/sentry-initialization";
+import { registerCatalogInteractiveAssertions } from "./utils/catalogOwnership";
+import { afterCatalogCommit } from "./utils/catalogEdit";
+import { ensureCatalogEditStorage } from "./utils/catalogEditStorage";
+import { ensureOrderSearchStorage } from "./utils/orderDeliverySnapshot";
 import bcrypt from "bcryptjs";
 import { createClient } from "redis";
 import type { Strapi } from "@strapi/strapi";
 
 // Initialize Sentry for error tracking (must be at the very top)
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  enabled: !!process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-});
+initializeBackendSentry();
 import override from "./api/auth/documentation/1.0.0/overrides/auth.json";
 import localUserOverride from "./api/local-user/documentation/1.0.0/overrides/local-user.json";
 
@@ -22,9 +22,13 @@ import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
 import { registerAppLifecycles } from "./lifecycles/registerAppLifecycles";
 import { registerSchemaRegressionGuard } from "./bootstrap/schemaRegressionGuard";
 import {
+  isWebProcess,
   shouldRunWebBootstrapMaintenance,
   shouldStartInProcessBackgroundJobs,
 } from "./utils/processRole";
+import { installGracefulShutdown } from "./bootstrap/gracefulShutdown";
+import { registerSchemaSyncLock, withBootLock } from "./bootstrap/bootLock";
+import { parsePositiveInt } from "./utils/parsePositiveInt";
 import {
   assertSnappayRuntimeConfig,
   isSnappayHardenedInitiationEnabled,
@@ -34,6 +38,9 @@ import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/
 import { ensurePaymentAttemptDatabaseInvariants } from "./api/payment-attempt/services/payment-attempt-database";
 import { ensureWalletDatabaseInvariants } from "./api/local-user-wallet/services/wallet-database";
 import { refreshWalletReadiness } from "./api/local-user-wallet/services/wallet-readiness";
+import { ensurePaymentAttemptEvidenceInvariants } from "./api/payment-attempt-evidence/services/evidence-database";
+import { evaluateRecoveryReadiness } from "./api/payment-gateway/services/snappay-recovery-mode";
+import { createMetricsRegistry } from "./utils/metrics";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
   mapLegacyFaqCategories,
@@ -49,8 +56,11 @@ import {
 } from "@repo/auth-core";
 import { ensureAuditEventStorage } from "./audit/storage";
 import { ensureCategoryEditorialDatabaseInvariant } from "./api/product-category-content/services/category-editorial-database";
+import { ensureCartDatabaseInvariants } from "./api/cart/services/lib/cart-database";
 import { ensureIssueReportStorage } from "./api/issue-report/services/issue-report-storage";
 import { ensureModelApplicationStorage } from "./api/model-application/services/model-application-storage";
+import { isVideoUpload } from "./services/media/normalize-upload-video";
+import { ensureStoryItemsMigration } from "./api/story/services/story-items-migration";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -82,13 +92,15 @@ const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // queryReserveGroups / getReserveGroup;
   // without this, Seller 1+ pass the product.read capability policy but
   // Strapi U&P still 403s the route.
-  "api::admin-product-list": { "admin-product-list": ["query"] },
+  // `counts` backs the lifecycle tab badges (All / Published / Drafts /
+  // Scheduled / Trash) on the same page.
+  "api::admin-product-list": { "admin-product-list": ["query", "counts"] },
   // createPreviewDraft never touches the live product row (it's an ephemeral
   // overlay token) and is already gated by capabilityPolicy("product.read") on
   // the route — same U&P-grant omission pattern as admin-product-list above:
   // every non-superadmin role 403'd at Strapi's RBAC layer despite passing
   // the capability policy, so only superadmin could preview products.
-  "api::product": { product: [...READ_ACTIONS, "search", "createPreviewDraft"] },
+  "api::product": { product: [...READ_ACTIONS, "search", "createPreviewDraft", "editLease", "editSnapshot"] },
   "api::product-faq": { "product-faq": READ_ACTIONS },
   "api::product-size-helper": { "product-size-helper": READ_ACTIONS },
   "api::product-tag": { "product-tag": READ_ACTIONS },
@@ -151,19 +163,26 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "product.read": PRODUCT_READ_GRANTS,
   "product.create": { "api::product": { product: ["create"] } },
-  "product.update": { "api::product": { product: ["update"] } },
-  "product.publish": { "api::product": { product: ["publication"] } },
+  "product.update": { "api::product": { product: ["update", "editor", "editAcquire", "editRenew", "editTakeover", "editRelease"] } },
+  // `bulkLifecycle` is one route for every lifecycle action; the controller
+  // checks the capability of the action requested, so each capability that owns
+  // a bulk action must also grant the route.
+  "product.publish": { "api::product": { product: ["publication", "bulkLifecycle"] } },
   "product.schedule": {
-    "api::product": { product: ["publication", "updateDisplayDate"] },
+    "api::product": { product: ["publication", "updateDisplayDate", "bulkLifecycle"] },
   },
   "product.stock.update": {
     "api::product-stock": { "product-stock": CREATE_UPDATE_ACTIONS },
+    "api::product": { product: ["editorBulkStock"] },
   },
   "product.media.manage": {
+    // Catalog media picker (POST /admin/media-library/query). The capability policy alone
+    // still 403s at the U&P layer without this grant.
+    "api::admin-media-library": { "admin-media-library": ["query"] },
     "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
   "product.variation.manage": {
-    "api::product": { product: ["generateVariationCombinations"] },
+    "api::product": { product: ["generateVariationCombinations", "replaceVariationColor", "editorVariation"] },
     "api::product-variation": { "product-variation": CREATE_UPDATE_ACTIONS },
     "api::product-variation-color": { "product-variation-color": CREATE_UPDATE_ACTIONS },
     "api::product-variation-size": { "product-variation-size": CREATE_UPDATE_ACTIONS },
@@ -193,9 +212,13 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   // The capability policy on these routes is not enough on its own — Strapi U&P
   // still 403s a route whose action the role has no permission row for, the same
   // way it does for admin-product-list.query above.
-  "product.softDelete": { "api::product": { product: ["softDelete"] } },
-  "product.restore": { "api::product": { product: ["restore"] } },
-  "product.delete": { "api::product": { product: ["delete"] } },
+  "product.softDelete": { "api::product": { product: ["softDelete", "bulkLifecycle"] } },
+  "product.restore": { "api::product": { product: ["restore", "bulkLifecycle"] } },
+  "product.delete": {
+    "api::product": {
+      product: ["delete", "permanentDelete", "emptyTrash", "bulkLifecycle"],
+    },
+  },
   "product.homepage.manage": {
     "api::settings": {
       settings: [
@@ -207,6 +230,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
         "updateHomepageCustomSection",
       ],
     },
+    "api::product": { product: ["editorHomepage"] },
   },
   "category.read": { "api::product-category": { "product-category": READ_ACTIONS } },
   "category.create": { "api::product-category": { "product-category": ["create"] } },
@@ -238,8 +262,12 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   "order.status.update": { "api::order": { order: ["adminTransition"] } },
   "order.notes.update": { "api::order": { order: ["adminUpdateNotes"] } },
   "order.address.update": { "api::order": { order: ["adminUpdateAddress"] } },
-  "order.items.adjust": { "api::order": { order: ["adminAdjustItems"] } },
-  "order.cancel": { "api::order": { order: ["adminCancel"] } },
+  // adminPaymentOperation: the handler limits these to the operation kind the
+  // capability can queue (UPDATE / CANCEL), so the admin can poll its outcome.
+  "order.items.adjust": {
+    "api::order": { order: ["adminAdjustItems", "adminPaymentOperation"] },
+  },
+  "order.cancel": { "api::order": { order: ["adminCancel", "adminPaymentOperation"] } },
   "order.manual.create": {
     "api::order": { order: ["create", "decrementStockManual"] },
     "api::order-item": { "order-item": ["create"] },
@@ -248,7 +276,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "order.shipping.manage": {
     "api::order": {
-      order: ["generateAnipoBarcode", "checkAnipoBarcode", "adminVoidBarcode"],
+      order: ["generateAnipoBarcode", "checkAnipoBarcode", "generateReserveParcelBarcode", "checkReserveParcelBarcode", "adminVoidBarcode"],
     },
   },
   "report.product.read": { "api::report": { report: PRODUCT_REPORT_ACTIONS } },
@@ -259,6 +287,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "report.finance.read": {
     "api::report": { report: ["liquidity", "gatewayLiquidity"] },
+  },
+  "report.excel.export": {
+    "api::report-export": { "report-export": ["payments", "wallet", "inventoryHistory", "orders", "productBuyers"] },
   },
   "report.carts.read": { "api::cart": { cart: ["find"] } },
   "report.traffic.read": {
@@ -610,7 +641,7 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
         "payment-gateway": ["snappEligible", "availableGateways"],
       },
       "api::story-seen": {
-        "story-seen": ["markSeen", "getMine"],
+        "story-seen": ["markSeen", "getMine", "markItemSeen", "getMineItems"],
       },
     },
   },
@@ -1327,6 +1358,9 @@ export default {
     // is the last point at which a stale build can be stopped from dropping
     // columns the database already has.
     registerSchemaRegressionGuard(strapi);
+    // A release boots many backend processes at once; only one may sync the
+    // schema at a time (bootstrap/bootLock.ts).
+    registerSchemaSyncLock(strapi);
 
     // Plugins register before the application register hook, so this is appended
     // after the native Users & Permissions content-API strategy.
@@ -1351,6 +1385,24 @@ export default {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }) {
+    // Rolling updates stop the old web task with SIGTERM; let its in-flight
+    // requests finish instead of Strapi resetting every socket at once.
+    if (isWebProcess()) {
+      installGracefulShutdown({
+        server: strapi.server.httpServer,
+        destroy: () => strapi.destroy(),
+        log: strapi.log,
+        timeoutMs: parsePositiveInt(process.env.SHUTDOWN_DRAIN_TIMEOUT_MS, 25_000),
+      });
+    }
+
+    // Every `incrementMetric` call in the jobs and sweeps has been a no-op
+    // because nothing ever assigned `strapi.metrics`. Install the registry
+    // first, so counters recorded during the rest of bootstrap are kept.
+    if (!(strapi as any).metrics) {
+      (strapi as any).metrics = createMetricsRegistry();
+    }
+
     const snappayHardenedInitiationEnabled = isSnappayHardenedInitiationEnabled();
     if (snappayHardenedInitiationEnabled) {
       assertSnappayRuntimeConfig();
@@ -1364,36 +1416,52 @@ export default {
       databaseClient.includes("pg") ||
       databaseClient.includes("postgres")
     ) {
-      const auditStorage = await ensureAuditEventStorage(strapi);
-      if (auditStorage.repaired) {
-        strapi.log.info("Canonical audit storage protections installed after schema sync");
-      }
-      // These constraints also protect the shared payment-attempt workflow when
-      // hardened SnappPay initiation is disabled, so keep them on every
-      // PostgreSQL boot. A non-Postgres database still fails closed if hardened
-      // initiation is explicitly enabled.
-      await ensureSnappayDatabaseInvariants(strapi as any);
-      // Mellat is always active (no feature flag), so its own payment-attempt
-      // provider-reference invariant runs unconditionally alongside SnappPay's.
-      await ensurePaymentAttemptDatabaseInvariants(strapi as any);
-      // Wallet money paths: Strapi never turned the schemas' `unique: true` into
-      // database uniqueness, so install it here and then verify it. Holds and
-      // top-ups stay switched off unless every prerequisite verifies, however
-      // the env flags are set.
-      await ensureWalletDatabaseInvariants(strapi as any);
-      const walletReadiness = await refreshWalletReadiness(strapi as any);
-      strapi.log.info(
-        `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
-      );
-      await ensureCategoryEditorialDatabaseInvariant(strapi);
-      const issueReportStorage = await ensureIssueReportStorage(strapi);
-      if (issueReportStorage.repaired) {
-        strapi.log.info("Issue report storage indexes installed after schema sync");
-      }
-      const modelApplicationStorage = await ensureModelApplicationStorage(strapi);
-      if (modelApplicationStorage.repaired) {
-        strapi.log.info("Model application storage indexes installed after schema sync");
-      }
+      // The schema sync above dropped any index its models do not declare, and
+      // these repairs put them back; one process at a time (bootstrap/bootLock.ts).
+      await withBootLock(strapi, "the database invariants", async () => {
+        await ensureCatalogEditStorage(strapi);
+        await ensureOrderSearchStorage(strapi);
+        const auditStorage = await ensureAuditEventStorage(strapi);
+        if (auditStorage.repaired) {
+          strapi.log.info("Canonical audit storage protections installed after schema sync");
+        }
+        // These constraints also protect the shared payment-attempt workflow when
+        // hardened SnappPay initiation is disabled, so keep them on every
+        // PostgreSQL boot. A non-Postgres database still fails closed if hardened
+        // initiation is explicitly enabled.
+        await ensureSnappayDatabaseInvariants(strapi as any);
+        // Mellat is always active (no feature flag), so its own payment-attempt
+        // provider-reference invariant runs unconditionally alongside SnappPay's.
+        await ensurePaymentAttemptDatabaseInvariants(strapi as any);
+        // Wallet money paths: Strapi never turned the schemas' `unique: true` into
+        // database uniqueness, so install it here and then verify it. Holds and
+        // top-ups stay switched off unless every prerequisite verifies, however
+        // the env flags are set.
+        await ensureWalletDatabaseInvariants(strapi as any);
+        const walletReadiness = await refreshWalletReadiness(strapi as any);
+        strapi.log.info(
+          `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
+        );
+        // Append-only evidence for every provider-evidence recovery decision.
+        // Installed before the readiness evaluation below, because the presence of
+        // the immutability trigger is itself an ENFORCE prerequisite: a mutable
+        // evidence table would make a release unprovable after the fact and let a
+        // circuit breaker be talked out of tripping.
+        await ensurePaymentAttemptEvidenceInvariants(strapi as any);
+        await evaluateRecoveryReadiness(strapi as any);
+        await ensureCategoryEditorialDatabaseInvariant(strapi);
+        // One cart per customer. Blocked (reported, never fatal) while legacy duplicates
+        // exist; scripts/repair-duplicate-user-carts.js consolidates them and installs it.
+        await ensureCartDatabaseInvariants(strapi);
+        const issueReportStorage = await ensureIssueReportStorage(strapi);
+        if (issueReportStorage.repaired) {
+          strapi.log.info("Issue report storage indexes installed after schema sync");
+        }
+        const modelApplicationStorage = await ensureModelApplicationStorage(strapi);
+        if (modelApplicationStorage.repaired) {
+          strapi.log.info("Model application storage indexes installed after schema sync");
+        }
+      });
     }
 
     if (snappayHardenedInitiationEnabled) {
@@ -1404,9 +1472,41 @@ export default {
         skipped: legacyBackfill.skipped,
       });
     }
+    registerCatalogInteractiveAssertions(strapi);
     registerAppLifecycles(strapi);
     strapi.db.lifecycles.subscribe(productLifeCycles);
     strapi.db.lifecycles.subscribe(productVariationLifeCycles);
+
+    // Await the one-row-to-one-item compatibility migration after Strapi has synchronized
+    // the component schema and before the web process starts serving story requests.
+    if (shouldRunWebBootstrapMaintenance()) {
+      await ensureStoryItemsMigration(strapi);
+    }
+
+    // Queue web-safe transcodes for any video the moment it lands, not only once it is
+    // attached to a saved product/story. An admin picking an HEVC/.mov phone recording in
+    // the add-product form has no product row yet, so relying solely on the product's
+    // afterCreate/afterUpdate hook would leave the upload-time preview blank until save.
+    // Best-effort: enqueue failures (e.g. Redis down) must never fail the upload itself.
+    strapi.db.lifecycles.subscribe({
+      models: ["plugin::upload.file"],
+      async afterCreate(event: any) {
+        const result = event?.result;
+        if (!result?.id || !isVideoUpload(result)) return;
+        try {
+          // Status first, so a client that reads the row before the worker starts sees
+          // "queued" (still processing) rather than an unprocessed legacy upload.
+          const { markQueued } = await import("./services/media/video-metadata");
+          await markQueued(strapi.db.connection as any, result.id);
+          const { enqueueUploadedFileNormalization } = await import("./queue/media");
+          await enqueueUploadedFileNormalization(result.id);
+        } catch (error) {
+          strapi.log.warn(
+            `[upload] could not queue video normalization for file ${result.id}: ${(error as Error).message}`,
+          );
+        }
+      },
+    });
 
     // Invalidate rest-cache when cached content types change via DB (imports, scripts, entityService)
     const restCache = strapi.plugin("rest-cache");
@@ -1420,16 +1520,16 @@ export default {
         strapi.db.lifecycles.subscribe({
           models: [uid],
           async afterCreate() {
-            await cacheStore.clearByUid(uid, {}, true);
+            await afterCatalogCommit(strapi, () => cacheStore.clearByUid(uid, {}, true));
           },
           async afterUpdate(event: any) {
             if (isCounterOnlyUpdate(uid, event?.params?.data)) {
               return;
             }
-            await cacheStore.clearByUid(uid, {}, true);
+            await afterCatalogCommit(strapi, () => cacheStore.clearByUid(uid, {}, true));
           },
           async afterDelete() {
-            await cacheStore.clearByUid(uid, {}, true);
+            await afterCatalogCommit(strapi, () => cacheStore.clearByUid(uid, {}, true));
           },
         });
       }

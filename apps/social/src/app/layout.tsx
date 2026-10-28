@@ -1,3 +1,4 @@
+import { getLegacyRuntimePolyfillScript } from "@/lib/legacyRuntimePolyfills";
 import type { Metadata, Viewport } from "next";
 import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts";
 import { Providers } from "@/app/providers";
@@ -26,11 +27,31 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   icons: {
     apple: [
-      { url: "/pwa/touch-icons/apple-touch-icon-iphone-60x60.png", sizes: "60x60", type: "image/png" },
-      { url: "/pwa/touch-icons/apple-touch-icon-ipad-76x76.png", sizes: "76x76", type: "image/png" },
-      { url: "/pwa/touch-icons/apple-touch-icon-iphone-retina-120x120.png", sizes: "120x120", type: "image/png" },
-      { url: "/pwa/touch-icons/apple-touch-icon-ipad-retina-152x152.png", sizes: "152x152", type: "image/png" },
-      { url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+      {
+        url: "/pwa/touch-icons/apple-touch-icon-iphone-60x60.png",
+        sizes: "60x60",
+        type: "image/png",
+      },
+      {
+        url: "/pwa/touch-icons/apple-touch-icon-ipad-76x76.png",
+        sizes: "76x76",
+        type: "image/png",
+      },
+      {
+        url: "/pwa/touch-icons/apple-touch-icon-iphone-retina-120x120.png",
+        sizes: "120x120",
+        type: "image/png",
+      },
+      {
+        url: "/pwa/touch-icons/apple-touch-icon-ipad-retina-152x152.png",
+        sizes: "152x152",
+        type: "image/png",
+      },
+      {
+        url: "/icons/apple-touch-icon.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
     ],
   },
   appleWebApp: {
@@ -282,7 +303,14 @@ export default function RootLayout({
       dir="rtl"
       className={`${peyda.variable} ${peydaFanum.variable} ${rokh.variable} ${kaghaz.variable} antialiased`}
     >
-      <body className={`min-h-dvh flex flex-col bg-background text-zinc-900 ${peydaFanum.className}`}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{ __html: getLegacyRuntimePolyfillScript() }}
+        />
+      </head>
+      <body
+        className={`min-h-dvh flex flex-col bg-background text-zinc-900 ${peydaFanum.className}`}
+      >
         <Providers>
           <AppChrome>{children}</AppChrome>
         </Providers>

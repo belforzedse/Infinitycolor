@@ -13,7 +13,11 @@ jest.mock("../revalidate", () => ({
   triggerFrontendRevalidation: (...args: unknown[]) => triggerFrontendRevalidation(...args),
 }));
 
-import { clearProductOriginCaches, productSlugTag } from "../productOriginCache";
+import {
+  clearAllProductCaches,
+  clearProductOriginCaches,
+  productSlugTag,
+} from "../productOriginCache";
 
 const clearByUid = jest.fn().mockResolvedValue(undefined);
 
@@ -78,6 +82,31 @@ describe("clearProductOriginCaches", () => {
       clearProductOriginCaches(strapi as any, "shirt", { availabilityCrossed: false }),
     ).resolves.toBeUndefined();
     expect(strapi.log.warn).toHaveBeenCalled();
+  });
+});
+
+describe("clearAllProductCaches", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  // A shared colour row is rendered by every product using it; `product` is the
+  // tag every PDP, PLP, colour filter and homepage rail carries.
+  it("clears every product layer with one storefront tag", async () => {
+    await clearAllProductCaches(makeStrapi() as any, "color");
+
+    expect(delByPattern).toHaveBeenCalledWith("endpoint-cache:product.");
+    expect(clearByUid).toHaveBeenCalledWith("api::product.product", {}, true);
+    expect(triggerFrontendRevalidation).toHaveBeenCalledTimes(1);
+    expect(triggerFrontendRevalidation).toHaveBeenCalledWith({ tag: "product" }, "color");
+  });
+
+  it("never fails the write that triggered it", async () => {
+    delByPattern.mockRejectedValueOnce(new Error("redis down"));
+    triggerFrontendRevalidation.mockRejectedValueOnce(new Error("unreachable"));
+    const strapi = makeStrapi();
+
+    await expect(clearAllProductCaches(strapi as any)).resolves.toBeUndefined();
+    expect(clearByUid).toHaveBeenCalled();
+    expect(strapi.log.warn).toHaveBeenCalledTimes(2);
   });
 });
 

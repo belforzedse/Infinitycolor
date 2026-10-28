@@ -1,4 +1,10 @@
-import { __private, enqueuePurchaseForOrder, enqueueRefundForReturn } from "../outbox";
+import {
+  __private,
+  DELIVERABLE_EVENT_TYPES,
+  enqueueOrderPaid,
+  enqueueRefundForReturn,
+  runAnalyticsOutboxTick,
+} from "../outbox";
 
 function createKnex(returning: unknown[]) {
   const insertPayloads: unknown[] = [];
@@ -40,9 +46,9 @@ describe("analytics outbox commerce events", () => {
       type: "event" as const,
       payload: {
         website: websiteId,
-        url: "/commerce/purchase",
-        name: "purchase",
-        data: { revenue: 120_000, currency: "IRR" },
+        url: "/commerce/order_paid",
+        name: "order_paid",
+        data: { value_irr: 120_000, currency: "IRR" },
       },
     };
     expect(__private.parseStoredCollectorEvent(event)).toEqual(event);
@@ -70,62 +76,162 @@ describe("analytics outbox commerce events", () => {
     );
   });
 
-  it("stores one privacy-safe IRR purchase event keyed by the settlement", async () => {
-    const knex = createKnex([{ id: 41 }]);
+  const storefrontOrder = (overrides: Record<string, unknown> = {}) => ({
+    id: 7,
+    createdAt: "2026-09-20T08:00:00.000Z",
+    external_source: "SamanKish",
+    PaymentGateway: "SamanKish",
+    order_items: [{ Count: 2 }, { Count: 1 }],
+    contract: {
+      contract_transactions: [
+        {
+          id: 41,
+          Type: "Gateway",
+          Status: "Success",
+          Amount: 20000,
+          SettledAt: "2026-09-20T08:30:00.000Z",
+        },
+        {
+          id: 42,
+          Type: "Gateway",
+          Status: "Success",
+          Amount: 4000,
+          SettledAt: "2026-09-20T08:29:00.000Z",
+        },
+        { id: 43, Type: "Gateway", Status: "Failed", Amount: 20000 },
+      ],
+    },
+    ...overrides,
+  });
+
+  it("stores one non-revenue order_paid per storefront order, summing split legs", async () => {
+    const knex = createKnex([{ id: 51 }]);
+    const strapi: any = {
+      db: { connection: knex.db },
+      entityService: { findOne: jest.fn().mockResolvedValue(storefrontOrder()) },
+    };
+
+    await expect(enqueueOrderPaid(strapi, 7)).resolves.toBe(51);
+    expect(knex.insertPayloads).toHaveLength(1);
+    const payload: any = knex.insertPayloads[0];
+    expect(payload.event_type).toBe("order_paid");
+    expect(payload.source_type).toBe("order");
+    expect(payload.source_id).toBe("7");
+    expect(payload.payload.payload.name).toBe("order_paid");
+    expect(payload.payload.payload.url).toBe("/commerce/order_paid");
+    expect(payload.payload.payload.data).toEqual({
+      value_irr: 24000,
+      item_count: 3,
+      gateway: "samankish",
+      currency: "IRR",
+    });
+    // Never Umami's special revenue key, and never a distinct id: a server event
+    // cannot join a shopper's session, so it must not claim the purchase.
+    expect(payload.payload.payload.data).not.toHaveProperty("revenue");
+    expect(payload.payload.payload).not.toHaveProperty("id");
+    expect(payload.payload.payload.timestamp).toBe(
+      Math.floor(new Date("2026-09-20T08:30:00.000Z").getTime() / 1000),
+    );
+  });
+
+  it("never turns a WooCommerce-imported order into a storefront event", async () => {
+    const knex = createKnex([{ id: 51 }]);
     const strapi: any = {
       db: { connection: knex.db },
       entityService: {
-        findOne: jest.fn().mockResolvedValue({
-          id: 7,
-          analytics_correlation_id: "guest-abc",
-          order_items: [
-            {
-              ProductSKU: "PRIVATE-SKU",
-              ProductTitle: "Shoe",
-              PerAmount: 1200,
-              Count: 2,
-              product_variation: {
-                id: 81,
-                product: { id: 42, product_main_category: { id: 9 } },
-              },
-            },
-          ],
-          contract: {
-            contract_transactions: [
-              {
-                id: 41,
-                Type: "Gateway",
-                Status: "Success",
-                Amount: 24000,
-                SettledAt: "2026-08-09T08:30:00.000Z",
-              },
-            ],
-          },
-        }),
+        findOne: jest
+          .fn()
+          .mockResolvedValue(storefrontOrder({ external_source: "woocommerce" })),
       },
     };
+    await expect(enqueueOrderPaid(strapi, 7)).resolves.toBeNull();
+    expect(knex.insertPayloads).toHaveLength(0);
+  });
 
-    await expect(enqueuePurchaseForOrder(strapi, 7)).resolves.toBe(41);
-    expect(knex.conflictKeys).toEqual([["website_id", "event_type", "source_type", "source_id"]]);
-    const payload: any = knex.insertPayloads[0];
-    expect(payload.event_type).toBe("purchase");
-    expect(payload.source_type).toBe("settlement_transaction");
-    expect(payload.source_id).toBe("41");
-    expect(payload.payload.payload.data.revenue).toBe(24000);
-    expect(payload.payload.payload.data.revenue_irr).toBe(24000);
-    expect(payload.payload.payload.data.value_irr).toBe(24000);
-    expect(payload.payload.payload.data.currency).toBe("IRR");
-    expect(payload.payload.payload.data.quantity).toBe(2);
-    expect(payload.payload.payload.data.product_ids).toBe("42");
-    expect(payload.payload.payload.data.variant_ids).toBe("81");
-    expect(payload.payload.payload.data.category_ids).toBe("9");
-    expect(payload.payload.payload.id).toBe("guest-abc");
-    expect(payload.payload.payload.timestamp).toBe(
-      Math.floor(new Date("2026-08-09T08:30:00.000Z").getTime() / 1000),
-    );
-    expect(JSON.stringify(payload.payload)).not.toContain("PRIVATE-SKU");
-    expect(payload.payload.payload.data).not.toEqual(
-      expect.objectContaining({ order_id: expect.anything(), transaction_id: expect.anything() }),
+  it("ignores orders created before the storefront cutover", async () => {
+    const knex = createKnex([{ id: 51 }]);
+    const strapi: any = {
+      db: { connection: knex.db },
+      entityService: {
+        findOne: jest
+          .fn()
+          .mockResolvedValue(storefrontOrder({ createdAt: "2026-09-10T08:00:00.000Z" })),
+      },
+    };
+    await expect(enqueueOrderPaid(strapi, 7)).resolves.toBeNull();
+    expect(knex.insertPayloads).toHaveLength(0);
+  });
+
+  it("keeps a Mellat order whose external_source is still NULL", async () => {
+    const knex = createKnex([{ id: 52 }]);
+    const strapi: any = {
+      db: { connection: knex.db },
+      entityService: {
+        findOne: jest
+          .fn()
+          .mockResolvedValue(
+            storefrontOrder({ external_source: null, PaymentGateway: "Mellat" }),
+          ),
+      },
+    };
+    await expect(enqueueOrderPaid(strapi, 7)).resolves.toBe(52);
+    expect((knex.insertPayloads[0] as any).payload.payload.data.gateway).toBe("mellat");
+  });
+
+  it("does not queue an order with no settled charge", async () => {
+    const knex = createKnex([{ id: 51 }]);
+    const strapi: any = {
+      db: { connection: knex.db },
+      entityService: {
+        findOne: jest.fn().mockResolvedValue(
+          storefrontOrder({
+            contract: { contract_transactions: [{ id: 1, Status: "Pending", Amount: 10 }] },
+          }),
+        ),
+      },
+    };
+    await expect(enqueueOrderPaid(strapi, 7)).resolves.toBeNull();
+    expect(knex.insertPayloads).toHaveLength(0);
+  });
+
+  it("repairs only storefront orders after the cutover and claims only deliverable types", async () => {
+    const raw = jest.fn().mockResolvedValue({ rows: [] });
+    const whereInCalls: Array<[string, unknown]> = [];
+    const chain: any = {
+      where: () => chain,
+      whereIn: (column: string, values: unknown) => {
+        whereInCalls.push([column, values]);
+        return chain;
+      },
+      orderBy: () => chain,
+      forUpdate: () => chain,
+      skipLocked: () => chain,
+      limit: async () => [],
+      update: async () => 0,
+    };
+    const trx: any = jest.fn(() => chain);
+    const db: any = jest.fn(() => chain);
+    db.raw = raw;
+    db.transaction = async (callback: (trx: unknown) => unknown) => callback(trx);
+    const strapi: any = { db: { connection: db }, log: { warn: jest.fn() } };
+
+    await runAnalyticsOutboxTick(strapi, { limit: 5 });
+
+    const [orderScan, refundScan] = raw.mock.calls;
+    for (const [sql, bindings] of [orderScan, refundScan]) {
+      expect(sql).toContain("o.external_source IS DISTINCT FROM 'woocommerce'");
+      expect(sql).toContain("o.created_at >= ?");
+      expect(bindings).toContain(__private.STOREFRONT_ANALYTICS_FLOOR);
+    }
+    expect(orderScan[0]).toContain("ao.event_type = 'order_paid'");
+    expect(whereInCalls).toContainEqual(["event_type", [...DELIVERABLE_EVENT_TYPES]]);
+    expect(DELIVERABLE_EVENT_TYPES).not.toContain("purchase");
+  });
+
+  it("rejects collector timestamps from before the storefront cutover", () => {
+    expect(__private.toCollectorTimestamp("2026-04-09T08:00:00.000Z")).toBeUndefined();
+    expect(__private.toCollectorTimestamp("2026-09-20T08:00:00.000Z")).toBe(
+      Math.floor(new Date("2026-09-20T08:00:00.000Z").getTime() / 1000),
     );
   });
 
@@ -135,10 +241,12 @@ describe("analytics outbox commerce events", () => {
       db: { connection: knex.db },
       entityService: {
         findOne: jest.fn().mockResolvedValue({
-          analytics_correlation_id: "guest-abc",
+          id: 7,
+          createdAt: "2026-09-20T08:00:00.000Z",
+          external_source: "SnappPay",
           contract: {
             contract_transactions: [
-              { id: 99, Type: "Return", Status: "Success", Date: "2026-08-08T09:00:00.000Z" },
+              { id: 99, Type: "Return", Status: "Success", Date: "2026-09-21T09:00:00.000Z" },
             ],
           },
         }),
@@ -149,7 +257,6 @@ describe("analytics outbox commerce events", () => {
         orderId: 7,
         contractTransactionId: 99,
         amountToman: 45000,
-        correlationId: "guest-abc",
       }),
     ).resolves.toBe(99);
     const payload: any = knex.insertPayloads[0];
@@ -159,7 +266,27 @@ describe("analytics outbox commerce events", () => {
     expect(payload.payload.payload.data.refund_irr).toBe(450000);
     expect(payload.payload.payload.data.refund_irr).toBeGreaterThan(0);
     expect(payload.payload.payload.timestamp).toBe(
-      Math.floor(new Date("2026-08-08T09:00:00.000Z").getTime() / 1000),
+      Math.floor(new Date("2026-09-21T09:00:00.000Z").getTime() / 1000),
     );
+    expect(payload.payload.payload).not.toHaveProperty("id");
+  });
+
+  it("does not record refunds of WooCommerce-imported orders", async () => {
+    const knex = createKnex([{ id: 99 }]);
+    const strapi: any = {
+      db: { connection: knex.db },
+      entityService: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 8,
+          createdAt: "2026-09-20T08:00:00.000Z",
+          external_source: "woocommerce",
+          contract: { contract_transactions: [] },
+        }),
+      },
+    };
+    await expect(
+      enqueueRefundForReturn(strapi, { orderId: 8, contractTransactionId: 100, amountIrr: 5000 }),
+    ).resolves.toBeNull();
+    expect(knex.insertPayloads).toHaveLength(0);
   });
 });

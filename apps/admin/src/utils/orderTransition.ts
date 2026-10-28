@@ -12,9 +12,9 @@ import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
  * so a bulk action can skip the orders it would fail on rather than firing a
  * request per order and reporting one generic failure.
  *
- * Keep the two in sync. The order is «تکمیل شده» then «ارسال»: an order is
- * prepared/completed first and handed to the courier second, so `Shipment` is
- * the terminal step. Nothing transitions *to* `Started`: an order arrives there
+ * Keep the two in sync. Marking a Started order Done advances it to Shipment
+ * in the same backend transaction. Older Done orders may still use Shipment.
+ * Nothing transitions *to* `Started`: an order arrives there
  * by being paid for, which is why offering it as a bulk action never worked.
  */
 export const ORDER_NEXT_STATUSES: Partial<
@@ -98,7 +98,7 @@ export function describeOrderTransitionError(error: unknown): string {
   }
 
   if (apiError?.errorCode === "RESERVE_HOLD_ACTIVE") {
-    return "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل ارسال نیست.";
+    return "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل تکمیل و ارسال نیست.";
   }
 
   if (

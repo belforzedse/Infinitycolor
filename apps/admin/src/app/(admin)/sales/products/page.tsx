@@ -1,6 +1,8 @@
 "use client";
 
 import SalesPage from "../_components/SalesPage";
+import ReportTabs from "@/components/SuperAdmin/reports/shared/ReportTabs";
+import { SWAP } from "@/components/SuperAdmin/reports/shared/motion";
 import FilterBar from "@/components/SuperAdmin/reports/products/FilterBar";
 import OverviewTab from "@/components/SuperAdmin/reports/products/OverviewTab";
 import TrendsTab from "@/components/SuperAdmin/reports/products/TrendsTab";
@@ -12,12 +14,12 @@ import {
   type ReportTab,
 } from "@/components/SuperAdmin/reports/products/useReportFilters";
 
-const TABS: Array<{ key: ReportTab; label: string }> = [
-  { key: "overview", label: "نمای کلی" },
-  { key: "trends", label: "روند" },
-  { key: "performance", label: "عملکرد محصولات" },
-  { key: "inventory", label: "موجودی" },
-  { key: "payments", label: "پرداخت و ارسال" },
+const TABS: Array<{ id: ReportTab; label: string }> = [
+  { id: "overview", label: "نمای کلی" },
+  { id: "trends", label: "روند" },
+  { id: "performance", label: "عملکرد محصولات" },
+  { id: "inventory", label: "موجودی" },
+  { id: "payments", label: "پرداخت و ارسال" },
 ];
 
 export default function ProductReportsPage() {
@@ -31,29 +33,17 @@ export default function ProductReportsPage() {
   return (
     <SalesPage title="گزارش محصولات">
       <div className="space-y-5" dir="rtl">
-        <div className="flex flex-wrap gap-1 rounded-2xl bg-neutral-100 p-1">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`flex-1 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-                tab === t.key
-                  ? "bg-white text-infinity-primary shadow-sm"
-                  : "text-neutral-600 hover:text-neutral-900"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <ReportTabs tabs={TABS} value={tab} onChange={setTab} label="بخش‌های گزارش محصولات" idPrefix="products" />
 
         <FilterBar f={f} showProductFilters={tab === "performance"} />
 
-        {tab === "overview" && <OverviewTab start={start} end={end} />}
-        {tab === "trends" && <TrendsTab start={start} end={end} />}
-        {tab === "performance" && <PerformanceTab filters={filters} start={start} end={end} />}
-        {tab === "inventory" && <InventoryTab start={start} end={end} />}
-        {tab === "payments" && <PaymentShippingTab start={start} end={end} />}
+        <div key={tab} id="products-panel" role="tabpanel" aria-labelledby={`products-tab-${tab}`} className={SWAP}>
+          {tab === "overview" && <OverviewTab start={start} end={end} />}
+          {tab === "trends" && <TrendsTab start={start} end={end} />}
+          {tab === "performance" && <PerformanceTab filters={filters} start={start} end={end} />}
+          {tab === "inventory" && <InventoryTab start={start} end={end} />}
+          {tab === "payments" && <PaymentShippingTab start={start} end={end} />}
+        </div>
       </div>
     </SalesPage>
   );

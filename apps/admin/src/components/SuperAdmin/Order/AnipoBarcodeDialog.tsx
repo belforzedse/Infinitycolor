@@ -14,6 +14,7 @@ interface AnipoBarcodeDialogProps {
   loading?: boolean;
   initialWeight?: number;
   initialBoxSizeId?: number;
+  title?: string;
 }
 
 function parsePositiveInt(value: string): number | undefined {
@@ -28,6 +29,7 @@ export default function AnipoBarcodeDialog({
   loading = false,
   initialWeight,
   initialBoxSizeId,
+  title = "ثبت سفارش در آنیپو",
 }: AnipoBarcodeDialogProps) {
   const [customWeight, setCustomWeight] = useState(() =>
     initialWeight && initialWeight > 0
@@ -42,7 +44,8 @@ export default function AnipoBarcodeDialog({
 
   const handleGenerate = async () => {
     const weight = parsePositiveInt(customWeight) ?? DEFAULT_ANIPO_WEIGHT_G;
-    const boxSize = parsePositiveInt(customBoxSize) ?? DEFAULT_ANIPO_BOX_SIZE_ID;
+    const boxSize =
+      parsePositiveInt(customBoxSize) ?? DEFAULT_ANIPO_BOX_SIZE_ID;
     await onGenerate(weight, boxSize);
   };
 
@@ -51,11 +54,18 @@ export default function AnipoBarcodeDialog({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="ثبت سفارش در آنیپو" className="max-w-md">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={title}
+      className="max-w-md"
+    >
       <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-gray-700">وزن (گرم)</label>
+            <label className="text-sm font-medium text-gray-700">
+              وزن (گرم)
+            </label>
             <input
               type="number"
               min={1}
@@ -69,7 +79,9 @@ export default function AnipoBarcodeDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-gray-700">سایز جعبه</label>
+            <label className="text-sm font-medium text-gray-700">
+              سایز جعبه
+            </label>
             <select
               value={customBoxSize}
               onChange={(e) => setCustomBoxSize(e.target.value)}

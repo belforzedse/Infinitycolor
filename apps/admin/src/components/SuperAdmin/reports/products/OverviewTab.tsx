@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import KpiCard from "./KpiCard";
 import { faNum } from "@/utils/faNum";
+import { CARD, ErrorState } from "@/components/admin";
+import { cn } from "@/utils/tailwind";
 import { getProductOverview, type ProductOverview } from "@/services/super-admin/reports/products";
+import KpiCard, { periodFigure } from "../shared/KpiCard";
+import { numberText, tehranToday, tomanText } from "../shared/format";
+import { NO_COMPARISON_BEFORE_FLOOR, previousWasClipped } from "../shared/salesSeries";
 import ReportNotes from "./ReportNotes";
 
 export default function OverviewTab({ start, end }: { start: string; end: string }) {
@@ -26,70 +30,81 @@ export default function OverviewTab({ start, end }: { start: string; end: string
   }, [start, end, reloadKey]);
 
   if (error) {
-    return (
-      <div className="rounded-2xl border border-red-100 bg-red-50 p-8 text-center" dir="rtl">
-        <p className="mb-4 text-red-600">{error}</p>
-        <button
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
-        >
-          تلاش مجدد
-        </button>
-      </div>
-    );
+    return <ErrorState description={error} onRetry={() => setReloadKey((k) => k + 1)} />;
   }
 
   const k = data?.kpis;
   const inv = data?.inventory;
+  const comparable = Boolean(data && !previousWasClipped(data.range ?? { start, end }, data.previous));
+  const figure = (
+    delta: Parameters<typeof periodFigure>[0],
+    money: boolean,
+    options: { lowerIsBetter?: boolean; neutral?: boolean } = {},
+  ) =>
+    periodFigure(delta, {
+      format: money ? tomanText : (value) => numberText(value),
+      comparable,
+      noComparisonText: NO_COMPARISON_BEFORE_FLOOR,
+      ...options,
+    });
+  const incomplete = end >= tehranToday();
 
   return (
     <div className="space-y-6" dir="rtl">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
           title="فروش ناخالص محصولات"
-          delta={k?.gross}
-          format="toman"
+          {...figure(k?.gross, true)}
           loading={loading}
-          tooltip="مجموع قیمت اقلام فروخته‌شده (بدون حمل و مالیات)"
+          incomplete={incomplete}
+          info="مجموع قیمت اقلام فروخته‌شده (بدون حمل و مالیات)."
+          order={0}
         />
         <KpiCard
           title="خالص فروش"
-          delta={k?.net}
-          format="toman"
+          {...figure(k?.net, true)}
           loading={loading}
+          incomplete={incomplete}
           estimate
-          tooltip="ناخالص منهای تخفیف و مرجوعی (تسهیم‌شده)"
+          info="ناخالص منهای تخفیف و مرجوعی (تسهیم‌شده)."
+          order={1}
         />
-        <KpiCard title="تعداد فروش" delta={k?.units} format="count" loading={loading} />
+        <KpiCard title="تعداد فروش" {...figure(k?.units, false)} loading={loading} incomplete={incomplete} order={2} />
         <KpiCard
           title="سفارش‌های پرداخت‌شده"
-          delta={k?.orders}
-          format="count"
+          {...figure(k?.orders, false)}
           loading={loading}
-          tooltip="سفارش‌هایی با تسویه موفق در بازه"
+          incomplete={incomplete}
+          info="سفارش‌هایی با تسویه موفق در بازه."
+          order={3}
         />
-        <KpiCard title="قیمت میانگین فروش" delta={k?.avgPrice} format="toman" loading={loading} />
+        <KpiCard
+          title="قیمت میانگین فروش"
+          {...figure(k?.avgPrice, true, { neutral: true })}
+          loading={loading}
+          order={4}
+        />
         <KpiCard
           title="میانگین ارزش سفارش"
-          delta={k?.aov}
-          format="toman"
+          {...figure(k?.aov, true)}
           loading={loading}
-          tooltip="بر مبنای فروش ناخالص محصولات"
+          info="بر مبنای فروش ناخالص محصولات."
+          order={5}
         />
         <KpiCard
           title="تخفیف‌ها"
-          delta={k?.discounts}
-          format="toman"
+          {...figure(k?.discounts, true, { neutral: true })}
           loading={loading}
-          tooltip="تخفیف در سطح سفارش"
+          info="تخفیف در سطح سفارش."
+          order={6}
         />
         <KpiCard
           title="مرجوعی‌ها"
-          delta={k?.refunds}
-          format="toman"
+          {...figure(k?.refunds, true, { lowerIsBetter: true })}
           loading={loading}
           estimate
-          tooltip="تراکنش‌های بازگشتی موفق"
+          info="تراکنش‌های بازگشتی موفق."
+          order={7}
         />
       </div>
 
@@ -131,17 +146,17 @@ function InvBox({
 }) {
   const toneCls = {
     neutral: "text-neutral-800",
-    green: "text-green-600",
-    amber: "text-amber-600",
-    red: "text-red-600",
+    green: "text-emerald-700",
+    amber: "text-amber-700",
+    red: "text-rose-700",
   }[tone];
   return (
-    <div className="rounded-2xl border border-neutral-100 bg-white p-4">
-      <p className="mb-2 text-xs text-neutral-500">{label}</p>
+    <div className={cn(CARD, "p-4")}>
+      <p className="mb-2 text-xs text-slate-600">{label}</p>
       {loading ? (
         <div className="h-6 w-12 animate-pulse rounded bg-neutral-100" />
       ) : (
-        <p className={`text-xl font-bold ${toneCls}`}>{faNum(value ?? 0)}</p>
+        <p className={`text-xl font-semibold tabular-nums ${toneCls}`}>{value === undefined ? "—" : faNum(value)}</p>
       )}
     </div>
   );

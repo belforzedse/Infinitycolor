@@ -27,7 +27,7 @@ jest.mock("next/script", () => ({
   },
 }));
 
-import { AnalyticsTracker, normalizeUmamiBaseUrl } from "../AnalyticsTracker";
+import { AnalyticsTracker, derivePageType, normalizeUmamiBaseUrl } from "../AnalyticsTracker";
 
 function pageviewPayloads() {
   return track.mock.calls
@@ -118,6 +118,34 @@ describe("AnalyticsTracker", () => {
     currentUser = { id: 85 };
     render(<AnalyticsTracker />);
     expect(identify).toHaveBeenCalledWith("85");
+  });
+
+  it("never identifies a guest, before or after the user resolves", () => {
+    const { rerender } = render(<AnalyticsTracker />);
+    flushFrames();
+    expect(identify).not.toHaveBeenCalled();
+
+    currentUser = { id: 86 };
+    rerender(<AnalyticsTracker />);
+    expect(identify).toHaveBeenCalledTimes(1);
+    expect(identify).toHaveBeenCalledWith("86");
+
+    // A refreshed profile object for the same customer is not a new identity.
+    currentUser = { id: 86 };
+    rerender(<AnalyticsTracker />);
+    expect(identify).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(identify.mock.calls)).not.toContain("guest-");
+  });
+
+  it("groups the payment result with checkout", () => {
+    expect(derivePageType("/payment/result")).toBe("checkout");
+    expect(derivePageType("/checkout")).toBe("checkout");
+  });
+
+  it("loads exactly one tracker script", () => {
+    const { container, rerender } = render(<AnalyticsTracker />);
+    rerender(<AnalyticsTracker />);
+    expect(container.querySelectorAll("script")).toHaveLength(1);
   });
 
   it("fails closed when the website configuration is missing", () => {

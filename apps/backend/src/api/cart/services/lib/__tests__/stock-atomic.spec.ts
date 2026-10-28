@@ -56,6 +56,19 @@ describe("atomic stock primitives", () => {
 
       expect(res.success).toBe(false);
       expect(res.error).toMatch(/Insufficient stock for reservation/);
+      expect(res.reason).toBe("insufficient_stock");
+    });
+
+    it("distinguishes database failures and missing inventory from shortages", async () => {
+      const failed = createStrapi(async () => { throw new Error("connection refused"); });
+      expect(await reserveStockAtomic(failed.strapi, 10, 1)).toEqual(expect.objectContaining({ reason: "database_failure" }));
+      const missing = createStrapi(async () => ({ rows: [] }));
+      expect(await reserveStockAtomic(missing.strapi, 10, 1)).toEqual(expect.objectContaining({ reason: "missing_inventory" }));
+    });
+    it.each([NaN, Infinity, 0.5])("rejects invalid quantity %s without SQL", async (quantity) => {
+      const { strapi, raw } = createStrapi(async () => ({ rows: [] }));
+      expect(await reserveStockAtomic(strapi, 10, quantity)).toEqual(expect.objectContaining({ reason: "invalid_quantity" }));
+      expect(raw).not.toHaveBeenCalled();
     });
 
     it("rejects non-positive quantities without touching the DB", async () => {

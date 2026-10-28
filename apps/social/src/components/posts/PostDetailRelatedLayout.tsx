@@ -141,6 +141,7 @@ export function PostDetailRelatedLayout({ post, relatedPosts }: PostDetailRelate
               className="flex min-w-0 justify-center"
             >
               <PostCard
+                posterOnlyVideo
                 variant={relatedPost.desktopVariant}
                 widthMode="fluid"
                 imageSrc={relatedPost.imageSrc}

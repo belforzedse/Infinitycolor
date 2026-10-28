@@ -1,19 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
 import { getProductDetail, type ProductDetail } from "@/services/super-admin/reports/products";
-
-const ResponsiveContainer = dynamic(() => import("recharts").then((m) => m.ResponsiveContainer), {
-  ssr: false,
-});
-const LineChart = dynamic(() => import("recharts").then((m) => m.LineChart), { ssr: false });
-const Line = dynamic(() => import("recharts").then((m) => m.Line), { ssr: false });
-const XAxis = dynamic(() => import("recharts").then((m) => m.XAxis), { ssr: false });
-const RTooltip = dynamic(() => import("recharts").then((m) => m.Tooltip), { ssr: false });
+import TimeSeriesChart from "../shared/TimeSeriesChart";
+import { tehranToday, tomanText } from "../shared/format";
+import { salesSeriesRows } from "../shared/salesSeries";
 
 const STATUS_FA: Record<string, string> = {
   in: "موجود",
@@ -55,6 +49,20 @@ export default function ProductDrawer({
       active = false;
     };
   }, [productId, start, end]);
+
+  const trendRows = useMemo(
+    () =>
+      data?.trend.length
+        ? salesSeriesRows({
+            points: data.trend,
+            grouping: data.grouping,
+            range: { start, end },
+            today: tehranToday(),
+            value: (point) => point.gross,
+          })
+        : null,
+    [data, start, end],
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex justify-start" dir="rtl">
@@ -106,37 +114,19 @@ export default function ProductDrawer({
                 <Stat label="موجودی کل محصول" value={faNum(data.totals.currentStock)} />
               </div>
 
-              {data.trend.length > 0 && (
+              {trendRows ? (
                 <div className="rounded-2xl border border-neutral-100 bg-white p-3">
-                  <p className="mb-2 text-sm font-medium text-neutral-600">روند فروش</p>
-                  <div className="h-44" dir="ltr">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={data.trend.map((t) => ({
-                          ...t,
-                          label: new Date(t.bucket).toLocaleDateString("fa-IR", {
-                            month: "short",
-                            day: "numeric",
-                          }),
-                        }))}
-                      >
-                        <XAxis dataKey="label" fontSize={10} stroke="#94a3b8" />
-                        <RTooltip
-                          formatter={(v: any) => priceFormatter(Number(v), " ت")}
-                          labelStyle={{ direction: "rtl" }}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="gross"
-                          stroke="#6366F1"
-                          strokeWidth={2}
-                          dot={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
+                  <p className="mb-2 text-sm font-medium text-neutral-600">روند فروش ناخالص</p>
+                  <TimeSeriesChart
+                    rows={trendRows}
+                    seriesLabel="فروش ناخالص"
+                    valueText={tomanText}
+                    heightClass="h-44"
+                    yAxisWidth={64}
+                    gradientId="product-drawer-trend-fill"
+                  />
                 </div>
-              )}
+              ) : null}
 
               <div className="rounded-2xl border border-neutral-100 bg-white p-3">
                 <p className="mb-3 text-sm font-medium text-neutral-600">عملکرد تنوع‌ها</p>

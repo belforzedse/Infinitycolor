@@ -44,6 +44,11 @@ export function positiveAdminInteger(value: unknown, fallback: number): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** Escape LIKE/ILIKE wildcards so a search term matches literally (Postgres default `\` escape). */
+export function escapeAdminLike(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
 export function rejectAdminListRequest(ctx: any, message: string): null {
   ctx.badRequest(message);
   return null;

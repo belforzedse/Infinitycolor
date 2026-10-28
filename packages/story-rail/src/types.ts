@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { StoryMediaIssueReporter } from "./media/playback-store";
 
 export type StoryRailMediaType = "image" | "video";
 
@@ -9,6 +10,10 @@ export interface StoryRailMediaAsset {
   width?: number;
   height?: number;
   mime?: string;
+  /** Generated video poster (set by the media worker). */
+  previewUrl?: string | null;
+  /** Upload-row metadata; `video` carries the media worker's delivery outputs. */
+  provider_metadata?: unknown;
   formats?: {
     large?: { url: string };
     medium?: { url: string };
@@ -17,17 +22,49 @@ export interface StoryRailMediaAsset {
   };
 }
 
+export interface StoryRailOverlay {
+  id: string;
+  type: "text" | "sticker" | "shape";
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  content?: string;
+  fontSize?: number;
+  fontColor?: string;
+  fontFamily?: string;
+  imageUrl?: string;
+}
+
+export interface StoryRailItem {
+  id?: number;
+  Key: string;
+  MediaType: StoryRailMediaType;
+  Media?: StoryRailMediaAsset;
+  Thumbnail?: StoryRailMediaAsset;
+  DurationMs: number;
+  CtaLabel?: string | null;
+  CtaUrl?: string | null;
+  Overlays?: StoryRailOverlay[];
+}
+
 export interface StoryRailStory {
   id: number;
   Title: string;
+  Items?: StoryRailItem[];
+  /** One-release compatibility mirror used only when Items is absent. */
   MediaType: StoryRailMediaType;
   Media?: StoryRailMediaAsset;
+  /** Story-level rail cover. */
   Thumbnail?: StoryRailMediaAsset;
   DurationMs: number;
   CtaUrl?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
+
+export type StorySeenItems = ReadonlyMap<number, ReadonlySet<string>>;
 
 export type ResolveStoryMediaUrl = (url: string) => string;
 
@@ -61,9 +98,11 @@ export type StoryRailMobileLayout = "card" | "avatar";
 
 export interface StoriesAvatarListProps<TStory extends StoryRailStory = StoryRailStory> {
   stories: TStory[];
-  seenIds: Set<number>;
+  seenIds?: Set<number>;
+  seenItems?: StorySeenItems;
   onAvatarClick: (index: number) => void;
   resolveMediaUrl: ResolveStoryMediaUrl;
+  dir?: "rtl" | "ltr";
   mobileLayout?: StoryRailMobileLayout;
   renderMobileBadge?: (args: StoryRailMobileBadgeRenderArgs<TStory>) => ReactNode;
   emptyPreviewLabel?: string;
@@ -72,20 +111,42 @@ export interface StoriesAvatarListProps<TStory extends StoryRailStory = StoryRai
 
 export interface StoriesViewerModalProps<TStory extends StoryRailStory = StoryRailStory> {
   stories: TStory[];
-  seenIds: Set<number>;
+  seenIds?: Set<number>;
+  seenItems?: StorySeenItems;
   isOpen: boolean;
   initialIndex: number;
   onClose: () => void;
-  onStoryView: (storyId: number) => void;
+  onStoryView: (storyId: number, itemKey: string) => void;
   resolveMediaUrl: ResolveStoryMediaUrl;
   unavailableText?: string;
   classNames?: StoryViewerClassNames;
+  dir?: "rtl" | "ltr";
+  labels?: StoryViewerLabels;
+  /** Where playback failures go (Sentry, analytics). Unset: logged in development only. */
+  onMediaIssue?: StoryMediaIssueReporter;
+}
+
+export interface StoryViewerLabels {
+  dialog: (title: string) => string;
+  close: string;
+  description: string;
+  progress: (percent: number) => string;
+  announcement: (current: number, total: number, title: string) => string;
+  mediaFailure: string;
+  retry: string;
+  mute: string;
+  unmute: string;
+  /** Tap-to-play control shown when the browser refuses even muted autoplay. */
+  play?: string;
+  /** Shown over the poster while a just-uploaded video is still being converted. */
+  processing?: string;
 }
 
 export interface StoryRailProps<TStory extends StoryRailStory = StoryRailStory> {
   stories: TStory[];
-  seenIds: Set<number>;
-  onMarkSeen: (storyId: number) => void | Promise<void>;
+  seenIds?: Set<number>;
+  seenItems?: StorySeenItems;
+  onMarkSeen: (storyId: number, itemKey: string) => void | Promise<void>;
   resolveMediaUrl: ResolveStoryMediaUrl;
   heading?: ReactNode;
   headingId?: string;
@@ -97,6 +158,9 @@ export interface StoryRailProps<TStory extends StoryRailStory = StoryRailStory> 
   renderMobileBadge?: (args: StoryRailMobileBadgeRenderArgs<TStory>) => ReactNode;
   emptyPreviewLabel?: string;
   unavailableText?: string;
+  viewerLabels?: StoryViewerLabels;
+  /** Where playback failures go (Sentry, analytics). Unset: logged in development only. */
+  onMediaIssue?: StoryMediaIssueReporter;
   /**
    * Show previous/next buttons over the rail when it overflows. Opt-in so the
    * existing rails keep their current look. Pointer-only: touch users swipe,

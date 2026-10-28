@@ -1,4 +1,11 @@
-import type { ResolveStoryMediaUrl, StoryRailPreview, StoryRailStory } from "./types";
+import { readVideoDelivery } from "@repo/video-player";
+import type {
+  ResolveStoryMediaUrl,
+  StoryRailItem,
+  StoryRailPreview,
+  StoryRailStory,
+  StorySeenItems,
+} from "./types";
 
 export function getStorySortTimestamp(story: StoryRailStory): number {
   const value = story.updatedAt || story.createdAt;
@@ -55,21 +62,33 @@ export function isSupportedVideoUrl(url: string): boolean {
   return /\.(m3u8|mov|mp4|m4v|ogg|ogv|webm)(?:[?#].*)?$/i.test(url);
 }
 
-export function isImageStory(story: StoryRailStory): boolean {
-  const mediaUrl = story.Media?.url;
-  if (story.MediaType !== "image" || !hasUsableMediaUrl(mediaUrl)) return false;
-  const mime = story.Media?.mime;
+export function getStoryItems(story: StoryRailStory): StoryRailItem[] {
+  if (Array.isArray(story.Items) && story.Items.length) return story.Items;
+  return [{
+    Key: `legacy:${story.id}`,
+    MediaType: story.MediaType,
+    Media: story.Media,
+    Thumbnail: story.Thumbnail,
+    DurationMs: story.DurationMs,
+    CtaUrl: story.CtaUrl,
+  }];
+}
+
+export function isImageStory(item: StoryRailItem): boolean {
+  const mediaUrl = item.Media?.url;
+  if (item.MediaType !== "image" || !hasUsableMediaUrl(mediaUrl)) return false;
+  const mime = item.Media?.mime;
   return mime ? mime.startsWith("image/") : isSupportedImageUrl(mediaUrl);
 }
 
-export function isVideoStory(story: StoryRailStory): boolean {
-  const mediaUrl = story.Media?.url;
-  if (story.MediaType !== "video" || !hasUsableMediaUrl(mediaUrl)) return false;
-  const mime = story.Media?.mime;
+export function isVideoStory(item: StoryRailItem): boolean {
+  const mediaUrl = item.Media?.url;
+  if (item.MediaType !== "video" || !hasUsableMediaUrl(mediaUrl)) return false;
+  const mime = item.Media?.mime;
   return mime ? mime.startsWith("video/") : isSupportedVideoUrl(mediaUrl);
 }
 
-function getPreviewImageUrl(media?: StoryRailStory["Media"]): string | undefined {
+function getPreviewImageUrl(media?: StoryRailItem["Media"]): string | undefined {
   return (
     media?.formats?.thumbnail?.url ||
     media?.formats?.small?.url ||
@@ -82,24 +101,40 @@ export function getStoryRailPreview(
   story: StoryRailStory,
   resolveMediaUrl: ResolveStoryMediaUrl,
 ): StoryRailPreview {
-  const thumbnailUrl = getPreviewImageUrl(story.Thumbnail);
+  const items = getStoryItems(story);
+  const first = items[0];
+  const thumbnailUrl = getPreviewImageUrl(story.Thumbnail) ?? getPreviewImageUrl(first?.Thumbnail);
   if (thumbnailUrl) {
     return { mode: "image", url: resolveMediaUrl(thumbnailUrl) };
   }
 
-  const mediaUrl = story.Media?.url;
-  if (!mediaUrl) return { mode: "empty" };
-
-  if (story.MediaType === "video" && isVideoStory(story)) {
-    return { mode: "empty" };
+  const imageItem = items.find(isImageStory);
+  const mediaUrl = imageItem?.Media?.url;
+  if (mediaUrl) {
+    return { mode: "image", url: resolveMediaUrl(getPreviewImageUrl(imageItem?.Media) ?? mediaUrl) };
   }
 
-  if (story.MediaType === "image" && isImageStory(story)) {
-    return {
-      mode: "image",
-      url: resolveMediaUrl(getPreviewImageUrl(story.Media) ?? mediaUrl),
-    };
-  }
+  // A video story with no admin thumbnail: the media worker's generated poster.
+  const poster = items.map((item) => (isVideoStory(item) ? readVideoDelivery(item.Media)?.poster : null)).find(Boolean);
+  return poster ? { mode: "image", url: resolveMediaUrl(poster) } : { mode: "empty" };
+}
 
-  return { mode: "empty" };
+export function isStoryFullySeen(
+  story: StoryRailStory,
+  seenItems?: StorySeenItems,
+  legacySeenIds?: ReadonlySet<number>,
+): boolean {
+  if (!seenItems) return legacySeenIds?.has(story.id) ?? false;
+  const seen = seenItems.get(story.id);
+  if (!seen) return false;
+  return getStoryItems(story).every((item) => seen.has(item.Key));
+}
+
+export function firstUnseenItemIndex(story: StoryRailStory | undefined, seenItems?: StorySeenItems): number {
+  if (!story) return 0;
+  if (!seenItems) return 0;
+  const seen = seenItems.get(story.id);
+  if (!seen) return 0;
+  const index = getStoryItems(story).findIndex((item) => !seen.has(item.Key));
+  return index < 0 ? 0 : index;
 }

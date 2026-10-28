@@ -1,4 +1,10 @@
-import { applyStoryCtaMutation, normalizeStoryCtaUrl, STORY_CTA_LABEL } from "../story-cta";
+import {
+  applyStoryCtaMutation,
+  normalizeStoryCtaUrl,
+  STORY_CTA_LABEL,
+  STORY_CTA_URL_MAX_LENGTH,
+  StoryCtaValidationError,
+} from "../story-cta";
 
 describe("story CTA", () => {
   it.each([
@@ -17,6 +23,33 @@ describe("story CTA", () => {
     "https://user:secret@example.com",
   ])("rejects unsafe destination %s", (value) => {
     expect(() => normalizeStoryCtaUrl(value)).toThrow();
+  });
+
+  it("stores Persian paths percent-encoded and leaves encoded input unchanged", () => {
+    const encoded = "/pdp/%DA%A9%D9%84%D8%A7%D9%87-%D8%A8%D8%A7%DA%A9%D8%AA";
+
+    expect(normalizeStoryCtaUrl("/pdp/کلاه-باکت")).toBe(encoded);
+    expect(normalizeStoryCtaUrl(encoded)).toBe(encoded);
+  });
+
+  it("accepts encoded links longer than 255 characters", () => {
+    const value = `https://infinitycolor.co/pdp/${"%DA%A9".repeat(60)}`;
+
+    expect(value.length).toBeGreaterThan(255);
+    expect(normalizeStoryCtaUrl(value)).toBe(value);
+  });
+
+  it("rejects links that exceed the column only after encoding", () => {
+    const value = `/pdp/${"ک".repeat(400)}`;
+
+    expect(value.length).toBeLessThanOrEqual(STORY_CTA_URL_MAX_LENGTH);
+    expect(() => normalizeStoryCtaUrl(value)).toThrow(StoryCtaValidationError);
+  });
+
+  it("rejects raw input longer than the column", () => {
+    expect(() => normalizeStoryCtaUrl(`/pdp/${"a".repeat(STORY_CTA_URL_MAX_LENGTH)}`)).toThrow(
+      StoryCtaValidationError,
+    );
   });
 
   it("sets the fixed button label when a destination is present", () => {

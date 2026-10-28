@@ -67,8 +67,20 @@ const DELIVERY_ROW = {
   last_sent_at: "2026-08-09T09:59:00.000Z",
 };
 
+const SERIES_ROWS = [
+  { bucket: "2026-09-15", gross: "600000", units: "3", orders_count: "2", discounts: "20000", refund_irr: "0", shipping: "80000" },
+  { bucket: "2026-09-17", gross: "400000", units: "1", orders_count: "1", discounts: "30000", refund_irr: "2400000", shipping: "40000" },
+];
+
+const WEEKDAY_ROWS = [
+  { dow: 5, hour: 22, count: "4" },
+  { dow: 1, hour: 10, count: "1" },
+];
+
 function rawRouter(sql: string) {
   if (sql.includes("SUM(line_gross) FROM itemized")) return { rows: [PERIOD_ROW] };
+  if (sql.includes("items_b")) return { rows: SERIES_ROWS };
+  if (sql.includes("EXTRACT(DOW")) return { rows: WEEKDAY_ROWS };
   if (sql.includes("FROM analytics_outbox")) return { rows: [DELIVERY_ROW] };
   return { rows: [] };
 }
@@ -169,6 +181,58 @@ describe("report.overview", () => {
     // empty window, end before start.
     expect(ctx.body.data.range).toEqual({ start: "2026-09-14", end: "2026-09-30" });
     expect(ctx.body.data.previous).toEqual({ start: "2026-09-14", end: "2026-09-13" });
+  });
+
+  it("adds the same figures per Tehran day, with empty days as true zeros", async () => {
+    const controller = loadController();
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-20" } });
+
+    await controller.overview(ctx);
+
+    const { series } = ctx.body.data;
+    expect(series.grouping).toBe("day");
+    expect(series.points.map((point: { bucket: string }) => point.bucket)).toEqual([
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+    ]);
+    // Gross carries shipping like the KPI; net is lines - discounts - refunds (IRR -> Toman).
+    expect(series.points[1]).toEqual({
+      bucket: "2026-09-15",
+      gross: 680_000,
+      shipping: 80_000,
+      net: 580_000,
+      units: 3,
+      orders: 2,
+      discounts: 20_000,
+      refunds: 0,
+    });
+    expect(series.points[3]).toMatchObject({ gross: 440_000, net: 130_000, refunds: 240_000 });
+    expect(series.points[0]).toMatchObject({ gross: 0, orders: 0 });
+  });
+
+  it("adds when paid orders are placed as a Tehran weekday × hour grid", async () => {
+    const controller = loadController();
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-27" } });
+
+    await controller.overview(ctx);
+
+    const { weekly } = ctx.body.data;
+    expect(weekly.timezone).toBe("Asia/Tehran");
+    expect(weekly.firstDay).toBe("sunday");
+    expect(weekly.counts).toHaveLength(7);
+    expect(weekly.counts[5][22]).toBe(4);
+    expect(weekly.counts[1][10]).toBe(1);
+    expect(weekly.counts[0][0]).toBe(0);
+    // 14–27 Sep 2026: two of every weekday.
+    expect(weekly.days).toEqual([2, 2, 2, 2, 2, 2, 2]);
+    const raw = (global as any).strapi.db.connection.raw as jest.Mock;
+    const gridSql = raw.mock.calls.map(([sql]: [string]) => sql).find((sql: string) => sql.includes("EXTRACT(DOW"));
+    expect(gridSql).toContain("AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Tehran'");
   });
 
   it("keeps behavioral reporting in its purpose-specific workspace", async () => {

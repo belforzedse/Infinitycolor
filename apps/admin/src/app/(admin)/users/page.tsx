@@ -12,15 +12,14 @@ import {
 } from "@/services/super-admin/users/list";
 import { useQueryState } from "nuqs";
 import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
+import { useAdvancedFiltersUrlState } from "@/components/SuperAdmin/Table/advancedFiltersUrlState";
 
 export default function UsersPage() {
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [managerRolesOnly, setManagerRolesOnly] = useState(false);
-  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
-    [],
-  );
+  const [advancedFilters, setAdvancedFilters] = useAdvancedFiltersUrlState();
   const [recycleCount, setRecycleCount] = useState(0);
   const [recycleCountError, setRecycleCountError] = useState(false);
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
@@ -32,10 +31,17 @@ export default function UsersPage() {
     void setPage("1");
   }, 500);
 
-  // Trigger debounced search when searchQuery changes
+  // Trigger debounced search when searchQuery changes. Nothing to do when it
+  // matches the applied search (including on mount): the search resets the
+  // page, and a URL write on mount would undo a reloaded ?page= and can
+  // cancel a <Link> navigation already under way.
   useEffect(() => {
+    if (searchQuery === debouncedSearchQuery) {
+      debouncedSearch.cancel();
+      return;
+    }
     debouncedSearch(searchQuery);
-  }, [searchQuery, debouncedSearch]);
+  }, [searchQuery, debouncedSearchQuery, debouncedSearch]);
 
   // Cancel any pending debounced calls on unmount
   useEffect(() => {
@@ -94,12 +100,10 @@ export default function UsersPage() {
     [setPage],
   );
 
+  // Writes the filters and page 1 in one URL update.
   const handleFiltersChange = useCallback(
-    (next: AdvancedFilterItem[]) => {
-      setAdvancedFilters(next);
-      void setPage("1");
-    },
-    [setPage],
+    (next: AdvancedFilterItem[]) => setAdvancedFilters(next),
+    [setAdvancedFilters],
   );
 
   return (

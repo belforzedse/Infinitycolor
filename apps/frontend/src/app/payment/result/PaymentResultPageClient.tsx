@@ -14,6 +14,13 @@ import { useCart } from "@/contexts/CartContext";
 import { currentOrderContextAtom } from "@/atoms/issueReportContext";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 import { translateOrderStatus } from "@/utils/statusTranslations";
+import {
+  clearCheckoutIdentity,
+  clearContinuableCheckoutIdentity,
+  readContinuableCheckoutIdentity,
+} from "@/lib/checkout-identity";
+import { formatHoldDeadline } from "@/utils/walletHolds";
+import { reportPaymentResult, reportPaymentUnresolved } from "./paymentResultAnalytics";
 
 const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled", "Expired"]);
 const PAID_ORDER_STATUSES = new Set(["Started", "Shipment", "Done"]);
@@ -42,16 +49,38 @@ const isAuthoritativePaid = (
  * payment is dead. Until the shopper says so, that credit stays committed for
  * up to the reservation defer ceiling. This is the shopper saying so.
  */
+/** A SnappPay hold is the only one the shopper's own claim can shorten. */
+const MANUAL_RELEASE_GRACE_MS = 2 * 60 * 1000;
+
 const canReleaseHeldWallet = (
   result: OrderPaymentStatusResponse | null,
-): boolean =>
-  Boolean(
-    result &&
-      result.walletHoldStatus === "Active" &&
-      !isAuthoritativePaid(result) &&
-      result.paymentStatus &&
-      !TERMINAL.has(result.paymentStatus),
-  );
+): boolean => {
+  if (
+    !result ||
+    result.walletHoldStatus !== "Active" ||
+    isAuthoritativePaid(result) ||
+    !result.paymentStatus ||
+    TERMINAL.has(result.paymentStatus)
+  ) {
+    return false;
+  }
+  // Hidden for every gateway whose abandon call does nothing: the server
+  // answers `not_applicable` for those, and a button that silently fails is
+  // worse than no button.
+  if (resolvePaymentGateway(result.paymentGateway)?.key !== "snappay") return false;
+  // Only where the claim can actually authorize a revert.
+  if (result.walletHoldState && result.walletHoldState !== "reclaimable") return false;
+  // A shopper who was redirected seconds ago is probably still paying. Offering
+  // to cancel their payment at that moment invites them to cancel a payment
+  // they are about to complete.
+  if (result.walletHeldAt) {
+    const heldAtMs = new Date(result.walletHeldAt).getTime();
+    if (Number.isFinite(heldAtMs) && Date.now() - heldAtMs < MANUAL_RELEASE_GRACE_MS) {
+      return false;
+    }
+  }
+  return true;
+};
 
 const pollDelayMs = (checksCompleted: number, snappay: boolean): number => {
   if (!snappay || checksCompleted < 8) return POLL_INTERVAL_MS;
@@ -130,6 +159,10 @@ export default function PaymentResultPageClient() {
     searchParams.get("resNum") ||
     searchParams.get("order");
   const orderId = Number(orderIdParam);
+  // Set by the backend callback redirect; only refines a non-paid outcome into
+  // "cancelled" for analytics, never decides whether the order was paid.
+  const resultHintRef = useRef(searchParams.get("resultHint"));
+  const latestResultRef = useRef<OrderPaymentStatusResponse | null>(null);
   const [result, setResult] = useState<OrderPaymentStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -151,6 +184,7 @@ export default function PaymentResultPageClient() {
 
   useEffect(() => {
     hasResultRef.current = result !== null;
+    latestResultRef.current = result;
   }, [result]);
 
   // Set as early as possible -- before the status fetch below, which is
@@ -206,6 +240,7 @@ export default function PaymentResultPageClient() {
                 skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
               );
         setResult(next);
+        reportPaymentResult(next, { resultHint: resultHintRef.current });
         if (isAbandon) {
           // The server decides whether the claim was recorded: a shopper whose
           // own successful return already reached us is refused, and must not be
@@ -281,6 +316,7 @@ export default function PaymentResultPageClient() {
           skipGlobalLoader: true,
         });
         setResult(next);
+        reportPaymentResult(next, { resultHint: resultHintRef.current });
         await applyPaidSideEffects(next, () => clearCartRef.current());
       } catch (err) {
         if (isRateLimited(err)) return;
@@ -313,7 +349,11 @@ export default function PaymentResultPageClient() {
 
     const runTick = () => {
       if (cancelled) return;
-      if (Date.now() - startedAt > budgetMs) return;
+      if (Date.now() - startedAt > budgetMs) {
+        // Polling gives up here; the shopper is left on the "checking" card.
+        reportPaymentUnresolved(latestResultRef.current);
+        return;
+      }
       if (typeof document !== "undefined" && document.hidden) {
         schedule(pollDelayMs(checks, isSnappayResult));
         return;
@@ -381,6 +421,26 @@ export default function PaymentResultPageClient() {
         icon: Clock3,
       };
     }
+    // A wallet split whose credit is still committed. The one thing the shopper
+    // needs told is that the money comes back by itself, and by when — that is
+    // the whole customer-visible defect this recovery work exists to fix.
+    // Without it the balance simply looks smaller and nothing explains why.
+    if (walletStillHeld && !paid) {
+      const deadline = formatHoldDeadline(result?.walletHoldBoundAt);
+      return {
+        title: "در انتظار تعیین وضعیت پرداخت",
+        message: isSnappayResult
+          ? `اگر پرداخت را کامل نکرده‌اید، اعتبار کیف پول شما پس از تأیید اسنپ‌پی به‌طور خودکار آزاد می‌شود (معمولاً ظرف ۳۰ دقیقه)${
+              deadline ? ` و حداکثر تا ساعت ${deadline}` : ""
+            }. نیازی به هیچ اقدامی نیست و دوباره پرداخت نکنید.`
+          : `اعتبار کیف پول شما برای این پرداخت رزرو شده است و در صورت ناموفق بودن پرداخت به‌طور خودکار آزاد می‌شود${
+              deadline ? ` (حداکثر تا ساعت ${deadline})` : ""
+            }. نیازی به هیچ اقدامی نیست.`,
+        tone: "border-amber-200 bg-amber-50 text-amber-950",
+        iconTone: "bg-amber-100 text-amber-700",
+        icon: Clock3,
+      };
+    }
     switch (result?.paymentStatus) {
       case "Succeeded":
         return {
@@ -434,6 +494,23 @@ export default function PaymentResultPageClient() {
   }, [paid, result?.paymentStatus, isSnappayResult, walletStillHeld]);
 
   const returnToCart = () => {
+    // Clear the whole stored checkout identity, not two legacy keys.
+    //
+    // Leaving the attempt, quote, order, gateway and signature behind meant the
+    // next checkout did not name this attempt as its predecessor, so the
+    // supersession path — the one that hands the shopper their own held credit
+    // straight back — never ran, and the money waited for the reservation
+    // sweep instead.
+    clearCheckoutIdentity();
+    // The *continuable* set is only cleared when it names this very attempt,
+    // mirroring `abandonDeadCheckoutHold` in the cart. A shopper can have a
+    // second checkout in flight, and wiping its resume state because they left
+    // an unrelated result page would strand it.
+    const finishedAttemptId = String(result?.attemptId || "").trim();
+    const continuable = readContinuableCheckoutIdentity();
+    if (finishedAttemptId && continuable?.attemptId === finishedAttemptId) {
+      clearContinuableCheckoutIdentity();
+    }
     window.localStorage.removeItem("pendingCheckoutAttemptId");
     window.localStorage.removeItem("pendingPaymentAttemptId");
     router.push("/cart");

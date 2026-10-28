@@ -29,7 +29,7 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
     if (!userId) return;
 
     const selectedGateway = normalizeCheckoutGatewayCode(gateway);
-    if (!selectedGateway || !(await isCheckoutGatewayEnabled(strapi, selectedGateway))) {
+    if (!selectedGateway || !(await isCheckoutGatewayEnabled(strapi, selectedGateway, userId))) {
       return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
         data: { success: false, errorCode: "PAYMENT_GATEWAY_DISABLED" },
       });

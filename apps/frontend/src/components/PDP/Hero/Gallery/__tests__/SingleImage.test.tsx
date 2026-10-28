@@ -90,6 +90,17 @@ describe("PDP gallery active medium", () => {
   });
 
   it("attaches Economy video only after play and preserves user-started media on downgrade", async () => {
+    // An observer that never reports: the clip has not been scrolled into view, so only
+    // an explicit play may attach the source.
+    const originalObserver = window.IntersectionObserver;
+    window.IntersectionObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    } as unknown as typeof IntersectionObserver;
     mockQuality = {
       ...mockQuality,
       rendering: "enhanced",
@@ -130,6 +141,7 @@ describe("PDP gallery active medium", () => {
       />,
     );
     expect(video).toHaveAttribute("src", "/media/product.mp4");
+    window.IntersectionObserver = originalObserver;
   });
 
   it("falls back to the poster when the clip plays with no decoded frames", async () => {

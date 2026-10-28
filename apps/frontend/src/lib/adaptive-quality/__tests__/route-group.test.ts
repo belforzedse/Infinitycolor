@@ -5,6 +5,7 @@ describe("adaptive telemetry route groups", () => {
     ["/", false, "home"],
     ["/plp", false, "plp"],
     ["/plp", true, "search"],
+    ["/offer", false, "plp"],
     ["/categories/shoes", true, "search"],
     ["/pdp/example", false, "pdp"],
     ["/cart", false, "cart"],

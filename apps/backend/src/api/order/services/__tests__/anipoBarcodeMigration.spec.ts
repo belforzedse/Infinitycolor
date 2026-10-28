@@ -1,4 +1,5 @@
 const migration = require("../../../../../database/migrations/2026.09.01T15.30.00.repair-anipo-order-schema-drift.js");
+const barcodeDataMigration = require("../../../../../database/migrations/2026.09.26T12.00.00.add-anipo-barcode-data.js");
 
 function createFakeKnex(tableExists = true) {
   const columns = new Set<string>();
@@ -30,6 +31,11 @@ function createFakeKnex(tableExists = true) {
       return chain;
     }),
     text: jest.fn((name: string) => {
+      columns.add(name);
+      addedColumns.push(name);
+      return chain;
+    }),
+    jsonb: jest.fn((name: string) => {
       columns.add(name);
       addedColumns.push(name);
       return chain;
@@ -81,5 +87,13 @@ describe("Anipo order schema drift repair migration", () => {
     await migration.up(knex);
 
     expect(knex.schema.alterTable).not.toHaveBeenCalled();
+  });
+
+  it("adds barcode data once without removing historical tracking columns", async () => {
+    const { knex, addedColumns } = createFakeKnex();
+    await barcodeDataMigration.up(knex);
+    await barcodeDataMigration.up(knex);
+    expect(addedColumns).toEqual(["anipo_barcode_data"]);
+    expect(knex.schema.alterTable).toHaveBeenCalledTimes(1);
   });
 });

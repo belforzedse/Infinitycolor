@@ -18,7 +18,7 @@ describe("notifyAnipoParcelCancelled", () => {
     return {
       service: jest.fn(() => ({ updateOrderStatus })),
       db: {
-        query: jest.fn(() => ({ update: orderUpdate })),
+        query: jest.fn(() => ({ update: orderUpdate, findOne: jest.fn().mockResolvedValue({ id: 41 }) })),
       },
       log: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
     } as any;

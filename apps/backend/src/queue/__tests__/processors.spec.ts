@@ -1,10 +1,19 @@
+import path from "node:path";
+
 jest.mock(
   "bullmq",
   () => ({
-    UnrecoverableError: class UnrecoverableError extends Error {},
+    UnrecoverableError: class UnrecoverableError extends Error {
+      name = "UnrecoverableError";
+    },
+    DelayedError: class DelayedError extends Error {
+      name = "DelayedError";
+    },
   }),
   { virtual: true },
 );
+
+jest.mock("../../jobs/dispatchShippingSms", () => ({ dispatchDueShippingSms: jest.fn() }));
 
 jest.mock("../../jobs/expireStockReservations", () => ({
   runExpireStockReservationsTick: jest.fn(),
@@ -15,6 +24,9 @@ jest.mock("../../jobs/expireReserveOrders", () => ({
 jest.mock("../../jobs/publishScheduledProducts", () => ({
   processScheduledProductPublicationJob: jest.fn(),
   runScheduledProductsReconciliation: jest.fn(),
+}));
+jest.mock("../../jobs/purgeExpiredTrashedProducts", () => ({
+  runTrashRetentionSweep: jest.fn(),
 }));
 jest.mock("../../api/payment-gateway/services/snappay-orchestrator", () => ({
   processSnappayOperation: jest.fn(),
@@ -28,6 +40,7 @@ jest.mock("../../jobs/analyticsOutboxRepair", () => ({
 }));
 jest.mock("../../api/order/services/anipoBarcodeWorkflow", () => ({
   runAnipoBarcodeReconciliation: jest.fn(),
+  processAnipoRegistrationJob: jest.fn(),
 }));
 jest.mock("../../api/order/services/anipoRecipientSync", () => ({
   processAnipoRecipientSync: jest.fn(),
@@ -65,7 +78,10 @@ import {
 } from "../../api/payment-gateway/services/snappay-orchestrator";
 import { runAnalyticsDailyRollupTick } from "../../jobs/analyticsDailyRollup";
 import { runAnalyticsOutboxRepairTick } from "../../jobs/analyticsOutboxRepair";
-import { runAnipoBarcodeReconciliation } from "../../api/order/services/anipoBarcodeWorkflow";
+import {
+  processAnipoRegistrationJob,
+  runAnipoBarcodeReconciliation,
+} from "../../api/order/services/anipoBarcodeWorkflow";
 import {
   processAnipoRecipientSync,
   runAnipoRecipientSyncReconciliation,
@@ -97,10 +113,9 @@ const mockedRunAnalyticsDailyRollupTick = runAnalyticsDailyRollupTick as jest.Mo
 const mockedRunAnalyticsOutboxRepairTick = runAnalyticsOutboxRepairTick as jest.MockedFunction<
   typeof runAnalyticsOutboxRepairTick
 >;
-const mockedRunAnipoBarcodeReconciliation =
-  runAnipoBarcodeReconciliation as jest.MockedFunction<
-    typeof runAnipoBarcodeReconciliation
-  >;
+const mockedRunAnipoBarcodeReconciliation = runAnipoBarcodeReconciliation as jest.MockedFunction<
+  typeof runAnipoBarcodeReconciliation
+>;
 const mockedProcessAnipoRecipientSync = processAnipoRecipientSync as jest.MockedFunction<
   typeof processAnipoRecipientSync
 >;
@@ -132,6 +147,16 @@ function createMockStrapi() {
 }
 
 describe("queue processors", () => {
+  it("dispatches due shipping messages through the commerce worker", async () => {
+    const { dispatchDueShippingSms } = await import("../../jobs/dispatchShippingSms");
+    const strapi = createMockStrapi();
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch,
+      data: {},
+    } as any);
+    expect(dispatchDueShippingSms).toHaveBeenCalledWith(strapi);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -201,6 +226,21 @@ describe("queue processors", () => {
     expect(mockedRunScheduledProductsReconciliation).toHaveBeenCalledWith(strapi);
   });
 
+  it("dispatches the product Trash retention sweep", async () => {
+    const strapi = createMockStrapi();
+    const { runTrashRetentionSweep } = jest.requireMock("../../jobs/purgeExpiredTrashedProducts");
+    runTrashRetentionSweep.mockResolvedValue({ status: "disabled" });
+
+    await expect(
+      processMaintenanceJob(strapi, {
+        name: COMMERCE_MAINTENANCE_JOBS.productTrashRetention,
+        data: {},
+      } as any),
+    ).resolves.toEqual({ status: "disabled" });
+
+    expect(runTrashRetentionSweep).toHaveBeenCalledWith(strapi);
+  });
+
   it("dispatches Anipo barcode reconciliation jobs", async () => {
     const strapi = createMockStrapi();
     mockedRunAnipoBarcodeReconciliation.mockResolvedValue({ status: "completed" } as any);
@@ -213,6 +253,18 @@ describe("queue processors", () => {
 
     expect(mockedRunAnipoBarcodeReconciliation).toHaveBeenCalledWith(strapi);
     expect(mockedRunAnipoRecipientSyncReconciliation).toHaveBeenCalledWith(strapi);
+  });
+
+  it("dispatches a single Anipo registration with the worker retry budget", async () => {
+    const strapi = createMockStrapi();
+    (processAnipoRegistrationJob as jest.Mock).mockResolvedValue({ state: "Pending" });
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.anipoRegisterOne,
+      data: { orderId: 42 },
+      attemptsMade: 1,
+      opts: { attempts: 5 },
+    } as any);
+    expect(processAnipoRegistrationJob).toHaveBeenCalledWith(strapi, 42, 2, 5);
   });
 
   it("dispatches one Anipo recipient synchronization", async () => {
@@ -312,7 +364,7 @@ describe("queue processors", () => {
     expect(mockedProcessSnappayOperation).not.toHaveBeenCalled();
   });
 
-  it("normalizes a product gallery clip and clears the PDP origin caches", async () => {
+  it("normalizes a product gallery clip with job context; cache clearing belongs to the pipeline", async () => {
     const strapi = createMockStrapi();
     mockedNormalizeProductVideoFile.mockResolvedValue({
       productId: 4624,
@@ -322,36 +374,55 @@ describe("queue processors", () => {
     } as any);
 
     await processMaintenanceJob(strapi, {
+      id: "normalize-product-video-120001",
       name: MEDIA_JOBS.normalizeProductVideo,
       data: { productId: 4624, fileId: 120001 },
+      attemptsMade: 1,
     } as any);
 
     expect(mockedNormalizeProductVideoFile).toHaveBeenCalledWith(4624, 120001, {
       strapi,
-      uploadsDir: "/app/public/uploads",
+      uploadsDir: path.join("/app/public", "uploads"),
+      jobId: "normalize-product-video-120001",
+      attempt: 2,
     });
-    expect(mockedClearProductOriginCaches).toHaveBeenCalledWith(
-      strapi,
-      "fantasy-sleeping-set-n002",
-      { availabilityCrossed: false, logPrefix: "product-video-normalize" },
-    );
+    // The pipeline clears the product's caches on every row switch, whichever job ran it.
+    expect(mockedClearProductOriginCaches).not.toHaveBeenCalled();
   });
 
-  it("does not revalidate when the gallery clip was already web-safe", async () => {
+  it("delays, without spending an attempt, when another worker holds the file", async () => {
     const strapi = createMockStrapi();
-    mockedNormalizeProductVideoFile.mockResolvedValue({
-      productId: 1,
-      slug: "already-safe",
-      status: "skipped",
-      files: [{ fileId: 9, status: "skipped" }],
-    } as any);
+    const { MediaBusyError } = jest.requireActual("../../services/media/normalize-upload-video");
+    mockedNormalizeProductVideoFile.mockRejectedValue(new MediaBusyError(9));
+    const moveToDelayed = jest.fn(async () => undefined);
 
-    await processMaintenanceJob(strapi, {
-      name: MEDIA_JOBS.normalizeProductVideo,
-      data: { productId: 1, fileId: 9 },
-    } as any);
+    await expect(
+      processMaintenanceJob(
+        strapi,
+        {
+          id: "j",
+          name: MEDIA_JOBS.normalizeProductVideo,
+          data: { productId: 1, fileId: 9 },
+          moveToDelayed,
+        } as any,
+        "lock-token",
+      ),
+    ).rejects.toMatchObject({ name: "DelayedError" });
+    expect(moveToDelayed).toHaveBeenCalledWith(expect.any(Number), "lock-token");
+  });
 
-    expect(mockedClearProductOriginCaches).not.toHaveBeenCalled();
+  it("fails permanently on an upload re-running cannot fix", async () => {
+    const strapi = createMockStrapi();
+    const { MediaProcessingError } = jest.requireActual("../../services/media/media-process");
+    mockedNormalizeProductVideoFile.mockRejectedValue(
+      new MediaProcessingError("no_video_stream", "the file has no video stream"),
+    );
+    await expect(
+      processMaintenanceJob(strapi, {
+        name: MEDIA_JOBS.normalizeProductVideo,
+        data: { productId: 1, fileId: 9 },
+      } as any),
+    ).rejects.toMatchObject({ name: "UnrecoverableError" });
   });
 
   it("fails permanently when ffmpeg is missing rather than retrying the transcode", async () => {

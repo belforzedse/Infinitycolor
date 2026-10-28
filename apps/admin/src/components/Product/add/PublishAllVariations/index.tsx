@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { apiClient } from "@/services";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 import toast from "react-hot-toast";
 import EditIcon from "@/components/User/Icons/EditIcon";
 
@@ -22,6 +22,7 @@ export default function PublishAllVariations({
   productId,
   refreshKey = 0,
 }: PublishAllVariationsProps) {
+  const { client: apiClient, canEdit } = useProductEditor();
   const [isLoading, setIsLoading] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [variations, setVariations] = useState<Variation[]>([]);
@@ -89,6 +90,7 @@ export default function PublishAllVariations({
   }, [productId, refreshKey]);
 
   const handlePublishAll = async () => {
+    if (!canEdit) return;
     if (!productId || variations.length === 0) {
       toast.error("هیچ تنوعی برای این محصول یافت نشد");
       return;
@@ -135,6 +137,7 @@ export default function PublishAllVariations({
   };
 
   const handleUnpublishAll = async () => {
+    if (!canEdit) return;
     if (!productId || variations.length === 0) {
       toast.error("هیچ تنوعی برای این محصول یافت نشد");
       return;
@@ -205,7 +208,7 @@ export default function PublishAllVariations({
               {publishedCount < totalCount && (
                 <button
                   onClick={handlePublishAll}
-                  disabled={isPublishing}
+                  disabled={isPublishing || !canEdit}
                   className="w-full rounded-xl bg-green-500/10 hover:bg-green-500/80 hover:text-white border-green-200 border-2 px-4 py-2.5 text-sm text-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isPublishing ? "در حال انتشار..." : "انتشار همه تنوع‌ها"}
@@ -215,7 +218,7 @@ export default function PublishAllVariations({
               {publishedCount > 0 && (
                 <button
                   onClick={handleUnpublishAll}
-                  disabled={isPublishing}
+                  disabled={isPublishing || !canEdit}
                   className="w-full rounded-xl bg-amber-500/10 hover:bg-amber-500/80 hover:text-white border-amber-200 border-2 px-4 py-2.5 text-sm text-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isPublishing ? "در حال خارج کردن..." : "خارج کردن همه تنوع‌ها از انتشار"}

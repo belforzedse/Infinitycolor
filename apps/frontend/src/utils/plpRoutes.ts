@@ -26,6 +26,23 @@ function appendQuery(pathname: string, params: URLSearchParams) {
   return query ? `${pathname}?${query}` : pathname;
 }
 
+/**
+ * Server-ranked listings rendered with the normal PLP UI. The backend owns each one's
+ * dataset and default order (`offer=<type>` on the card query).
+ */
+export const PLP_OFFERS = ["newest"] as const;
+export type PLPOffer = (typeof PLP_OFFERS)[number];
+
+export function parsePLPOffer(value: unknown): PLPOffer | undefined {
+  return typeof value === "string" && (PLP_OFFERS as readonly string[]).includes(value)
+    ? (value as PLPOffer)
+    : undefined;
+}
+
+export function getOfferPlpHref(offer: PLPOffer) {
+  return `/offer?type=${offer}`;
+}
+
 export function getCategoryPlpHref(slug: string | null | undefined) {
   const normalized = normalizeCategorySlug(slug);
   return normalized ? `/plp/category/${encodeURIComponent(normalized)}` : "/plp";

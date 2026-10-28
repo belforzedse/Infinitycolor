@@ -63,6 +63,8 @@ export type InvoiceOrder = {
      * ReadyToFulfill / Fulfilling — a hold-gated flag would almost never show.
      */
     isReserveOrder?: boolean;
+    combinedReserveGroupKey?: string;
+    combinedReserveOrderIds?: string[];
     shipping?: Relation<{ Name?: string; Title?: string }>;
     user?: Relation<{
       Phone?: string;
@@ -237,7 +239,8 @@ export default function Invoice({
   const storeAddress = textValue(primaryStore?.address);
   const storePostalCode = textValue(primaryStore?.postalCode) || INVOICE_STORE_POSTAL_CODE;
   const orderId = textValue(order.id);
-  const hasBarcode = Boolean(orderId && orderId !== "temp-preview");
+  const isCombinedReserveInvoice = Boolean(attributes.combinedReserveGroupKey);
+  const hasBarcode = Boolean(orderId && orderId !== "temp-preview" && !isCombinedReserveInvoice);
   const isReserveOrder = Boolean(attributes.isReserveOrder);
   const missingValue = isPreInvoice ? "----" : "";
 
@@ -283,8 +286,12 @@ export default function Invoice({
                     <span className="title">تاریخ چاپ:</span> {formatDate(printDate)}
                   </span>
                   <span className="order-id section">
-                    <span className="title">شناسه سفارش:</span>{" "}
-                    {hasBarcode ? orderId : missingValue || "—"}
+                    <span className="title">
+                      {isCombinedReserveInvoice ? "شناسه بسته:" : "شناسه سفارش:"}
+                    </span>{" "}
+                    {attributes.combinedReserveGroupKey ? (
+                      <bdi className="fc-group-key">{attributes.combinedReserveGroupKey}</bdi>
+                    ) : hasBarcode ? orderId : missingValue || "—"}
                   </span>
                   {isReserveOrder ? (
                     <span className="fc-reserve-flag" data-testid="invoice-reserve-flag">
@@ -442,6 +449,11 @@ export default function Invoice({
           <div className="fc-invoice-tearoff">
             <div className="fc-invoice-tearoff-cut" aria-hidden="true" />
             <div className="fc-invoice-tearoff-fields">
+              {attributes.combinedReserveOrderIds?.length ? (
+                <p className="fc-tearoff-item fc-tearoff-orders">
+                  <strong>سفارش‌ها:</strong> {attributes.combinedReserveOrderIds.map((id) => `#${id}`).join("، ")}
+                </p>
+              ) : null}
               <p className="fc-tearoff-item fc-tearoff-payment">
                 <strong>روش پرداخت:</strong> {paymentMethod}
               </p>

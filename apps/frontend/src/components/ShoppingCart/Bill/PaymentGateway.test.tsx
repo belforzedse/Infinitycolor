@@ -173,6 +173,59 @@ describe("ShoppingCartBillPaymentGateway", () => {
     expect(onChange).toHaveBeenCalledWith("zarinpal");
   });
 
+  // The code a card reports is the gateway the payment request goes to, so a
+  // swapped mapping would send the shopper to the wrong bank.
+  it.each([
+    ["samankish", "payment-gateway-samankish"],
+    ["mellat", "payment-gateway-mellat"],
+  ] as const)("selects %s when the user clicks its card", async (gateway, testId) => {
+    const user = userEvent.setup();
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="zarinpal"
+        onChange={onChange}
+        availableGateways={["samankish", "mellat", "zarinpal"]}
+      />,
+    );
+
+    await user.click(screen.getByTestId(testId));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(gateway);
+  });
+
+  it("selects SnappPay once the shopper is eligible", async () => {
+    const user = userEvent.setup();
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="samankish"
+        onChange={onChange}
+        availableGateways={["samankish", "snappay"]}
+        snappEligible
+      />,
+    );
+
+    await user.click(screen.getByTestId("payment-gateway-snappay"));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("snappay");
+  });
+
+  it("ignores a SnappPay click before eligibility is known", async () => {
+    const user = userEvent.setup();
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="samankish"
+        onChange={onChange}
+        availableGateways={["samankish", "snappay"]}
+      />,
+    );
+
+    await user.click(screen.getByTestId("payment-gateway-snappay"));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("marks the selected ZarinPal option", () => {
     render(
       <ShoppingCartBillPaymentGateway

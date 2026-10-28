@@ -1,19 +1,13 @@
-import { rename, stat, unlink } from "node:fs/promises";
-import { dirname, extname, join } from "node:path";
-import {
-  decideNormalization,
-  probeVideo,
-  transcodeToWebSafeMp4,
-  type NormalizationDecision,
-  type VideoProbe,
-} from "./video-normalization";
+import type { VideoMetadata } from "./video-metadata";
+import type { VideoProbe } from "./video-normalization";
+import { processVideoFile, type PipelineDeps } from "./video-pipeline";
+export { uploadFilePath } from "./video-paths";
 
 /**
- * Web-safe transcode of a single `plugin::upload.file` row.
- *
- * Shared by story and product gallery jobs: phone recordings and the WooCommerce
- * import land as HEVC QuickTime (`.mov` / `video/quicktime`) which Chromium
- * parses, "plays", and then paints zero frames with no `error` event.
+ * Entry point shared by the story, product and upload-time jobs for one
+ * `plugin::upload.file` row. The work itself — probe, normalized MP4 + poster, optional
+ * HLS ladder, atomic row switch — lives in video-pipeline.ts; this keeps the result shape
+ * the story/product callers and backfill scripts already understand.
  */
 
 export interface UploadVideoFile {
@@ -28,22 +22,26 @@ export interface UploadVideoFile {
 
 export interface NormalizeFileResult {
   fileId: number | null;
+  /** `normalized` means the row or its delivery metadata changed during this call. */
   status: "skipped" | "normalized" | "would-normalize" | "missing";
-  decision?: NormalizationDecision;
+  reasons?: string[];
   probe?: VideoProbe;
-  fromBytes?: number;
-  toBytes?: number;
   durationMs?: number | null;
   detail?: string;
+  video?: VideoMetadata | null;
 }
 
-export interface NormalizeFileDeps {
-  strapi: any;
-  /** Absolute path of the directory Strapi serves `/uploads/*` from. */
-  uploadsDir: string;
-  dryRun?: boolean;
-  /** Used in the output filename when the upload row has no hash. */
+export type NormalizeFileDeps = PipelineDeps & {
+  /** Used by older call sites for output naming; the pipeline derives names itself. */
   nameHint?: string;
+};
+
+/** Another worker holds this file's processing lease; the caller should retry later. */
+export class MediaBusyError extends Error {
+  constructor(readonly fileId: number) {
+    super(`video ${fileId} is being processed by another worker`);
+    this.name = "MediaBusyError";
+  }
 }
 
 export function isVideoUpload(file: { mime?: string | null } | null | undefined): boolean {
@@ -111,16 +109,6 @@ export function collectVideoUploads(source: {
   return files;
 }
 
-export function uploadFilePath(uploadsDir: string, url: string): string {
-  // Local provider URLs are always `/uploads/<name>`; guard against anything else so we
-  // never write outside the uploads volume.
-  const name = url.replace(/^.*\/uploads\//, "");
-  if (!name || name.includes("..") || name.includes("/")) {
-    throw new Error(`unexpected upload url: ${url}`);
-  }
-  return join(uploadsDir, name);
-}
-
 export async function loadUploadVideoFile(
   strapi: any,
   fileId: number,
@@ -131,90 +119,60 @@ export async function loadUploadVideoFile(
   return asUploadVideoFile(file);
 }
 
+const uploadNormalizationInFlight = new Map<number, Promise<NormalizeFileResult>>();
+
+async function normalizeUploadFileOnce(
+  file: UploadVideoFile,
+  deps: NormalizeFileDeps,
+): Promise<NormalizeFileResult> {
+  const outcome = await processVideoFile(file.id, deps);
+  switch (outcome.status) {
+    case "missing":
+      return { fileId: file.id, status: "missing", detail: outcome.detail };
+    case "busy":
+      throw new MediaBusyError(file.id);
+    case "would_process":
+      return {
+        fileId: file.id,
+        status: "would-normalize",
+        reasons: outcome.reasons,
+        probe: outcome.probe,
+        durationMs: outcome.probe?.durationMs ?? null,
+        detail: outcome.detail,
+      };
+    case "up_to_date":
+      return {
+        fileId: file.id,
+        status: "skipped",
+        reasons: outcome.detail ? [outcome.detail] : [],
+        video: outcome.video,
+        durationMs: outcome.video?.output?.durationMs ?? outcome.video?.source?.probe?.durationMs ?? null,
+      };
+    case "processed":
+      return {
+        fileId: file.id,
+        status: "normalized",
+        reasons: outcome.stages.map((stage) => `produced ${stage}`),
+        video: outcome.video,
+        durationMs: outcome.video.output?.durationMs ?? null,
+      };
+  }
+}
+
+/** Collapse story/product/upload jobs that point at the same shared upload. */
 export async function normalizeUploadFile(
   file: UploadVideoFile,
-  { strapi, uploadsDir, dryRun = false, nameHint }: NormalizeFileDeps,
+  deps: NormalizeFileDeps,
 ): Promise<NormalizeFileResult> {
-  if (!file.url) {
-    return { fileId: file.id, status: "missing", detail: "upload row has no url" };
-  }
-
-  const sourcePath = uploadFilePath(uploadsDir, file.url);
-
+  const running = uploadNormalizationInFlight.get(file.id);
+  if (running) return running;
+  const task = normalizeUploadFileOnce(file, deps);
+  uploadNormalizationInFlight.set(file.id, task);
   try {
-    await stat(sourcePath);
-  } catch {
-    return { fileId: file.id, status: "missing", detail: `not on disk: ${sourcePath}` };
+    return await task;
+  } finally {
+    if (uploadNormalizationInFlight.get(file.id) === task) {
+      uploadNormalizationInFlight.delete(file.id);
+    }
   }
-
-  const probe = await probeVideo(sourcePath);
-  const decision = decideNormalization(probe, {
-    mime: file.mime,
-    extension: extname(sourcePath),
-  });
-
-  if (!decision.needed) {
-    return {
-      fileId: file.id,
-      status: "skipped",
-      decision,
-      probe,
-      durationMs: probe.durationMs,
-    };
-  }
-
-  if (dryRun) {
-    return {
-      fileId: file.id,
-      status: "would-normalize",
-      decision,
-      probe,
-      fromBytes: (await stat(sourcePath)).size,
-      durationMs: probe.durationMs,
-    };
-  }
-
-  const baseName = (file.hash || nameHint || `file-${file.id}`).replace(/[^\w.-]/g, "_");
-  const outputName = `${baseName}_web.mp4`;
-  const outputPath = join(dirname(sourcePath), outputName);
-  const tempPath = `${outputPath}.partial`;
-
-  try {
-    await transcodeToWebSafeMp4(sourcePath, tempPath);
-    // Publish atomically: a half-written file must never become reachable at the URL we
-    // are about to point the row at.
-    await rename(tempPath, outputPath);
-  } catch (error) {
-    await unlink(tempPath).catch(() => undefined);
-    throw error;
-  }
-
-  const [fromBytes, toBytes, outputProbe] = await Promise.all([
-    stat(sourcePath).then((entry) => entry.size),
-    stat(outputPath).then((entry) => entry.size),
-    probeVideo(outputPath),
-  ]);
-
-  await strapi.entityService.update("plugin::upload.file", file.id, {
-    data: {
-      name: outputName,
-      url: `/uploads/${outputName}`,
-      ext: ".mp4",
-      mime: "video/mp4",
-      hash: `${baseName}_web`,
-      size: Number((toBytes / 1024).toFixed(2)),
-      width: outputProbe.width ?? undefined,
-      height: outputProbe.height ?? undefined,
-    },
-  });
-
-  return {
-    fileId: file.id,
-    status: "normalized",
-    decision,
-    probe,
-    fromBytes,
-    toBytes,
-    durationMs: outputProbe.durationMs,
-  };
 }

@@ -1,3 +1,4 @@
+import type { WeekdayGrid } from "../utils/weekdayGrid";
 export const AUDIT_SCHEMA_VERSION = 2 as const;
 
 export const AUDIT_ACTOR_TYPES = [
@@ -229,6 +230,8 @@ export interface AuditSummary {
   failedOrDenied: number;
   activeAdmins: number;
   series: Array<{ date: string; human: number; automatic: number }>;
+  /** When the matching events happened: weekday × hour in Tehran time (row 0 = Sunday). */
+  weekly: WeekdayGrid;
 }
 
 export const isHumanActor = (type: AuditActorType | string | null | undefined): boolean =>

@@ -3,56 +3,36 @@
  */
 
 import { MANAGEMENT_ROLES } from "../../../utils/roles";
-import { hasCapability, type AdminCapability } from "@repo/auth-core";
+import { type AdminCapability } from "@repo/auth-core";
 import { requireCapability } from "../../../utils/adminAuthorization";
 import * as productAnalytics from "../services/product-analytics";
 import { buildStyledWorkbook, WorkbookColumn } from "../../../utils/styledWorkbook";
+import { weekdayGrid } from "../../../utils/weekdayGrid";
 import {
   getSalesBreakdown,
   SALES_BREAKDOWN_DIMENSIONS,
   type SalesBreakdownDimension,
 } from "../analytics/semantic/salesBreakdown";
 import { METRIC_CATALOG } from "../analytics/metrics/catalog";
+import { DELIVERABLE_EVENT_TYPES } from "../analytics/outbox";
 import {
+  conversionDetailKey,
   getUmamiBehaviorReport,
+  getUmamiConversionDetail,
   getUmamiRealtimeReport,
   isUmamiConfigured,
   normalizeRange,
   normalizeUmamiFilters,
+  parseConversionDetail,
   previousRange,
+  seriesKeys,
+  seriesUnitForRange,
+  umamiDataStart,
+  UMAMI_CONTRACT_VERSION,
   UMAMI_DEFINITION_VERSION,
   UMAMI_REPORT_TIMEZONE,
+  type ConversionDetailRequest,
 } from "../services/umami";
-
-async function getProductBehavioralUmami(
-  slug: string,
-  range: { startDate: string; endDate: string },
-) {
-  if (!slug || !isUmamiConfigured()) return null;
-  try {
-    const report = await getUmamiBehaviorReport("content", range);
-    const rows = Array.isArray(report.sections.path) ? (report.sections.path as Array<any>) : [];
-    const needle = `/pdp/${slug}`.toLowerCase();
-    const match = rows.find((row) =>
-      String(row?.label || "")
-        .toLowerCase()
-        .includes(needle),
-    );
-    if (!match) return { pageviews: 0, uniquePageviews: 0, avgTimeOnPageSec: 0, bounceRate: 0 };
-    return {
-      pageviews: Number(match.pageviews || 0),
-      uniquePageviews: Number(match.visits || match.visitors || 0),
-      avgTimeOnPageSec:
-        Number(match.visits || 0) > 0 ? Number(match.totaltime || 0) / Number(match.visits) : 0,
-      bounceRate:
-        Number(match.visits || 0) > 0
-          ? (Number(match.bounces || 0) / Number(match.visits)) * 100
-          : 0,
-    };
-  } catch {
-    return null;
-  }
-}
 
 type Interval = "day" | "week" | "month";
 type AdminActivityResourceScope = "all" | "order" | "product";
@@ -116,11 +96,12 @@ function behaviorMeta(
     source: "umami",
     timezone: UMAMI_REPORT_TIMEZONE,
     unit: "count",
-    currency: "IRR",
+    // The only money in a behavior response is the commerce section, in Toman.
+    currency: "Toman",
     definitionVersion: UMAMI_DEFINITION_VERSION,
-    dataStart: /^\d{4}-\d{2}-\d{2}$/.test(String(process.env.UMAMI_DATA_START_DATE || ""))
-      ? String(process.env.UMAMI_DATA_START_DATE)
-      : "2026-08-09",
+    // Declared, not detected: Umami has no version endpoint.
+    provider: { name: "Umami", contractVersion: UMAMI_CONTRACT_VERSION },
+    dataStart: umamiDataStart(),
     refreshedAt,
     cache,
     status,
@@ -132,7 +113,7 @@ function behaviorMeta(
 }
 
 function behaviorCacheKey(
-  kind: BehaviorKind,
+  kind: string,
   range: { startDate: string; endDate: string },
   filters: Record<string, string>,
   advanced: boolean,
@@ -150,6 +131,8 @@ type BehaviorReadOptions = {
   filters?: Record<string, unknown>;
   fresh?: boolean;
   comparison?: boolean;
+  /** A lazily requested conversion drill-down; never compared, cached on its own key. */
+  detail?: ConversionDetailRequest;
 };
 
 async function readBehaviorReport(
@@ -158,9 +141,11 @@ async function readBehaviorReport(
   options: BehaviorReadOptions = {},
 ) {
   const filters = normalizeUmamiFilters(options.filters || {});
-  const wantsComparison = Boolean(options.comparison);
+  const detail = options.detail;
+  const wantsComparison = Boolean(options.comparison) && !detail;
   const comparisonRange = wantsComparison ? previousRange(range) : null;
-  const key = behaviorCacheKey(kind, range, filters, Boolean(options.advanced), wantsComparison);
+  const cacheKind = detail ? `${kind}:${conversionDetailKey(detail)}` : kind;
+  const key = behaviorCacheKey(cacheKind, range, filters, Boolean(options.advanced), wantsComparison);
   const now = Date.now();
   const cached = behaviorCache.get(key);
   const freshTtl = options.advanced ? 5 * 60_000 : 60_000;
@@ -174,11 +159,13 @@ async function readBehaviorReport(
 
   const reportPromise = (async () => {
     const providerOptions = { advanced: options.advanced, filters };
+    const load = (target: { startDate: string; endDate: string }) =>
+      detail
+        ? getUmamiConversionDetail(detail, target, providerOptions)
+        : getUmamiBehaviorReport(kind, target, providerOptions);
     const [report, comparisonReport] = await Promise.all([
-      getUmamiBehaviorReport(kind, range, providerOptions),
-      comparisonRange
-        ? getUmamiBehaviorReport(kind, comparisonRange, providerOptions)
-        : Promise.resolve(null),
+      load(range),
+      comparisonRange ? load(comparisonRange) : Promise.resolve(null),
     ]);
     const currentStatus = behaviorStatus(report);
     const comparisonStatus = comparisonReport ? behaviorStatus(comparisonReport) : null;
@@ -297,7 +284,9 @@ async function getAnalyticsDeliveryHealth(knex: any) {
          COUNT(*) FILTER (WHERE status = 'dead_letter')::bigint AS dead_letter,
          MIN(created_at) FILTER (WHERE status = 'pending') AS oldest_pending_at,
          MAX(sent_at) AS last_sent_at
-       FROM analytics_outbox`,
+       FROM analytics_outbox
+       WHERE event_type = ANY(?)`,
+      [[...DELIVERABLE_EVENT_TYPES]],
     );
     const row = rowsOf(result)[0] || {};
     const pending = Number(row.pending || 0);
@@ -504,80 +493,142 @@ async function applyAdminActivityResourceSearch(filters: any, ctx: any) {
 const PA = productAnalytics;
 
 /**
- * Visit-to-payment counts for the behaviour dashboard. Gates on
- * {@link productAnalytics.PAID_ORDER_STATUSES} — «سفارش پرداخت‌شده» means the money
- * landed, so status alone decides membership and no settlement gate applies. Money
- * figures use ELIGIBLE_ORDER_STATUSES, the same status list since D15 but additionally
- * gated on net-positive settlement; these two are deliberately different questions and
- * neither page shows the other's number.
+ * Storefront commerce beside the behavior report. Umami only sees the new
+ * storefront, so these figures exclude WooCommerce-imported legacy orders
+ * (`external_source IS DISTINCT FROM 'woocommerce'`; Mellat orders keep a NULL
+ * source). «سفارش پرداخت‌شده» uses {@link productAnalytics.PAID_ORDER_STATUSES};
+ * revenue is those orders' net successful settlement (Returns subtracted), IRR
+ * converted to Toman. The window is the order date, floored like every money
+ * report, and the effective window is returned so the page can say so.
  */
-async function getOrderStats(start: Date, end: Date) {
-  const knex = strapi.db.connection;
+const COMMERCE_SERIES_FORMAT = { hour: "YYYY-MM-DD HH24", day: "YYYY-MM-DD", month: "YYYY-MM" } as const;
 
-  // Strapi usually maps attributes to snake_case lower-case columns.
-  try {
-    const primaryRes = await knex.raw(
-      `SELECT
-         COUNT(*)::bigint AS total_orders,
-         COUNT(*) FILTER (WHERE o.status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders
-       FROM orders o
-       WHERE o.date BETWEEN ? AND ?`,
-      [start, end],
-    );
-    const row = (primaryRes.rows || primaryRes[0] || [])[0] || {};
-    return {
-      totalOrders: Number(row.total_orders || 0),
-      paidOrders: Number(row.paid_orders || 0),
-    };
-  } catch {
-    // Some DBs may preserve legacy quoted column names.
-    const fallbackRes = await knex.raw(
-      `SELECT
-         COUNT(*)::bigint AS total_orders,
-         COUNT(*) FILTER (WHERE o."Status" IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders
-       FROM orders o
-       WHERE o."Date" BETWEEN ? AND ?`,
-      [start, end],
-    );
-    const row = (fallbackRes.rows || fallbackRes[0] || [])[0] || {};
-    return {
-      totalOrders: Number(row.total_orders || 0),
-      paidOrders: Number(row.paid_orders || 0),
-    };
-  }
-}
-
-async function getRevenueToman(start: Date, end: Date) {
-  const knex = strapi.db.connection;
-  const revenueRes = await knex.raw(
-    `SELECT
-       COALESCE(SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END), 0)::bigint AS total_irr
-     FROM contract_transactions ct
-     WHERE ct.status = 'Success' AND ct.date BETWEEN ? AND ?`,
-    [start, end],
-  );
-  const row = (revenueRes.rows || revenueRes[0] || [])[0] || {};
-  return Number(row.total_irr || 0) / 10;
+/**
+ * Tehran bucket key for the commerce series, formatted exactly like the Umami
+ * trend's `t` so the two series line up. Same shift as `PA.tzBucketExpr`,
+ * which does not offer an hourly grouping.
+ */
+function commerceBucketKeyExpr(column: string, unit: keyof typeof COMMERCE_SERIES_FORMAT): string {
+  return `to_char(date_trunc('${unit}', (${column} AT TIME ZONE 'UTC') AT TIME ZONE '${PA.REPORT_TIMEZONE}'), '${COMMERCE_SERIES_FORMAT[unit]}')`;
 }
 
 async function getBehaviorCommerce(range: { startDate: string; endDate: string }) {
-  // Revenue and paid-order counts are money figures, so the comparison window
-  // the conversion report asks for is floored like every other report.
   const { start, end } = PA.clampToFinancialFloor({
     start: parseDate(range.startDate, 30, "start"),
     end: parseDate(range.endDate, 0, "end"),
   });
-  const [orderStats, revenueToman] = await Promise.all([
-    getOrderStats(start, end),
-    getRevenueToman(start, end),
+  const knex = strapi.db.connection;
+  const unit = seriesUnitForRange(range);
+  const [result, seriesResult] = await Promise.all([
+    knex.raw(
+    `WITH storefront_orders AS (
+       SELECT o.id, o.status
+         FROM orders o
+        WHERE o.date BETWEEN ? AND ?
+          AND o.external_source IS DISTINCT FROM 'woocommerce'
+     ),
+     settled AS (
+       SELECT so.id,
+              SUM(CASE WHEN lower(ct.type) = 'return' THEN -ct.amount ELSE ct.amount END) AS net_irr
+         FROM storefront_orders so
+         JOIN orders_contract_links ocl ON ocl.order_id = so.id
+         JOIN contract_transactions_contract_links ctcl ON ctcl.contract_id = ocl.contract_id
+         JOIN contract_transactions ct ON ct.id = ctcl.contract_transaction_id
+        WHERE lower(ct.status) = 'success'
+          AND so.status IN (${PA.PAID_STATUS_SQL})
+        GROUP BY so.id
+     )
+     SELECT
+       (SELECT COUNT(*) FROM storefront_orders)::bigint AS total_orders,
+       (SELECT COUNT(*) FROM storefront_orders WHERE status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders,
+       (SELECT COALESCE(SUM(net_irr), 0) FROM settled)::bigint AS revenue_irr`,
+    [start, end],
+    ),
+    knex.raw(
+      `WITH storefront_orders AS (
+         SELECT o.id, o.status, ${commerceBucketKeyExpr("o.date", unit)} AS bucket
+           FROM orders o
+          WHERE o.date BETWEEN ? AND ?
+            AND o.external_source IS DISTINCT FROM 'woocommerce'
+       ),
+       settled AS (
+         SELECT so.id,
+                SUM(CASE WHEN lower(ct.type) = 'return' THEN -ct.amount ELSE ct.amount END) AS net_irr
+           FROM storefront_orders so
+           JOIN orders_contract_links ocl ON ocl.order_id = so.id
+           JOIN contract_transactions_contract_links ctcl ON ctcl.contract_id = ocl.contract_id
+           JOIN contract_transactions ct ON ct.id = ctcl.contract_transaction_id
+          WHERE lower(ct.status) = 'success'
+            AND so.status IN (${PA.PAID_STATUS_SQL})
+          GROUP BY so.id
+       )
+       SELECT so.bucket,
+              COUNT(*) FILTER (WHERE so.status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders,
+              COALESCE(SUM(s.net_irr), 0)::bigint AS revenue_irr
+         FROM storefront_orders so
+         LEFT JOIN settled s ON s.id = so.id
+        GROUP BY so.bucket
+        ORDER BY so.bucket`,
+      [start, end],
+    ),
   ]);
+  const row = rowsOf(result)[0] || {};
+  const effective = effectiveRange(start, end);
+  const byBucket = new Map(
+    rowsOf(seriesResult).map((point: any) => [String(point.bucket), point]),
+  );
   return {
     source: "commerce",
+    scope: "storefront",
     currency: "Toman",
-    paidOrders: orderStats.paidOrders,
-    totalOrders: orderStats.totalOrders,
-    revenueToman,
+    range: effective,
+    paidOrders: Number(row.paid_orders || 0),
+    totalOrders: Number(row.total_orders || 0),
+    revenueToman: Math.round(Number(row.revenue_irr || 0) / 10),
+    // The ledger is complete, so a queried bucket without orders is a real 0.
+    // Buckets before the financial floor were never queried: null, not 0.
+    series: {
+      unit,
+      points: seriesKeys(range, unit).map((t) => {
+        if (t.slice(0, 10) < effective.start.slice(0, t.length >= 10 ? 10 : 7)) {
+          return { t, paidOrders: null, revenueToman: null };
+        }
+        const point: any = byBucket.get(t);
+        return {
+          t,
+          paidOrders: Number(point?.paid_orders || 0),
+          revenueToman: Math.round(Number(point?.revenue_irr || 0) / 10),
+        };
+      }),
+    },
   };
+}
+
+type PurchaseTrackingStatus = "live" | "degraded" | "not_live" | "unknown" | "unavailable";
+
+/**
+ * How much of the storefront's paid orders Umami saw as a `purchase` session.
+ * Sessions sit a little below orders by design (ad blockers, closed tabs, one
+ * session buying twice), so only a large gap means the tracking itself is
+ * missing for part or all of the range, e.g. a range that starts before the
+ * browser `purchase` emitter shipped. The admin then shows purchase steps as
+ * incomplete instead of as a collapse in conversion.
+ */
+function purchaseTracking(goal: unknown, commerce: { paidOrders: number } | null) {
+  const record = goal && typeof goal === "object" ? (goal as Record<string, unknown>) : null;
+  const sessions =
+    record && record.num !== undefined && record.num !== null && Number.isFinite(Number(record.num))
+      ? Number(record.num)
+      : null;
+  const paidOrders = commerce ? commerce.paidOrders : null;
+  const coverage = sessions !== null && paidOrders ? sessions / paidOrders : null;
+  let status: PurchaseTrackingStatus;
+  if (sessions === null || paidOrders === null) status = "unavailable";
+  else if (paidOrders < 5) status = "unknown";
+  else if ((coverage ?? 0) < 0.05) status = "not_live";
+  else if ((coverage ?? 0) < 0.5) status = "degraded";
+  else status = "live";
+  return { umamiPurchaseSessions: sessions, commercePaidOrders: paidOrders, coverage, status };
 }
 
 // ---------------------------------------------------------------------------
@@ -629,10 +680,23 @@ function gatewayRowsFrom(res: any) {
     totalOrdersCount: Number(r.total_orders_count || 0),
     total: Math.round(PA.irrToToman(Number(r.settled_irr || 0))),
   }));
+  const first = rows[0] || {};
+  // The single-channel amount is the rest of the rows' own (rounded) total, so
+  // single + mixed matches the footer to the Toman.
+  const gatewaysTotal = base.reduce((sum, g) => sum + g.total, 0);
+  const mixedTotal = Math.round(PA.irrToToman(Number(first.mixed_irr || 0)));
   return {
     gateways: PA.withShares(base, "total"),
     dataQualityWarnings: PA.gatewaySettlementWarnings(base),
-    paidOrdersCount: Number(rows[0]?.paid_orders_count || 0),
+    paidOrdersCount: Number(first.paid_orders_count || 0),
+    // Splits paidOrdersCount into orders under one row and orders under
+    // several (a split payment), which is why the row counts sum higher.
+    paymentMix: {
+      singleOrdersCount: Number(first.single_orders_count || 0),
+      singleTotal: gatewaysTotal - mixedTotal,
+      mixedOrdersCount: Number(first.mixed_orders_count || 0),
+      mixedTotal,
+    },
   };
 }
 
@@ -685,6 +749,94 @@ async function computeProductPeriod(
     avgPrice: units > 0 ? gross / units : 0,
     aov: orders > 0 ? gross / orders : 0,
   };
+}
+
+/**
+ * The overview's figures per Tehran bucket, on the same paid-orders set and
+ * definitions as {@link computeProductPeriod}: `gross` here already carries
+ * the delivery fee (the overview's «فروش ناخالص»), `net` does not. Buckets
+ * with no paid order are true zeros. Feeds the cards' sparklines.
+ */
+async function computeOverviewSeries(
+  knex: any,
+  joins: productAnalytics.ResolvedJoins,
+  start: Date,
+  end: Date,
+) {
+  const grouping = PA.autoGrouping(start, end);
+  const sql = `
+    WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)},
+    items_b AS (
+      SELECT ${PA.tzBucketKeyExpr("order_date", grouping)} AS bucket,
+             SUM(line_gross)::numeric AS gross,
+             SUM(cnt)::bigint AS units
+      FROM itemized GROUP BY 1
+    ),
+    orders_b AS (
+      SELECT ${PA.tzBucketKeyExpr("po.order_date", grouping)} AS bucket,
+             COUNT(*)::bigint AS orders_count,
+             SUM(po.order_discount)::numeric AS discounts,
+             SUM(po.refund_irr)::numeric AS refund_irr,
+             COALESCE(SUM(o.shipping_cost), 0)::numeric AS shipping
+      FROM paid_orders po
+      JOIN orders o ON o.id = po.order_id
+      GROUP BY 1
+    )
+    SELECT
+      COALESCE(i.bucket, b.bucket) AS bucket,
+      COALESCE(i.gross, 0)::numeric AS gross,
+      COALESCE(i.units, 0)::bigint AS units,
+      COALESCE(b.orders_count, 0)::bigint AS orders_count,
+      COALESCE(b.discounts, 0)::numeric AS discounts,
+      COALESCE(b.refund_irr, 0)::numeric AS refund_irr,
+      COALESCE(b.shipping, 0)::numeric AS shipping
+    FROM items_b i
+    FULL OUTER JOIN orders_b b ON i.bucket = b.bucket
+    ORDER BY 1
+  `;
+  const res = await knex.raw(sql, [start, end]);
+  const points = rowsOf(res)
+    .filter((r: any) => r.bucket)
+    .map((r: any) => {
+      const lines = Number(r.gross) || 0;
+      const discounts = Number(r.discounts) || 0;
+      const refunds = PA.irrToToman(Number(r.refund_irr) || 0);
+      // `orders.shipping_cost` is stored in Toman already.
+      const shipping = Number(r.shipping) || 0;
+      return {
+        bucket: r.bucket,
+        gross: Math.round(lines + shipping),
+        shipping: Math.round(shipping),
+        net: Math.round(lines - discounts - refunds),
+        units: Number(r.units) || 0,
+        orders: Number(r.orders_count) || 0,
+        discounts: Math.round(discounts),
+        refunds: Math.round(refunds),
+      };
+    });
+  const empty = { gross: 0, shipping: 0, net: 0, units: 0, orders: 0, discounts: 0, refunds: 0 };
+  return { grouping, points: start <= end ? PA.fillBucketSeries(points, start, end, grouping, empty) : [] };
+}
+
+/** When paid orders are placed: a weekday × hour grid in Tehran time, by order date. */
+async function computeOrdersWeekdayGrid(
+  knex: any,
+  joins: productAnalytics.ResolvedJoins,
+  start: Date,
+  end: Date,
+) {
+  if (start > end) return weekdayGrid([], "", "", PA.REPORT_TIMEZONE);
+  const local = PA.tzWallClockExpr("order_date");
+  const sql = `
+    WITH ${PA.paidOrdersCte(joins)}
+    SELECT EXTRACT(DOW FROM ${local})::int AS dow,
+           EXTRACT(HOUR FROM ${local})::int AS hour,
+           COUNT(*)::bigint AS count
+    FROM paid_orders
+    GROUP BY 1, 2
+  `;
+  const res = await knex.raw(sql, [start, end]);
+  return weekdayGrid(rowsOf(res), PA.tehranYmd(start), PA.tehranYmd(end), PA.REPORT_TIMEZONE);
 }
 
 /** Attach cover-image URLs to performance rows (one query for the visible page). */
@@ -1142,7 +1294,7 @@ const reportController = {
         ]),
         knex.raw(PA.shippingRevenueQuery(joins, ordersDefinition, clock), [start, end]),
       ]);
-      const { gateways, dataQualityWarnings, paidOrdersCount } = gatewayRowsFrom(res);
+      const { gateways, dataQualityWarnings, paidOrdersCount, paymentMix } = gatewayRowsFrom(res);
       // Already Toman on the order row; irrToToman would divide it a second time.
       const shippingRevenue = Number(rowsOf(shippingRes)[0]?.shipping_total || 0);
 
@@ -1153,6 +1305,7 @@ const reportController = {
           clock,
           ordersDefinition,
           paidOrdersCount,
+          paymentMix,
           shippingRevenue,
           rows: gateways.map((g) => ({
             gatewayId: null,
@@ -1236,6 +1389,17 @@ const reportController = {
         (ctx.query.startDate as string) || (ctx.query.start as string),
         (ctx.query.endDate as string) || (ctx.query.end as string),
       );
+      const detail = parseConversionDetail(ctx.query || {});
+      if (detail) {
+        // Drill-downs are behavioral only and heavier (one Umami call per bucket
+        // or segment), so they take the advanced cache and never a comparison.
+        ctx.body = await readBehaviorReport("conversion", range, {
+          ...behaviorRequestOptions(ctx, true),
+          comparison: false,
+          detail,
+        });
+        return;
+      }
       const options = behaviorRequestOptions(ctx);
       const comparisonRange = options.comparison ? previousRange(range) : null;
       const [payload, commerce, comparisonCommerce] = await Promise.all([
@@ -1257,6 +1421,11 @@ const reportController = {
             sections: {
               ...(providerComparison?.sections || {}),
               commerce: comparisonCommerce,
+              purchaseTracking: purchaseTracking(
+                providerComparison?.sections?.purchaseGoalAll ??
+                  providerComparison?.sections?.purchaseGoal,
+                comparisonCommerce,
+              ),
             },
             status: providerComparison?.status || (providerComparison ? "empty" : "partial"),
           }
@@ -1267,7 +1436,16 @@ const reportController = {
           range,
           errors: { source: "UMAMI_UNAVAILABLE" },
         }),
-        sections: { ...(providerData?.sections || {}), commerce },
+        sections: {
+          ...(providerData?.sections || {}),
+          commerce,
+          // With session filters the goal is a segment; the unfiltered count
+          // (fetched alongside it) is what the unfiltered ledger compares to.
+          purchaseTracking: purchaseTracking(
+            providerData?.sections?.purchaseGoalAll ?? providerData?.sections?.purchaseGoal,
+            commerce,
+          ),
+        },
         ...(comparisonRange
           ? {
               comparison,
@@ -1637,7 +1815,7 @@ const reportController = {
       ]);
 
       // Cash per gateway (settlement is IRR -> Toman; attach share of total).
-      const { gateways, dataQualityWarnings, paidOrdersCount } = gatewayRowsFrom(gatewayRes);
+      const { gateways, dataQualityWarnings, paidOrdersCount, paymentMix } = gatewayRowsFrom(gatewayRes);
 
       // Shipping revenue by method (shipping_cost already stored in Toman).
       const shippingMethods = rowsOf(shippingRes).map((r: any) => {
@@ -1662,6 +1840,7 @@ const reportController = {
           clock,
           ordersDefinition,
           totals: { gatewaySales, shippingRevenue, ordersCount },
+          paymentMix,
           gateways,
           shippingMethods,
           dataQualityWarnings,
@@ -2063,15 +2242,6 @@ const reportController = {
         { units: 0, gross: 0, discounts: 0, refunds: 0, net: 0, currentStock: 0 },
       );
 
-      // Optional Umami behavioral data for this product page. Fully graceful:
-      // `null` when Umami is unconfigured/unavailable — never blocks the report.
-      const behavioral = hasCapability(user.role, "report.traffic.read")
-        ? await getProductBehavioralUmami(String(info.slug || ""), {
-            startDate: start.toISOString().slice(0, 10),
-            endDate: end.toISOString().slice(0, 10),
-          })
-        : null;
-
       ctx.body = {
         data: {
           product: {
@@ -2088,7 +2258,6 @@ const reportController = {
           variations,
           trend,
           // Behavioral engagement from Umami (distinct from transactional truth above).
-          behavioral,
         },
       };
     } catch (error) {
@@ -2370,10 +2539,12 @@ const reportController = {
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
 
-      const [currentPeriod, previousPeriod, analyticsDelivery] = await Promise.all([
+      const [currentPeriod, previousPeriod, analyticsDelivery, series, weekly] = await Promise.all([
         computeProductPeriod(knex, joins, start, end),
         computeProductPeriod(knex, joins, prevStart, prevEnd),
         getAnalyticsDeliveryHealth(knex),
+        computeOverviewSeries(knex, joins, start, end),
+        computeOrdersWeekdayGrid(knex, joins, start, end),
       ]);
 
       // Store-wide «فروش ناخالص» is what the orders were written for: merchandise
@@ -2421,6 +2592,10 @@ const reportController = {
             refunds: kpi("refunds"),
             shipping: kpi("shipping"),
           },
+          // The same figures per bucket of the queried window (sparklines), and
+          // when in the week paid orders were placed (Tehran time).
+          series,
+          weekly,
           analyticsDelivery,
         },
       };

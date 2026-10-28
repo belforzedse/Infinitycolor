@@ -1,5 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 /**
  * Updates the quantity of one cart line owned by `ownerUserId`.
@@ -33,7 +35,7 @@ export const updateCartItemOp = async (
 
   const variation = cartItem.product_variation;
   const product = variation?.product;
-  if (!product || product.removedAt || product.Status !== "Active") {
+  if (!isProductPubliclyVisible(product)) {
     return { success: false, message: "Product is not available" };
   }
   if (variation?.IsPublished === false) {
@@ -55,6 +57,9 @@ export const updateCartItemOp = async (
   // decrease is always allowed, including when the line already exceeds the
   // available count or the variation has no stock record at all.
   const currentCount = Number(cartItem.Count) || 0;
+  if (count > currentCount && chargeableVariationPrice(variation) <= 0) {
+    return { success: false, message: "Product variation is not available" };
+  }
   if (count > currentCount && (!variation?.product_stock || available < count)) {
     return {
       success: false,

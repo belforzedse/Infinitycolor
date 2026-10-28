@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
+import { cn } from "@/utils/tailwind";
+import { CARD, ErrorState, SkeletonBlock } from "@/components/admin";
+import { ShareCell } from "@/components/SuperAdmin/reports/shared/AnalyticsTable";
+import { ShareSummary, ShareTip } from "@/components/SuperAdmin/reports/shared/ShareBar";
+import { buildShares, shareOf } from "@/components/SuperAdmin/reports/shared/shares";
+import { numberText, ratioText, tomanText } from "@/components/SuperAdmin/reports/shared/format";
 import {
   getProductBreakdown,
   type ProductBreakdown,
@@ -30,18 +36,23 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
     };
   }, [start, end, reloadKey]);
 
+  const methods = useMemo(() => data?.shippingMethods ?? [], [data]);
+  const shippingShares = useMemo(
+    () =>
+      buildShares(
+        methods.map((method) => ({
+          key: method.method,
+          label: method.method,
+          value: method.total,
+          unknown: method.method === "نامشخص",
+        })),
+      ),
+    [methods],
+  );
+  const shippingTotal = data?.totals.shippingRevenue ?? 0;
+
   if (error) {
-    return (
-      <div className="rounded-2xl border border-red-100 bg-red-50 p-8 text-center" dir="rtl">
-        <p className="mb-4 text-red-600">{error}</p>
-        <button
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
-        >
-          تلاش مجدد
-        </button>
-      </div>
-    );
+    return <ErrorState description={error} onRetry={() => setReloadKey((k) => k + 1)} />;
   }
 
   return (
@@ -57,6 +68,7 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
           rows={data?.gateways ?? []}
           totalSales={data?.totals.gatewaySales ?? 0}
           ordersCount={data?.totals.ordersCount ?? 0}
+          paymentMix={data?.paymentMix}
         />
       </BreakdownCard>
 
@@ -67,21 +79,44 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
         loading={loading}
         isEmpty={!loading && (data?.shippingMethods.length ?? 0) === 0}
       >
+        {shippingShares ? (
+          <ShareSummary
+            className="mb-4"
+            segments={shippingShares.segments}
+            label="سهم روش‌های ارسال از درآمد ارسال"
+            describe={(segment) => `${segment.label}: ${ratioText(segment.share)}، ${tomanText(segment.value)}`}
+            tipContent={(segment) => {
+              const method = methods.find((entry) => entry.method === segment.key);
+              return (
+                <ShareTip
+                  segment={segment}
+                  valueText={tomanText(segment.value)}
+                  extra={method ? <p className="text-slate-600">{numberText(method.ordersCount)} سفارش</p> : null}
+                />
+              );
+            }}
+            note={
+              shippingShares.excluded
+                ? `${numberText(shippingShares.excluded)} روش بدون درآمد ارسال (مثلاً ارسال رایگان) در سهم‌ها نیامده است.`
+                : null
+            }
+          />
+        ) : null}
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-neutral-100 text-right text-xs text-neutral-500">
-              <th className="py-2 font-medium">روش ارسال</th>
-              <th className="py-2 text-left font-medium">تعداد سفارش</th>
-              <th className="py-2 text-left font-medium">درآمد ارسال</th>
+              <th scope="col" className="py-2 font-medium">روش ارسال</th>
+              <th scope="col" className="py-2 text-left font-medium">تعداد سفارش</th>
+              <th scope="col" className="py-2 text-left font-medium">درآمد ارسال</th>
             </tr>
           </thead>
           <tbody>
-            {data?.shippingMethods.map((s) => (
+            {methods.map((s) => (
               <tr key={s.method} className="border-b border-neutral-50 last:border-0">
                 <td className="py-2.5 font-medium text-neutral-800">{s.method}</td>
-                <td className="py-2.5 text-left text-neutral-600">{faNum(s.ordersCount)}</td>
-                <td className="py-2.5 text-left text-neutral-800">
-                  {priceFormatter(s.total, " تومان")}
+                <td className="py-2.5 text-left tabular-nums text-neutral-600">{faNum(s.ordersCount)}</td>
+                <td className="py-2.5 text-left tabular-nums text-neutral-800">
+                  <ShareCell share={shareOf(s.total, shippingTotal)}>{priceFormatter(s.total, " تومان")}</ShareCell>
                 </td>
               </tr>
             ))}
@@ -146,17 +181,19 @@ function BreakdownCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-neutral-100 bg-white p-5">
-      <h3 className="text-base font-medium text-neutral-800">{title}</h3>
-      {subtitle && <p className="mb-3 mt-1 text-xs text-neutral-500">{subtitle}</p>}
+    <div className={cn(CARD, "p-4 md:p-5")}>
+      <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+      {subtitle && <p className="mb-4 mt-1 text-xs text-slate-600">{subtitle}</p>}
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-9 animate-pulse rounded bg-neutral-100" />
+            <SkeletonBlock key={i} className="h-9" />
           ))}
         </div>
       ) : isEmpty ? (
-        <p className="py-6 text-center text-sm text-neutral-400">داده‌ای برای این بازه یافت نشد</p>
+        <p className="rounded-control border border-dashed border-slate-200 px-4 py-6 text-center text-xs text-slate-500">
+          داده‌ای برای این بازه یافت نشد
+        </p>
       ) : (
         children
       )}

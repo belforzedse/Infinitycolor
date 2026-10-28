@@ -1,16 +1,42 @@
 import React, { useState, useEffect } from "react";
 import type { ProductVariable, ProductVariableDisplay } from "./types";
 import { ProductVariableTable } from "./Table";
-import { apiClient } from "@/services";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
+import ProductEditorFields from "@/components/Product/add/ProductEditorFields";
+import type { ProductEditSnapshot } from "@/services/super-admin/product/editor-session";
+import { buildVariationEditorPayload } from "@/services/super-admin/product/variation-editor";
 import toast from "react-hot-toast";
 import { useCan } from "@/hooks/useCan";
 import Modal from "@/components/Kits/Modal";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { Ruler, Settings } from "lucide-react";
+import AsyncSearchPicker from "@/components/Kits/Form/AsyncSearchPicker";
+import { renderColorOption } from "../Features/colorOption";
+import { searchColors } from "@/services/product/variation-options";
+import { apiCache } from "@/lib/api-cache";
+import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
 
 interface ProductVariablesProps {
   productId: number;
   refreshKey?: number;
+  /** Called after an edit or delete that can change the product's colour/size/model set. */
+  onVariationsChanged?: () => void;
+}
+
+/** The row label: every attribute the variation actually has, in a fixed order. */
+function buildVariableName(
+  variation: Pick<ProductVariableDisplay, "size" | "color" | "model" | "genericAttributes">,
+) {
+  // Absent attributes are `undefined` (not ""), so filter on truthiness to
+  // avoid stray " - " separators (e.g. a model-only "کد 1" variation).
+  return [
+    variation.size,
+    variation.color,
+    variation.model,
+    ...(variation.genericAttributes || []).map((item) => `${item.attribute}: ${item.term}`),
+  ]
+    .filter((part) => Boolean(part && part.trim()))
+    .join(" - ");
 }
 
 // DEFAULT_TITLES removed - variations should only show actual size/model values, not defaults
@@ -26,22 +52,35 @@ const BULK_FORM_DEFAULT = {
   removeDiscount: false,
 };
 
-const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshKey = 0 }) => {
+const ProductVariables: React.FC<ProductVariablesProps> = ({
+  productId,
+  refreshKey = 0,
+  onVariationsChanged,
+}) => {
+  const { session, client: apiClient, canEdit } = useProductEditor();
+  const restored = session?.drafts.get("variations") as { variables?: ProductVariableDisplay[]; selectedRows?: number[]; currentVariation?: ProductVariableDisplay | null; currentVariationBase?: ProductVariableDisplay | null; bulkForm?: typeof BULK_FORM_DEFAULT; editModalOpen?: boolean; bulkModalOpen?: boolean } | undefined;
   const canDeleteVariations = useCan("product.variation.delete");
 
-  const [selectedRows, setSelectedRows] = useState<number[]>([]);
-  const [variables, setVariables] = useState<ProductVariableDisplay[]>([]);
+  const [selectedRows, setSelectedRows] = useState<number[]>(restored?.selectedRows ?? []);
+  const [variables, setVariables] = useState<ProductVariableDisplay[]>(restored?.variables ?? []);
   const [loading, setLoading] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [currentVariation, setCurrentVariation] = useState<ProductVariableDisplay | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(restored?.editModalOpen ?? false);
+  const [currentVariation, setCurrentVariation] = useState<ProductVariableDisplay | null>(restored?.currentVariation ?? null);
+  const [currentVariationBase, setCurrentVariationBase] = useState<ProductVariableDisplay | null>(restored?.currentVariationBase ?? null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
-  const [bulkModalOpen, setBulkModalOpen] = useState(false);
-  const [bulkForm, setBulkForm] = useState(BULK_FORM_DEFAULT);
+  const [bulkModalOpen, setBulkModalOpen] = useState(restored?.bulkModalOpen ?? false);
+  const [bulkForm, setBulkForm] = useState(restored?.bulkForm ?? BULK_FORM_DEFAULT);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
 
+  useEffect(() => {
+    session?.drafts.set("variations", {
+      variables, selectedRows, currentVariation, currentVariationBase, bulkForm, editModalOpen, bulkModalOpen,
+      dirty: Boolean(currentVariation && JSON.stringify(currentVariation) !== JSON.stringify(currentVariationBase)) || JSON.stringify(bulkForm) !== JSON.stringify(BULK_FORM_DEFAULT),
+    });
+  }, [session, variables, selectedRows, currentVariation, currentVariationBase, bulkForm, editModalOpen, bulkModalOpen]);
   const resetBulkForm = () => {
     setBulkForm(BULK_FORM_DEFAULT);
   };
@@ -68,15 +107,14 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
   // Fetch product variations
   useEffect(() => {
     const fetchVariations = async () => {
-      if (!productId) return;
+      if (!productId || (restored?.variables && refreshKey === 0)) return;
 
       setLoading(true);
       try {
-        const response = await apiClient.get(
+        const seed = refreshKey === 0 ? session?.snapshot?.product.attributes.product_variations?.data : undefined;
+        const response = seed ? { data: seed } : await apiClient.get(
           `/product-variations?filters[product][id][$eq]=${productId}&populate[0]=product_variation_color&populate[1]=product_variation_size&populate[2]=product_variation_model&populate[3]=product_stock&populate[4]=general_discounts&populate[5]=selected_attribute_terms&populate[6]=selected_attribute_terms.product_attribute&pagination[pageSize]=100`,
-          {
-            cache: "no-store",
-          },
+          { cache: "no-store" },
         );
 
         // Type assertion to work with the data
@@ -128,22 +166,13 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             });
           }
 
-          // Create variable name from combinations - only include parts that exist.
-          // Absent attributes are `undefined` (not ""), so filter on truthiness to
-          // avoid stray " - " separators (e.g. a model-only "کد 1" variation).
-          const variableParts = [
-            size,
-            color,
-            model,
-            ...genericAttributes.map((item) => `${item.attribute}: ${item.term}`),
-          ].filter((part) => Boolean(part && part.trim()));
-          const variableName = variableParts.join(" - ");
+          const variableName = buildVariableName({ size, color, model, genericAttributes });
 
           // Get variation-specific discount price (priority)
           const basePrice = Number(variation.attributes.Price || 0);
-          let discountPrice: number | undefined = variation.attributes.DiscountPrice
-            ? Number(variation.attributes.DiscountPrice)
-            : undefined;
+          // Prices arrive as strings, and a stored "0" is no discount.
+          const storedDiscount = Number(variation.attributes.DiscountPrice || 0);
+          let discountPrice: number | undefined = storedDiscount > 0 ? storedDiscount : undefined;
 
           // If no variation-specific discount, calculate from general_discounts
           const generalDiscounts = variation.attributes.general_discounts?.data || [];
@@ -163,10 +192,11 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
           return {
             id: variation.id,
             sku: variation.attributes.SKU || "",
-            price: variation.attributes.Price || 0,
+            price: basePrice,
             discountPrice,
             stock: variation.attributes.product_stock?.data?.attributes.Count || 0,
             stockId: variation.attributes.product_stock?.data?.id,
+            stockRevision: variation.attributes.product_stock?.data?.attributes.StockRevision,
             variable: variableName,
             isPublished: variation.attributes.IsPublished || false,
             colorId: variation.attributes.product_variation_color?.data?.id,
@@ -216,6 +246,8 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
   const handleEditVariation = (id: number) => {
     const variation = variables.find((v) => v.id === id);
     if (variation) {
+      if (!canEdit) return;
+      setCurrentVariationBase(variation);
       setCurrentVariation(variation);
       setEditModalOpen(true);
     }
@@ -227,7 +259,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
   };
 
   const confirmDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteId || !canEdit) return;
 
     if (!canDeleteVariations) {
       toast.error("شما مجوز حذف تنوع محصول را ندارید");
@@ -246,28 +278,18 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
       setDeleteConfirmOpen(false);
       setDeleteId(null);
       toast.success("تنوع محصول با موفقیت حذف شد");
+      onVariationsChanged?.();
 
       // Trigger a refresh by updating refreshKey if parent component supports it
       // This ensures the list is refreshed after deletion
     } catch (error: any) {
-      // Check if the error is about relations (which can happen after successful deletion)
-      // If variation was deleted (204), we can ignore relation errors
-      if (error?.status === 400 && error?.error?.message?.includes("relation")) {
-        // Variation was likely deleted successfully, but a relation cleanup failed
-        // This is acceptable - the variation is gone
-        setVariables((prev) => prev.filter((v) => v.id !== deleteId));
-        setDeleteConfirmOpen(false);
-        setDeleteId(null);
-        toast.success("تنوع محصول با موفقیت حذف شد");
-        return;
-      }
-
       console.error("Error deleting product variation:", error);
       toast.error("خطا در حذف تنوع محصول");
     }
   };
 
   const handleBulkUpdate = async () => {
+    if (!canEdit) return;
     if (!selectedRows.length) return;
 
     const priceValue = parseNumberInput(bulkForm.price);
@@ -297,79 +319,99 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
     }
 
     setIsBulkSaving(true);
+    const stockRevisionUpdates: Record<number, number | undefined> = {};
     const stockIdUpdates: Record<number, number | undefined> = {};
-    let updatedCount = 0;
+    // Per row, which writes actually landed. The screen used to show the new
+    // values on every selected row even when a save had failed.
+    const savedWrites = new Map<number, { variation: boolean; stock: boolean }>();
+    const failedIds: number[] = [];
+    const failureLines: string[] = [];
 
     try {
       for (const variationId of selectedRows) {
         const variation = variables.find((v) => v.id === variationId);
         if (!variation) continue;
 
+        const saved = { variation: false, stock: false };
         try {
           const updatePayload: Record<string, unknown> = {};
           if (priceValue !== undefined) updatePayload.Price = priceValue;
           if (discountValue !== undefined) updatePayload.DiscountPrice = discountValue;
           if (publishValue !== undefined) updatePayload.IsPublished = publishValue;
 
-          if (Object.keys(updatePayload).length > 0) {
-            await apiClient.put(`/product-variations/${variationId}`, {
+          const stockChanged = stockValue !== undefined && stockValue !== variation.stock;
+          if (Object.keys(updatePayload).length > 0 || stockChanged) {
+            const committed = await apiClient.put<ProductEditSnapshot>(`/products/${productId}/editor/variations/${variationId}`, {
               data: updatePayload,
-            });
-          }
-
-          if (stockValue !== undefined) {
-            if (variation.stockId) {
-              await apiClient.put(`/product-stocks/${variation.stockId}`, {
-                data: {
-                  Count: stockValue,
-                },
-              });
-            } else {
-              const stockResponse = await apiClient.post("/product-stocks", {
-                data: {
-                  Count: stockValue,
-                  product_variation: variationId,
-                },
-              });
-              const stockData = stockResponse.data as { id: number };
-              stockIdUpdates[variationId] = stockData.id;
+              ...(stockChanged ? { stock: { ...(variation.stockId ? { id: variation.stockId, expectedStockRevision: variation.stockRevision } : {}), Count: stockValue } } : {}),
+            }, { retries: 0 });
+            saved.variation = true;
+            if (stockChanged) {
+              const variation = (committed.data.product.attributes.product_variations.data as ProductVariable[]).find((item) => item.id === variationId);
+              const stock = variation?.attributes.product_stock?.data;
+              stockIdUpdates[variationId] = stock?.id;
+              stockRevisionUpdates[variationId] = stock?.attributes.StockRevision;
+              saved.stock = true;
             }
-          }
-
-          updatedCount++;
-        } catch (error) {
+          } else saved.variation = true;
+        } catch (error: any) {
           console.error(`Error updating variation ${variationId}:`, error);
+          failedIds.push(variationId);
+          failureLines.push(
+            `${variation.variable || `#${variationId}`}: ذخیره انجام نشد`,
+          );
         }
+        savedWrites.set(variationId, saved);
       }
 
-      if (updatedCount > 0) {
-        setVariables((prev) =>
-          prev.map((variation) => {
-            if (!selectedRows.includes(variation.id)) return variation;
+      setVariables((prev) =>
+        prev.map((variation) => {
+          const saved = savedWrites.get(variation.id);
+          if (!saved) return variation;
 
-            return {
-              ...variation,
-              price: priceValue !== undefined ? priceValue : variation.price,
-              discountPrice:
-                discountValue === undefined
-                  ? variation.discountPrice
-                  : discountValue === null
-                    ? undefined
-                    : discountValue,
-              stock: stockValue !== undefined ? stockValue : variation.stock,
-              stockId:
-                stockIdUpdates[variation.id] !== undefined
-                  ? stockIdUpdates[variation.id]
-                  : variation.stockId,
-              isPublished: publishValue !== undefined ? publishValue : variation.isPublished,
-            };
-          }),
-        );
+          return {
+            ...variation,
+            ...(saved.variation
+              ? {
+                  price: priceValue !== undefined ? priceValue : variation.price,
+                  discountPrice:
+                    discountValue === undefined
+                      ? variation.discountPrice
+                      : discountValue === null || discountValue <= 0
+                        ? undefined
+                        : discountValue,
+                  isPublished: publishValue !== undefined ? publishValue : variation.isPublished,
+                }
+              : {}),
+            ...(saved.stock
+              ? {
+                  stockRevision: stockRevisionUpdates[variation.id],
+                  stock: stockValue !== undefined ? stockValue : variation.stock,
+                  stockId:
+                    stockIdUpdates[variation.id] !== undefined
+                      ? stockIdUpdates[variation.id]
+                      : variation.stockId,
+                }
+              : {}),
+          };
+        }),
+      );
+
+      const updatedCount = savedWrites.size - failedIds.length;
+      if (failedIds.length === 0) {
         toast.success(`تغییرات روی ${updatedCount} تنوع اعمال شد`);
         setSelectedRows([]);
         closeBulkModal();
       } else {
-        toast.error("ویرایش گروهی با خطا مواجه شد");
+        if (updatedCount > 0) {
+          toast.success(`تغییرات روی ${updatedCount} از ${savedWrites.size} تنوع اعمال شد`);
+        }
+        toast.error(`این تنوع‌ها ذخیره نشدند:\n${failureLines.join("\n")}`, {
+          duration: 10000,
+          style: { whiteSpace: "pre-line" },
+        });
+        // Leave just the failed rows selected so a retry is one click.
+        setSelectedRows(failedIds);
       }
     } finally {
       setIsBulkSaving(false);
@@ -377,6 +419,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
   };
 
   const confirmBulkDelete = async () => {
+    if (!canEdit) return;
     if (!selectedRows.length) return;
 
     if (!canDeleteVariations) {
@@ -398,14 +441,8 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
           await apiClient.delete(`/product-variations/${variationId}`);
           deletedIds.push(variationId);
         } catch (error: any) {
-          // A relation-cleanup 400 after a successful delete is the same
-          // acceptable quirk confirmDelete() tolerates for single deletes.
-          if (error?.status === 400 && error?.error?.message?.includes("relation")) {
-            deletedIds.push(variationId);
-            continue;
-          }
-
-          if (error?.status === 409) {
+          const code = error?.details?.code || error?.errorCode;
+          if (error?.status === 409 && !code?.startsWith("EDIT_") && !code?.includes("VERSION_CONFLICT")) {
             const variation = variables.find((v) => v.id === variationId);
             reservedStockLabels.push(variation?.variable || `#${variationId}`);
           } else {
@@ -418,6 +455,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
       if (deletedIds.length > 0) {
         setVariables((prev) => prev.filter((v) => !deletedIds.includes(v.id)));
         setSelectedRows((prev) => prev.filter((id) => !deletedIds.includes(id)));
+        onVariationsChanged?.();
       }
 
       const failedCount = reservedStockLabels.length + otherFailureCount;
@@ -477,47 +515,35 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
         return;
       }
 
-      // Update variation data
-      await apiClient.put(`/product-variations/${updatedVariation.id}`, {
-        data: {
-          SKU: updatedVariation.sku,
-          Price: updatedVariation.price,
-          DiscountPrice: updatedVariation.discountPrice || null,
-          IsPublished: updatedVariation.isPublished,
-        },
-      });
+      const original = currentVariationBase ?? variables.find((v) => v.id === updatedVariation.id);
+      const colorChanged =
+        Boolean(updatedVariation.colorId) && updatedVariation.colorId !== original?.colorId;
 
-      // Update stock if it exists, or create new stock
-      if (updatedVariation.stockId) {
-        await apiClient.put(`/product-stocks/${updatedVariation.stockId}`, {
-          data: {
-            Count: Math.min(Math.max(updatedVariation.stock, 0), MAX_STOCK),
-          },
-        });
-      } else {
-        // Create new stock and link to variation
-        const stockResponse = await apiClient.post("/product-stocks", {
-          data: {
-            Count: Math.min(Math.max(updatedVariation.stock, 0), MAX_STOCK),
-            product_variation: updatedVariation.id,
-          },
-        });
-
-        // Update stockId in local state
-        const stockData = stockResponse.data as { id: number };
-        updatedVariation.stockId = stockData.id;
+      if (!canEdit || !original) return;
+      const payload = buildVariationEditorPayload(updatedVariation, original);
+      const committed = await apiClient.put<ProductEditSnapshot>(`/products/${productId}/editor/variations/${updatedVariation.id}`, payload, { retries: 0 });
+      if (payload.stock) {
+        const fresh = (committed.data.product.attributes.product_variations.data as ProductVariable[]).find((item) => item.id === updatedVariation.id);
+        updatedVariation.stockId = fresh?.attributes.product_stock?.data?.id;
+        updatedVariation.stockRevision = fresh?.attributes.product_stock?.data?.attributes.StockRevision;
       }
 
       // Update local state
-      setVariables((prev) =>
-        prev.map((v) => (v.id === updatedVariation.id ? updatedVariation : v)),
-      );
+      const saved = { ...updatedVariation, variable: buildVariableName(updatedVariation) };
+      setVariables((prev) => prev.map((v) => (v.id === saved.id ? saved : v)));
 
       setEditModalOpen(false);
       setCurrentVariation(null);
       toast.success("تنوع محصول با موفقیت به‌روزرسانی شد");
+      if (colorChanged) {
+        apiCache.clearByPattern(/product-variation/i);
+        onVariationsChanged?.();
+      }
     } catch (error) {
       console.error("Error updating product variation:", error);
+      toast.error(
+        translateErrorMessage(extractErrorMessage(error), "ذخیره تنوع محصول با خطا مواجه شد"),
+      );
     }
   };
 
@@ -597,7 +623,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
         onClose={closeEditModal}
         title="ویرایش متغیر محصول"
       >
-        {currentVariation && (
+        <ProductEditorFields>{currentVariation && (
           <>
             {/* Variation Indicator */}
             <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -640,6 +666,44 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             </div>
 
             <div className="space-y-4">
+              {currentVariation.colorId && (
+                <div>
+                  <label className="mb-1 block text-sm">رنگ این تنوع</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <span
+                        className="h-5 w-5 rounded-full border border-slate-200"
+                        style={{ backgroundColor: currentVariation.colorCode || "#f5f5f5" }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-sm text-slate-700">{currentVariation.color}</span>
+                    </div>
+                    <div className="min-w-[14rem] flex-1">
+                      <AsyncSearchPicker
+                        placeholder="تغییر به رنگ دیگر..."
+                        search={searchColors}
+                        selectedIds={new Set([String(currentVariation.colorId)])}
+                        onPick={(option) =>
+                          setCurrentVariation({
+                            ...currentVariation,
+                            colorId: Number(option.id),
+                            color: option.title,
+                            colorCode: option.colorCode,
+                          })
+                        }
+                        renderOption={(option, isSelected) =>
+                          renderColorOption(option, isSelected, "رنگ فعلی")
+                        }
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    فقط رنگ همین تنوع عوض می‌شود. برای تغییر رنگ همه‌ی تنوع‌های یک رنگ، از دکمه
+                    «تغییر رنگ» در جدول ویژگی‌ها استفاده کنید.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="mb-1 block text-sm">کد محصول (SKU)</label>
                 <input
@@ -780,10 +844,11 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
               </button>
             </div>
           </>
-        )}
+        )}</ProductEditorFields>
       </Modal>
 
       <Modal isOpen={bulkModalOpen} onClose={closeBulkModal} title="ویرایش گروهی تنوع‌ها">
+        <ProductEditorFields>
         <p className="mb-4 text-sm text-slate-500">
           تغییرات زیر برای {selectedRows.length} تنوع انتخاب شده اعمال می‌شود. فیلدهایی که خالی
           بمانند بدون تغییر خواهند ماند.
@@ -876,12 +941,14 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             {isBulkSaving ? "در حال اعمال..." : "ثبت تغییرات"}
           </button>
         </div>
+        </ProductEditorFields>
       </Modal>
 
       <ConfirmDialog
         isOpen={deleteConfirmOpen}
         title="حذف متغیر محصول"
         description="آیا از حذف این متغیر محصول اطمینان دارید؟ این عمل قابل بازگشت نیست."
+        confirmDisabled={!canEdit}
         confirmText="حذف"
         cancelText="انصراف"
         onConfirm={confirmDelete}
@@ -898,7 +965,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
         confirmText={isBulkDeleting ? "در حال حذف..." : "حذف"}
         cancelText="انصراف"
         variant="danger"
-        confirmDisabled={isBulkDeleting}
+        confirmDisabled={isBulkDeleting || !canEdit}
         onConfirm={confirmBulkDelete}
         onCancel={() => setBulkDeleteConfirmOpen(false)}
       />

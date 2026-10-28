@@ -16,7 +16,7 @@ import { apiGet, expectApiOk } from "../../helpers/api";
 test.describe("storefront reserve shipping", () => {
   test.use({ storageState: authStorageStatePath("customer") });
 
-  test("@smoke the reserve group endpoint answers with the customer list contract", async ({
+  test("@smoke @api the reserve group endpoint answers with the customer list contract", async ({
     request,
   }) => {
     const response = await apiGet(request, "customer", "/orders/reserve-groups", {
@@ -33,7 +33,7 @@ test.describe("storefront reserve shipping", () => {
     expect(typeof payload.meta?.pagination?.total).toBe("number");
   });
 
-  test("@smoke active-reserve returns null rather than an unusable window", async ({
+  test("@smoke @api active-reserve returns null rather than an unusable window", async ({
     request,
   }) => {
     const response = await apiGet(request, "customer", "/orders/active-reserve");

@@ -26,7 +26,10 @@ async function assertOwnsAddress(strapi, ctx, id: string | number): Promise<bool
     where: { id },
     populate: ["user"],
   });
-  return !!record && Number(record.user?.id) === actorId;
+  // Temporary rows are order-only snapshots or customer-deleted addresses. They
+  // remain in the database so historical orders keep their delivery details,
+  // but behave as deleted on customer-facing CRUD routes.
+  return !!record && record.IsTemporary !== true && Number(record.user?.id) === actorId;
 }
 
 export default factories.createCoreController(ADDRESS_UID, ({ strapi }) => ({
@@ -34,7 +37,7 @@ export default factories.createCoreController(ADDRESS_UID, ({ strapi }) => ({
     if (!(await isSuperadminCaller(strapi, ctx))) {
       const actorId = Number(ctx.state?.user?.id);
       const ownRows = await strapi.db.query(ADDRESS_UID).findMany({
-        where: { user: actorId },
+        where: { user: actorId, IsTemporary: false },
         select: ["id"],
       });
       // An empty $in array does not round-trip through Koa's ctx.query setter (which
@@ -77,7 +80,16 @@ export default factories.createCoreController(ADDRESS_UID, ({ strapi }) => ({
         return ctx.notFound("Address not found");
       }
     }
-    return super.delete(ctx);
+
+    // Orders reference address rows directly. Hard-deleting a saved address lets
+    // the database cascade-delete that relation, erasing the delivery address
+    // from historical orders. Hide it from the customer's address book instead
+    // while preserving the row and every existing order/reserve relation.
+    const address = await strapi.entityService.update(ADDRESS_UID, ctx.params.id, {
+      data: { IsTemporary: true },
+    });
+    const sanitized = await this.sanitizeOutput(address, ctx);
+    return this.transformResponse(sanitized);
   },
 
   // Get addresses for the current logged-in user

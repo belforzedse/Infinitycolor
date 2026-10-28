@@ -83,14 +83,8 @@ describe("PaymentCallback page", () => {
 
     expect(paymentStatusMock).toHaveBeenCalledWith(1);
     expect(mockClearCart).toHaveBeenCalled();
-    expect(trackAnalyticsEventMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ action: "purchase" }),
-    );
-    expect(trackAnalyticsEventMock).toHaveBeenCalledWith({
-      category: "checkout",
-      action: "payment_callback_success",
-      onceKey: "payment-callback-success:1",
-    });
+    // Outcomes (including purchase) are reported by /payment/result only.
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalled();
     expect(logSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
@@ -118,9 +112,7 @@ describe("PaymentCallback page", () => {
     });
 
     expect(mockClearCart).toHaveBeenCalled();
-    expect(trackAnalyticsEventMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ action: "purchase" }),
-    );
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalled();
   });
 
   it("routes to failure when backend verification returns unsuccessful", async () => {
@@ -141,11 +133,7 @@ describe("PaymentCallback page", () => {
     });
 
     expect(mockClearCart).not.toHaveBeenCalled();
-    expect(trackAnalyticsEventMock).toHaveBeenCalledWith({
-      category: "checkout",
-      action: "payment_callback_failed",
-      onceKey: "payment-callback-failed:3",
-    });
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalled();
   });
 
   it("routes to failure without calling verification when URL and storage params are missing", async () => {
@@ -158,13 +146,7 @@ describe("PaymentCallback page", () => {
     });
 
     expect(verifyPaymentMock).not.toHaveBeenCalled();
-    expect(trackAnalyticsEventMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: "checkout",
-        action: "payment_callback_error",
-        onceKey: "payment-callback-error:unknown:MISSING_PARAMS",
-      }),
-    );
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalled();
   });
 
   it("renders the styled loading card while verification is in flight", async () => {
@@ -180,7 +162,7 @@ describe("PaymentCallback page", () => {
     expect(loading.querySelector(".animate-spin")).not.toBeNull();
   });
 
-  it("routes to failure and tracks a stable error code when verification throws", async () => {
+  it("routes to failure when verification throws, without emitting analytics", async () => {
     verifyPaymentMock.mockRejectedValue(
       Object.assign(new Error("network down"), { code: "NETWORK_ERROR" }),
     );
@@ -195,12 +177,6 @@ describe("PaymentCallback page", () => {
     });
 
     expect(mockClearCart).not.toHaveBeenCalled();
-    expect(trackAnalyticsEventMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: "checkout",
-        action: "payment_callback_error",
-        onceKey: "payment-callback-error:123:NETWORK_ERROR",
-      }),
-    );
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,8 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
+import { resolveUserCartId } from "../lib/user-cart-identity";
 
 export type GuestMergeItem = { productVariationId: number; quantity: number };
 
@@ -38,13 +41,10 @@ export async function mergeGuestCart(
     if (previous?.Result) return { ...previous.Result, replayed: true };
 
     const cartQuery = strapi.db.query("api::cart.cart");
-    let cart: any = await cartQuery.findOne({ where: { user: userId }, transacting: trx } as any);
-    if (!cart) {
-      cart = await cartQuery.create({
-        data: { user: userId, Status: "Empty" },
-        transacting: trx,
-      } as any);
-    }
+    // Same resolver as every other cart path, inside this transaction: a failed merge
+    // rolls back a cart it created, and it can never unlink a cart another request made.
+    const cartId = await resolveUserCartId(strapi, userId, trx);
+    const cart: any = await cartQuery.findOne({ where: { id: cartId }, transacting: trx } as any);
 
     const accepted: any[] = [];
     const adjusted: any[] = [];
@@ -59,7 +59,12 @@ export async function mergeGuestCart(
         transacting: trx,
       } as any);
       const product = variation?.product;
-      if (!variation || variation.IsPublished === false || !product || product.removedAt || product.Status !== "Active") {
+      if (
+        !variation ||
+        variation.IsPublished === false ||
+        chargeableVariationPrice(variation) <= 0 ||
+        !isProductPubliclyVisible(product)
+      ) {
         rejected.push({ ...item, reason: "UNAVAILABLE" });
         continue;
       }
@@ -77,7 +82,7 @@ export async function mergeGuestCart(
       }
 
       const resultingQuantity = currentQuantity + appliedQuantity;
-      const unitPrice = Number(variation.DiscountPrice ?? variation.Price ?? 0);
+      const unitPrice = chargeableVariationPrice(variation);
       if (existing) {
         await itemQuery.update({
           where: { id: existing.id },

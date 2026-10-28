@@ -11,9 +11,9 @@ import GlobalErrorDisplay from "@/components/ui/GlobalErrorDisplay";
 import ImageEffects from "@/components/ui/ImageEffects";
 import ServiceWorkerRegistration from "@/components/ui/ServiceWorkerRegistration";
 import AuthInitializer from "@/components/ui/AuthInitializer";
+import AppReadyMarker from "@/components/ui/AppReadyMarker";
 import { Suspense } from "react";
 import { useFreshDataOnVisibility } from "@/hooks/useFreshDataOnVisibility";
-import { ConsentManager } from "@/components/Analytics/ConsentManager";
 import { AnalyticsTracker } from "@/components/Analytics/AnalyticsTracker";
 import PWAInstallPrompt from "@/components/ui/PWAInstallPrompt";
 import { SharedElementTransitionProvider } from "@/contexts/SharedElementTransitionContext";
@@ -28,8 +28,6 @@ export default function Providers({ children }: { children: ReactNode }) {
   return (
     <Provider store={jotaiStore}>
       <SharedElementTransitionProvider>
-        {/* Consent Manager for GDPR/CCPA compliance */}
-        <ConsentManager />
         <Suspense fallback={null}>
           <AnalyticsTracker />
         </Suspense>
@@ -55,6 +53,8 @@ export default function Providers({ children }: { children: ReactNode }) {
         <PWAInstallPrompt />
         <IssueReportWidget />
         <ModelHiringModal />
+        {/* Last, so its effect runs after the page content has hydrated. */}
+        <AppReadyMarker />
       </SharedElementTransitionProvider>
     </Provider>
   );

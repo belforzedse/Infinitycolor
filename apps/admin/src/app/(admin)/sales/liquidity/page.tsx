@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type {
   LiquidityInterval,
   LiquidityResult,
@@ -11,29 +11,30 @@ import {
   type GatewayLiquidityResult,
 } from "@/services/super-admin/reports/gatewayLiquidity";
 import SalesPage from "../_components/SalesPage";
-import { faNum } from "@/utils/faNum";
-import { compactToman } from "@/utils/price";
 import GatewayBreakdownTable from "@/components/SuperAdmin/reports/shared/GatewayBreakdownTable";
 import MetricFormula from "@/components/SuperAdmin/reports/shared/MetricFormula";
 import ReportNotes from "@/components/SuperAdmin/reports/products/ReportNotes";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
-import {
-  AdminSection,
-  ChartSkeleton,
-  EmptyState,
-  ErrorState,
-  MetricCard,
-} from "@/components/admin";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "@/components/SuperAdmin/reports/shared/charts";
+import { AdminSection, ChartSkeleton, EmptyState, ErrorState } from "@/components/admin";
 import { useReportQueryState } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
+import KpiCard from "@/components/SuperAdmin/reports/shared/KpiCard";
+import { DeltaBadge } from "@/components/SuperAdmin/reports/shared/DeltaBadge";
+import { ChartTableToggle } from "@/components/SuperAdmin/reports/shared/ChartTableToggle";
+import TimeSeriesChart, { SeriesLegend } from "@/components/SuperAdmin/reports/shared/TimeSeriesChart";
+import { Notice } from "@/components/SuperAdmin/reports/shared/ui";
+import {
+  NO_COMPARISON_BEFORE_FLOOR,
+  comparablePrevious,
+  salesSeriesRows,
+} from "@/components/SuperAdmin/reports/shared/salesSeries";
+import {
+  compactNumber,
+  numberText,
+  rangeText,
+  relativeChange,
+  tehranToday,
+  tomanText,
+} from "@/components/SuperAdmin/reports/shared/format";
 
 const INTERVAL_OPTIONS: { id: LiquidityInterval; label: string }[] = [
   { id: "day", label: "روزانه" },
@@ -41,21 +42,32 @@ const INTERVAL_OPTIONS: { id: LiquidityInterval; label: string }[] = [
   { id: "month", label: "ماهانه" },
 ];
 
+/**
+ * Without a successful gateway settlement in the window the server falls
+ * back to delivered orders, and none of those orders has a recorded payment:
+ * their cash is unknown, not zero.
+ */
+function cashUnknown(result: LiquidityResult | null) {
+  return result?.ordersDefinition === "completed";
+}
+
 export default function LiquidityReportPage() {
-  // The period now comes from the workspace layout via shared nuqs state, so it
-  // survives navigation between sales subpages and is shareable as a URL. This
-  // page previously kept it in local useState with its own zaman pickers.
+  // The period comes from the workspace layout via shared nuqs state, so it
+  // survives navigation between sales subpages and is shareable as a URL.
   const { start, end, values, setValues } = useReportQueryState<"interval">({
     tab: false,
     extraKeys: ["interval"],
   });
   const interval = (values.interval || "day") as LiquidityInterval;
+  const previousRange = useMemo(() => comparablePrevious({ start, end }), [start, end]);
 
   const [data, setData] = useState<LiquidityResult | null>(null);
+  const [previous, setPrevious] = useState<LiquidityResult | null>(null);
   const [gateways, setGateways] = useState<GatewayLiquidityResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [gatewayError, setGatewayError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -66,29 +78,23 @@ export default function LiquidityReportPage() {
     Promise.allSettled([
       getLiquidity({ ...range, interval }),
       getGatewayLiquidity(range),
+      // The same series for the window just before, only where sales data exists.
+      previousRange ? getLiquidity({ ...previousRange, interval }) : Promise.resolve(null),
     ])
-      .then(([liquidityResult, gatewayResult]) => {
+      .then(([liquidityResult, gatewayResult, previousResult]) => {
         if (!active) return;
         if (liquidityResult.status === "fulfilled") {
           setData(liquidityResult.value);
         } else {
-          setError(
-            getUserFacingErrorMessage(
-              liquidityResult.reason,
-              "خطا در بارگذاری نقدینگی",
-            ),
-          );
+          setData(null);
+          setError(getUserFacingErrorMessage(liquidityResult.reason, "خطا در بارگذاری نقدینگی"));
         }
+        setPrevious(previousResult.status === "fulfilled" ? previousResult.value : null);
         if (gatewayResult.status === "fulfilled") {
           setGateways(gatewayResult.value);
         } else {
           setGateways(null);
-          setGatewayError(
-            getUserFacingErrorMessage(
-              gatewayResult.reason,
-              "تفکیک درگاه‌ها در دسترس نیست",
-            ),
-          );
+          setGatewayError(getUserFacingErrorMessage(gatewayResult.reason, "تفکیک درگاه‌ها در دسترس نیست"));
         }
       })
       .finally(() => {
@@ -97,17 +103,18 @@ export default function LiquidityReportPage() {
     return () => {
       active = false;
     };
-  }, [start, end, interval]);
+  }, [start, end, interval, previousRange, reloadKey]);
+
+  const unknown = cashUnknown(data);
+  const comparable = Boolean(previousRange && previous && !cashUnknown(previous));
+  const today = tehranToday();
 
   return (
     <SalesPage
       title="مجموع نقدینگی"
       actions={
         <div className="flex items-center gap-2">
-          <label
-            className="text-xs shrink-0 text-neutral-500"
-            htmlFor="liquidity-interval"
-          >
+          <label className="text-xs shrink-0 text-neutral-500" htmlFor="liquidity-interval">
             بازه زمانی
           </label>
           <select
@@ -126,43 +133,156 @@ export default function LiquidityReportPage() {
       }
     >
       {error ? (
-        <ErrorState description={error} onRetry={() => setError(null)} />
-      ) : loading ? (
+        <ErrorState description={error} onRetry={() => setReloadKey((key) => key + 1)} />
+      ) : loading && !data ? (
         <>
-          <MetricCard title="مجموع نقدینگی" loading />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <KpiCard title="مجموع نقدینگی" loading />
+            <KpiCard title="سفارش‌های پرداخت‌شده" loading />
+          </div>
           <ChartSkeleton />
         </>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <MetricCard
+            <KpiCard
               title="مجموع نقدینگی"
-              value={Number(data?.total || 0)}
-              format="toman"
-              footer="پول واقعی دریافتی سفارش‌های پرداخت‌شده بر پایه تاریخ پرداخت: شامل هزینه ارسال و خالص از مرجوعی. با «فروش ناخالص» در نمای کلی فروش برابر نیست؛ آن رقم هم هزینه ارسال را دارد اما پیش از کسر تخفیف و بر پایه تاریخ ثبت سفارش است."
+              amount={unknown ? undefined : (data?.total ?? null)}
+              value={unknown ? <span className="text-base font-medium text-amber-800 md:text-lg">نامعلوم</span> : undefined}
+              format={tomanText}
+              delta={
+                unknown ? null : (
+                  <DeltaBadge
+                    change={comparable ? relativeChange(data?.total, previous?.total) : null}
+                    noComparisonText={previousRange ? "بدون مبنای مقایسه" : NO_COMPARISON_BEFORE_FLOOR}
+                  />
+                )
+              }
+              previous={comparable && !unknown ? tomanText(previous?.total) : null}
+              context={unknown ? "برای سفارش‌های این بازه پرداخت موفقی از درگاه ثبت نشده است." : null}
+              info="پول واقعی دریافتی سفارش‌های پرداخت‌شده بر پایه تاریخ پرداخت: شامل هزینه ارسال و خالص از مرجوعی. با «فروش ناخالص» در نمای کلی فروش برابر نیست؛ آن رقم هم هزینه ارسال را دارد اما پیش از کسر تخفیف و بر پایه تاریخ ثبت سفارش است."
+              incomplete={end >= today}
+              order={0}
             />
-            <MetricCard
-              title="سفارش‌های پرداخت‌شده"
-              value={Number(data?.ordersCount || 0)}
-              format="count"
+            <KpiCard
+              title={unknown ? "سفارش‌های تحویل‌شده" : "سفارش‌های پرداخت‌شده"}
+              amount={data?.ordersCount ?? null}
+              format={(value) => numberText(value)}
+              delta={
+                <DeltaBadge
+                  change={comparable ? relativeChange(data?.ordersCount, previous?.ordersCount) : null}
+                  noComparisonText={previousRange ? "بدون مبنای مقایسه" : NO_COMPARISON_BEFORE_FLOOR}
+                />
+              }
+              previous={comparable ? numberText(previous?.ordersCount) : null}
+              incomplete={end >= today}
+              order={1}
             />
           </div>
-          {data?.ordersDefinition === "completed" && (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              در این بازه هیچ تراکنش موفق درگاهی ثبت نشده است، بنابراین ارقام بر پایه سفارش‌های
-              «در حال انجام یا تحویل‌شده» محاسبه شده و مبالغ تسویه‌نشده صفر در نظر گرفته شده‌اند.
-            </p>
-          )}
-          <AdminSection
-            title="روند نقدینگی"
-            description="بر پایه تاریخ پرداخت است، نه تاریخ ثبت سفارش؛ همان سری «روند» گزارش محصولات با ساعت پرداخت."
-          >
-            <LiquidityChart series={data?.series || []} />
-          </AdminSection>
+          {unknown ? (
+            <Notice tone="warning">
+              در این بازه هیچ پرداخت موفقی از درگاه ثبت نشده است؛ به‌جای آن سفارش‌های «در حال انجام یا
+              تحویل‌شده» شمرده شده‌اند. مبلغ دریافتی این سفارش‌ها نامعلوم است و در نمودار خالی مانده، نه صفر.
+            </Notice>
+          ) : null}
+          <LiquidityTrend
+            data={data}
+            previous={comparable ? previous : null}
+            previousRange={comparable ? previousRange : null}
+            beforeFloor={!previousRange}
+            range={{ start, end }}
+            interval={interval}
+            loading={loading}
+            today={today}
+          />
           <GatewayLiquiditySection data={gateways} error={gatewayError} />
         </>
       )}
     </SalesPage>
+  );
+}
+
+function LiquidityTrend({
+  data,
+  previous,
+  previousRange,
+  beforeFloor,
+  range,
+  interval,
+  loading,
+  today,
+}: {
+  data: LiquidityResult | null;
+  previous: LiquidityResult | null;
+  previousRange: { start: string; end: string } | null;
+  /** The previous window starts before sales data exists. */
+  beforeFloor: boolean;
+  range: { start: string; end: string };
+  interval: LiquidityInterval;
+  loading: boolean;
+  today: string;
+}) {
+  const [showTable, setShowTable] = useState(false);
+  const tableId = useId();
+  const unknown = cashUnknown(data);
+  const rows = useMemo(() => {
+    if (!data?.series?.length) return null;
+    return salesSeriesRows({
+      points: data.series,
+      grouping: data.interval ?? interval,
+      range,
+      today,
+      value: (point) => point.total,
+      unknownReason: (point) =>
+        unknown && point.orders > 0
+          ? `${numberText(point.orders)} سفارش تحویل‌شده؛ مبلغ دریافتی ثبت نشده`
+          : null,
+      previousPoints: previous?.series ?? null,
+      previousRange,
+    });
+  }, [data, previous, previousRange, range, interval, today, unknown]);
+
+  return (
+    <AdminSection
+      title="روند نقدینگی"
+      description="بر پایه تاریخ پرداخت است، نه تاریخ ثبت سفارش؛ همان سری «روند» گزارش محصولات با ساعت پرداخت."
+      actions={
+        rows ? (
+          <ChartTableToggle showing={showTable} onToggle={() => setShowTable((shown) => !shown)} controls={tableId} />
+        ) : null
+      }
+    >
+      <div className="space-y-4">
+        {rows ? (
+          <SeriesLegend
+            current={`این دوره: ${rangeText(range.start, range.end)}`}
+            previous={previousRange ? `دوره قبل: ${rangeText(previousRange.start, previousRange.end)}` : null}
+            incomplete={rows.some((row) => row.incomplete)}
+          >
+            {beforeFloor ? (
+              <span className="text-slate-500">مقایسه با دوره قبل نیست: دوره قبل پیش از ۲۳ شهریور است.</span>
+            ) : null}
+          </SeriesLegend>
+        ) : null}
+        {rows ? (
+          <TimeSeriesChart
+            rows={rows}
+            seriesLabel="نقدینگی"
+            valueText={tomanText}
+            axisText={(value) => compactNumber(value)}
+            loading={loading}
+            view={showTable ? "table" : "chart"}
+            tableId={tableId}
+            heightClass="h-[260px] md:h-[340px]"
+            yAxisWidth={76}
+            gradientId="liquidity-trend-fill"
+            emptyText={unknown ? "مبلغ دریافتی این بازه ثبت نشده است." : undefined}
+          />
+        ) : (
+          <EmptyState title="داده‌ای برای نمایش یافت نشد" description="لطفاً بازه زمانی دیگری انتخاب کنید" />
+        )}
+      </div>
+    </AdminSection>
   );
 }
 
@@ -181,14 +301,9 @@ function GatewayLiquiditySection({
   // `shipping <= total` is the other guard: on a window that fell back to the
   // "completed" definition there is no settled cash at all, so `total` is 0 (or
   // below shipping) and the subtraction would render a negative «فروش کالا».
-  // The amber banner above already explains that window; an impossible identity
-  // would only muddy it.
   const shipping = data?.shippingRevenue;
   const canReconcile =
-    typeof shipping === "number" &&
-    Number.isFinite(shipping) &&
-    total > 0 &&
-    shipping <= total;
+    typeof shipping === "number" && Number.isFinite(shipping) && total > 0 && shipping <= total;
   return (
     <div id="gateways">
       <AdminSection
@@ -196,19 +311,18 @@ function GatewayLiquiditySection({
         description="همان جدول «پرداخت و ارسال» گزارش محصولات؛ سفارش‌های ترکیبی (کیف پول + درگاه) زیر هر دو کانال دیده می‌شوند."
       >
         {error ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {error}
-          </div>
+          <Notice tone="warning">{error}</Notice>
         ) : rows.length === 0 ? (
           <EmptyState title="تراکنش موفقی برای تفکیک درگاه‌ها وجود ندارد" />
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <MetricCard title="مجموع دریافتی درگاه‌ها" value={total} format="toman" />
-              <MetricCard
+              <KpiCard title="مجموع دریافتی درگاه‌ها" amount={total} format={tomanText} order={0} />
+              <KpiCard
                 title="درگاه‌های فعال"
-                value={rows.filter((row) => Number(row.total) > 0).length}
-                format="count"
+                amount={rows.filter((row) => Number(row.total) > 0).length}
+                format={(value) => numberText(value)}
+                order={1}
               />
             </div>
             <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white p-4">
@@ -216,6 +330,7 @@ function GatewayLiquiditySection({
                 rows={rows}
                 totalSales={total}
                 ordersCount={data?.paidOrdersCount ?? 0}
+                paymentMix={data?.paymentMix}
               />
             </div>
             {/*
@@ -247,125 +362,6 @@ function GatewayLiquiditySection({
           </div>
         )}
       </AdminSection>
-    </div>
-  );
-}
-
-function LiquidityChart({
-  series,
-}: {
-  series: Array<{ bucket: string; total: number }>;
-}) {
-  if (!series || series.length === 0) {
-    return (
-      <EmptyState
-        title="داده‌ای برای نمایش یافت نشد"
-        description="لطفاً بازه زمانی دیگری انتخاب کنید"
-      />
-    );
-  }
-
-  // Bucket keys are Tehran calendar dates (`YYYY-MM-DD`); anchor them at
-  // Tehran noon so the label never slips a day in another browser zone.
-  const bucketDate = (bucket: string) => new Date(`${bucket}T12:00:00+03:30`);
-  const chartData = series.map((item) => ({
-    date: bucketDate(item.bucket).toLocaleDateString("fa-IR", {
-      month: "short",
-      day: "numeric",
-      year: series.length > 30 ? undefined : "numeric",
-    }),
-    fullDate: bucketDate(item.bucket).toLocaleDateString("fa-IR"),
-    total: Number(item.total),
-    bucket: item.bucket,
-  }));
-
-  // Custom tooltip
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div
-          className="rounded-lg border border-neutral-200 bg-white p-4 shadow-lg"
-          dir="rtl"
-        >
-          <p className="mb-2 font-medium text-neutral-800">{data.fullDate}</p>
-          <p className="text-infinity-primary">
-            <span className="font-medium">نقدینگی:</span> {faNum(data.total)}{" "}
-            تومان
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  return (
-    <div className="w-full" dir="rtl">
-      <div className="rounded-xl border border-neutral-200 bg-white p-2 md:p-4">
-        {/* Charts get a shorter box on phones so the summary above stays visible. */}
-        <div className="h-[260px] md:h-[340px] lg:h-[400px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={chartData}
-              margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis
-                dataKey="date"
-                stroke="#6b7280"
-                fontSize={12}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                tickFormatter={(value) => compactToman(Number(value))}
-                stroke="#6b7280"
-                fontSize={12}
-                width={64}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Line
-                type="monotone"
-                dataKey="total"
-                stroke="url(#liquidityGradient)"
-                strokeWidth={3}
-                dot={{ fill: "#ec4899", strokeWidth: 2, r: 4 }}
-                activeDot={{
-                  r: 6,
-                  stroke: "#ec4899",
-                  strokeWidth: 2,
-                  fill: "#fff",
-                }}
-              />
-              <defs>
-                <linearGradient
-                  id="liquidityGradient"
-                  x1="0%"
-                  y1="0%"
-                  x2="100%"
-                  y2="0%"
-                >
-                  <stop offset="0%" stopColor="#ec4899" />
-                  <stop offset="100%" stopColor="#8b5cf6" />
-                </linearGradient>
-              </defs>
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Chart legend/info - RTL layout */}
-      <div
-        className="text-sm mt-4 flex items-center justify-between text-neutral-600"
-        dir="rtl"
-      >
-        <div className="flex items-center gap-2">
-          <div className="h-3 w-3 rounded-full bg-gradient-to-r from-pink-500 to-purple-500"></div>
-          <span>روند نقدینگی</span>
-        </div>
-        <div className="text-xs text-neutral-500">
-          {series.length} نقطه داده
-        </div>
-      </div>
     </div>
   );
 }

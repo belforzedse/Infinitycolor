@@ -1,7 +1,5 @@
-// Fulfilment runs Started -> Done («تکمیل شده») -> Shipment («ارسال»), so `Done`
-// is a mid-flow bucket and `Shipment` is the terminal one. The «تکمیل شده» tab
-// keeps filtering `Done`; `Shipment` gets its own «ارسال شده» tab rather than
-// being folded into either neighbour.
+// Completing a Started order now advances through Done to Shipment. Keep the
+// Done bucket for historical rows that predate the automatic transition.
 export const ORDER_STATUS_BUCKETS = {
   paying: ["Paying"],
   inprogress: ["Started"],
@@ -18,6 +16,7 @@ export const ORDER_TAB_KEYS = [
   "shipped",
   "cancelled",
   "manual",
+  "anipo_attention",
 ] as const;
 
 export type OrderTabKey = (typeof ORDER_TAB_KEYS)[number];
@@ -32,6 +31,15 @@ export const ORDER_TAB_FILTERS: Record<OrderTabKey, Record<string, unknown> | nu
   // Manual is an order type, not a lifecycle status. It intentionally overlaps
   // the status buckets, matching the existing orders tab.
   manual: { Type: { $eq: "Manual" } },
+  anipo_attention: { $or: [
+    { $and: [
+      { $or: [{ reserve_shipment: { id: { $null: true } } }, { reserve_shipment: { AnipoBarcodeState: { $null: true } } }] },
+      { $or: [{ AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" }] },
+    ] },
+    { Status: { $in: ["Started", "Done", "Shipment"] }, reserve_shipment: { $or: [
+      { AnipoBarcodeState: "NeedsAttention" }, { AnipoRecipientSyncState: "NeedsAttention" },
+    ] } },
+  ] },
 };
 
 export function orderWhereForTab(

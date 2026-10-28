@@ -7,7 +7,7 @@
  */
 import * as Sentry from "@sentry/node";
 
-jest.mock("@sentry/node", () => ({ captureException: jest.fn() }));
+jest.mock("@sentry/node", () => ({ captureException: jest.fn().mockReturnValue("event-id"), isEnabled: jest.fn(() => true), logger: { info: jest.fn() } }));
 
 jest.mock("@strapi/strapi", () => ({
   factories: { createCoreService: (_uid: string, fn: any) => fn },
@@ -22,7 +22,7 @@ jest.mock("../services/lib/discounts", () => ({
 jest.mock("../services/lib/discount-claim", () => ({ claimLimitedDiscountUsage: jest.fn() }));
 jest.mock("../services/lib/financials", () => ({ computeTotals: jest.fn() }));
 jest.mock("../services/lib/contract", () => ({ createContract: jest.fn() }));
-jest.mock("../services/lib/stock", () => ({ reserveStockAtomic: jest.fn() }));
+jest.mock("../services/lib/stock", () => ({ ...jest.requireActual("../services/lib/stock"), reserveStockAtomic: jest.fn() }));
 jest.mock("../services/ops/addCartItem", () => ({ addCartItemOp: jest.fn() }));
 jest.mock("../services/ops/updateCartItem", () => ({ updateCartItemOp: jest.fn() }));
 jest.mock("../services/ops/removeCartItem", () => ({ removeCartItemOp: jest.fn() }));
@@ -55,6 +55,7 @@ jest.mock("../../payment-gateway/services/snappay-security", () => ({
 
 const { createCheckoutQuote } = require("../services/lib/checkout-quote");
 const createCartService = require("../services/cart").default;
+const { StockReservationError } = require("../services/lib/stock");
 
 const QUOTE_HASH = "quote-hash";
 
@@ -84,7 +85,7 @@ const finalize = (service: any) =>
   });
 
 describe("finalizeCartToOrder — unmapped failures", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => { jest.clearAllMocks(); jest.mocked(Sentry.captureException).mockReturnValue("event-id"); jest.mocked(Sentry.isEnabled).mockReturnValue(true); });
 
   it("reports a colon-less database failure and still returns the shopper-facing 400 shape", async () => {
     const dbError = new Error(
@@ -107,7 +108,7 @@ describe("finalizeCartToOrder — unmapped failures", () => {
     );
   });
 
-  it("also reports failures that carry a mapped error code, at a lower severity", async () => {
+  it("keeps an unclassified stock failure actionable", async () => {
     const { service } = buildService(() =>
       Promise.reject(new Error("STOCK_RESERVATION_FAILED: reserve_failed")),
     );
@@ -118,7 +119,7 @@ describe("finalizeCartToOrder — unmapped failures", () => {
     expect(Sentry.captureException).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
-        level: "warning",
+        level: "error",
         tags: expect.objectContaining({
           area: "checkout",
           errorCode: "STOCK_RESERVATION_FAILED",
@@ -126,6 +127,23 @@ describe("finalizeCartToOrder — unmapped failures", () => {
         }),
       }),
     );
+  });
+
+  it.each(["insufficient_stock", "database_failure", "missing_inventory", "invalid_quantity"])("classifies %s without reading provider error text", async (reason) => {
+    const original = process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS;
+    process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS = "true";
+    try {
+      const { service } = buildService(() => Promise.reject(new StockReservationError(reason, "private db text")));
+      const result = await finalize(service);
+      expect(result.telemetryOwner).toBe("backend");
+      expect(result.details).toEqual(reason === "insufficient_stock" ? { reason } : {});
+      if (reason === "insufficient_stock") {
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+        expect(Sentry.logger.info).toHaveBeenCalledWith("checkout.failure", expect.objectContaining({ reasonCode: reason }));
+      } else {
+        expect(Sentry.captureException).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ level: "error", tags: expect.objectContaining({ stock_failure_reason: reason }) }));
+      }
+    } finally { process.env.SENTRY_EXPECTED_EVENTS_TO_LOGS = original; }
   });
 
   it("never lets a reporting failure escalate the shopper's 400 into a 500", async () => {
@@ -142,6 +160,16 @@ describe("finalizeCartToOrder — unmapped failures", () => {
       "Failed to report checkout failure",
       expect.any(Error),
     );
+  });
+
+  it("does not mark an unavailable backend reporter as the incident owner", async () => {
+    jest.mocked(Sentry.isEnabled).mockReturnValue(false);
+    const { service } = buildService(() => Promise.reject(new Error("Unknown error")));
+    const result = await finalize(service);
+    expect(result).toMatchObject({ success: false, errorCode: "UNKNOWN_ERROR" });
+    // captureException can return an event ID even when no enabled client exists.
+    expect(Sentry.captureException).toHaveBeenCalled();
+    expect(result.telemetryOwner).toBeUndefined();
   });
 
   it("returns CART_EMPTY when the cart has no items, so the storefront can drop it", async () => {

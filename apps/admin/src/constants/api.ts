@@ -72,6 +72,8 @@ export const ENDPOINTS = {
     DETAIL: (id: number) => `/stories/${id}`,
     SEEN_MARK: "/story-seens/mark",
     SEEN_MINE: "/story-seens/mine",
+    SEEN_ITEM_MARK: "/story-seens/mark-item",
+    SEEN_ITEMS_MINE: "/story-seens/mine-items",
   },
   FILE: {
     UPLOAD: "/upload",

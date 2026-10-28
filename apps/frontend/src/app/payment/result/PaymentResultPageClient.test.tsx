@@ -480,6 +480,68 @@ describe("PaymentResultPageClient", () => {
         ...overrides,
       });
 
+    const releaseButtonName = "پرداخت نکردم؛ اعتبار کیف پولم آزاد شود";
+
+    it("hides the release button for gateways whose abandon call does nothing", async () => {
+      // The server answers `not_applicable` for every gateway but SnappPay, so
+      // a button here would silently fail.
+      getStatus.mockResolvedValue(
+        heldSnappay({ paymentGateway: "ZarinPal", transactionId: "ZP-1" }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.queryByRole("button", { name: releaseButtonName })).toBeNull();
+    });
+
+    it("holds the button back for two minutes after the credit is committed", async () => {
+      // A shopper redirected seconds ago is probably still paying; offering to
+      // cancel their payment right then invites them to cancel one they are
+      // about to complete.
+      getStatus.mockResolvedValue(
+        heldSnappay({ walletHeldAt: new Date(Date.now() - 30_000).toISOString() }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.queryByRole("button", { name: releaseButtonName })).toBeNull();
+    });
+
+    it("offers it again once the grace period has passed", async () => {
+      getStatus.mockResolvedValue(
+        heldSnappay({ walletHeldAt: new Date(Date.now() - 5 * 60_000).toISOString() }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.getByRole("button", { name: releaseButtonName })).toBeVisible();
+    });
+
+    it("hides it in the states where the shopper's claim cannot authorize anything", async () => {
+      getStatus.mockResolvedValue(heldSnappay({ walletHoldState: "reconciling" }));
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      expect(screen.queryByRole("button", { name: releaseButtonName })).toBeNull();
+    });
+
+    it("promises an automatic release without requiring any action", async () => {
+      getStatus.mockResolvedValue(
+        heldSnappay({ walletHoldBoundAt: new Date(Date.now() + 60 * 60_000).toISOString() }),
+      );
+
+      render(<PaymentResultPageClient />);
+
+      expect(await screen.findByTestId("payment-result")).toBeVisible();
+      // The customer-visible contract of the whole recovery feature.
+      expect(screen.getByText(/به‌طور خودکار آزاد می‌شود/)).toBeVisible();
+      expect(screen.getByText(/نیازی به هیچ اقدامی نیست/)).toBeVisible();
+    });
+
     it("offers the release and sends the shopper's claim once", async () => {
       // The shopper opened SnappPay with a wallet split and came back without
       // paying. Their credit is committed to a checkout only the provider can

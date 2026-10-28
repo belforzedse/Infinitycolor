@@ -1,6 +1,6 @@
+import { effectiveOrderDeliveryAddress, updateExistingOrderDeliverySnapshot } from "../../../../utils/orderDeliverySnapshot";
 import type { Strapi } from "@strapi/strapi";
 import { canonicalIranPhone } from "@repo/auth-core";
-import { normalizeAnipoPostalCode } from "./anipoOrder";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { logAdminOrderAddressUpdate } from "../../../../utils/adminActivity";
@@ -25,6 +25,17 @@ export class OrderAddressValidationError extends Error {
 
 const cleanText = (value: unknown) => String(value ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
 
+// Checkout accepts the all-zero placeholder when the shopper doesn't know the
+// code, so the editor must too -- otherwise a recipient on such an order can
+// never be corrected. Anipo still omits the placeholder when it registers.
+const normalizeEditorPostalCode = (value: unknown) => {
+  const digits = cleanText(value)
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/\D/g, "");
+  return /^\d{10}$/.test(digits) ? digits : undefined;
+};
+
 export function parseOrderAddressInput(value: unknown): AddressInput {
   const input = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
   const allowed = new Set([
@@ -47,7 +58,7 @@ export function parseOrderAddressInput(value: unknown): AddressInput {
   if (fullAddress.length < 5 || fullAddress.length > 1_000) {
     throw new OrderAddressValidationError("fullAddress", "آدرس ارسال باید بین ۵ تا ۱۰۰۰ نویسه باشد");
   }
-  const postalCode = normalizeAnipoPostalCode(input.postalCode);
+  const postalCode = normalizeEditorPostalCode(input.postalCode);
   if (!postalCode) {
     throw new OrderAddressValidationError("postalCode", "کدپستی باید ۱۰ رقم معتبر باشد");
   }
@@ -65,7 +76,7 @@ export function parseOrderAddressInput(value: unknown): AddressInput {
 const comparable = (address: any) => ({
   shippingCityId: Number(address?.shipping_city?.id || 0),
   fullAddress: cleanText(address?.FullAddress),
-  postalCode: normalizeAnipoPostalCode(address?.PostalCode) || "",
+  postalCode: normalizeEditorPostalCode(address?.PostalCode) || "",
   recipientName: cleanText(address?.FullName),
   recipientPhone: canonicalIranPhone(address?.Phone) || "",
 });
@@ -159,17 +170,20 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
           transacting: trx,
         } as any)
       : null;
-    const fields = changedFields(comparable(order.delivery_address), input);
+    const effectiveAddress = await effectiveOrderDeliveryAddress(strapi, orderId, order.delivery_address, trx);
+    const fields = changedFields(comparable(effectiveAddress), input);
+    const effectiveMembers = await Promise.all(memberOrders.map((member: any) =>
+      effectiveOrderDeliveryAddress(strapi, Number(member.id), member.delivery_address, trx)));
     const allAlreadyMatch =
       fields.length === 0 &&
-      memberOrders.every(
-        (member: any) => changedFields(comparable(member.delivery_address), input).length === 0,
+      effectiveMembers.every(
+        (address: any) => changedFields(comparable(address), input).length === 0,
       ) &&
       (!group || changedFields(comparable(group.delivery_address), input).length === 0);
     if (allAlreadyMatch) {
       return {
         noChange: true as const,
-        address: order.delivery_address,
+        address: effectiveAddress,
         orders: memberOrders,
         reserveGroupId,
       };
@@ -195,8 +209,12 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
 
     const now = new Date();
     const queued: Array<{ orderId: number; revision: number }> = [];
+    const parcelSync = Boolean(reserveGroupId &&
+      (hasActiveAnipoRegistration(group) || group?.AnipoRegistrationAttemptedAt || memberOrders.some(hasActiveAnipoRegistration)) &&
+      !["Stopped", "Voided"].includes(String(group?.AnipoBarcodeState || "")));
+    const parcelRevision = Number(group?.AnipoRecipientRevision || 0) + 1;
     for (const member of memberOrders) {
-      const activeAnipo = hasActiveAnipoRegistration(member);
+      const activeAnipo = !reserveGroupId && hasActiveAnipoRegistration(member);
       const revision = Number(member.AnipoRecipientRevision || 0) + (activeAnipo ? 1 : 0);
       await strapi.db.query("api::order.order").update({
         where: { id: member.id },
@@ -214,6 +232,7 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
         },
         transacting: trx,
       } as any);
+      await updateExistingOrderDeliverySnapshot(strapi, Number(member.id), { ...snapshot, shipping_city: city }, trx);
       if (activeAnipo) queued.push({ orderId: Number(member.id), revision });
       await logAdminOrderAddressUpdate(
         strapi,
@@ -232,7 +251,10 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
     if (reserveGroupId) {
       await strapi.db.query("api::reserve-group.reserve-group").update({
         where: { id: reserveGroupId },
-        data: { delivery_address: snapshot.id, lastActivityAt: now },
+        data: { delivery_address: snapshot.id, lastActivityAt: now, AnipoRecipientRevision: parcelRevision,
+          ...(parcelSync ? { AnipoRecipientRevision: parcelRevision, AnipoRecipientSyncState: "Pending",
+            AnipoRecipientSyncAttempts: 0, AnipoRecipientSyncLastAttemptAt: null, AnipoRecipientSyncLastError: null } : {}),
+        },
         transacting: trx,
       } as any);
     }
@@ -248,11 +270,20 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
       })),
       reserveGroupId,
       queued,
+      parcelSync,
+      parcelRevision,
       affectedOrderIds,
     };
   });
 
   if ("notFound" in result) return ctx.notFound("سفارش پیدا نشد");
+  if ("parcelSync" in result && result.parcelSync && result.orders[0]) {
+    try {
+      await enqueueAnipoRecipientSync(Number(result.orders[0].id), result.parcelRevision);
+    } catch (error) {
+      strapi.log.error("Failed to enqueue parcel recipient synchronization", { groupId: result.reserveGroupId });
+    }
+  }
   for (const pending of result.queued || []) {
     try {
       await enqueueAnipoRecipientSync(pending.orderId, pending.revision);
@@ -287,7 +318,8 @@ export async function adminUpdateAddressHandler(strapi: Strapi, ctx: any) {
           },
         },
       },
-      carrierSync: syncStatus(result.orders),
+      carrierSync: "parcelSync" in result && result.parcelSync
+        ? { required: true, status: "pending" } : syncStatus(result.orders),
     },
   };
   return ctx.body;

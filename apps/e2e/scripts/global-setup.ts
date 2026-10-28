@@ -290,8 +290,12 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
   });
 
   try {
+    // In CI the auth server is `next dev`, which compiles this route on its
+    // first request. That took 29.7 s on a loaded runner (pipeline 1108),
+    // just inside the default 30 s, and failed the whole smoke job.
     const response = await context.post("/api/auth/infinity/password/sign-in", {
       data: credentials,
+      timeout: 120_000,
     });
     if (!response.ok()) {
       throw new Error(
@@ -350,10 +354,7 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
     state.origins = [
       {
         origin: new URL(storefrontBaseURL()).origin,
-        localStorage: [
-          { name: "analytics-consent", value: "denied" },
-          { name: "pdp_debug", value: "0" },
-        ],
+        localStorage: [{ name: "pdp_debug", value: "0" }],
       },
     ];
 
@@ -364,11 +365,39 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
   }
 }
 
+/**
+ * CI runs the storefront with `next dev`, which compiles a route on its first
+ * request. On a loaded runner the PLP route took longer than a spec's 15 s
+ * request timeout (pipeline 1109), and compiling /api/revalidate while the
+ * backend was already posting to it answered those posts with a JSON parse
+ * error. Requesting each listed path once, with a generous timeout, moves that
+ * compile out of the tests. Any HTTP status counts: the point is the compile.
+ */
+async function warmStorefrontRoutes() {
+  const paths = (process.env.E2E_WARM_STOREFRONT_PATHS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const timeoutMs = Number(process.env.E2E_WARM_TIMEOUT_MS || 240_000);
+  for (const path of paths) {
+    const started = Date.now();
+    const response = await fetchWithTimeout(
+      new URL(path, storefrontBaseURL()).toString(),
+      { headers: { Accept: "text/html" }, cache: "no-store" },
+      timeoutMs,
+    );
+    await response.text().catch(() => "");
+    console.log(`[e2e] warmed storefront ${path} (${response.status}) in ${Date.now() - started} ms`);
+  }
+}
+
 export default async function globalSetup() {
   if (process.env.E2E_SKIP_SERVICE_WAIT !== "1") {
     const healthUrl = process.env.E2E_API_HEALTH_URL || `${strapiOrigin()}/_health`;
     await waitForEndpoint(healthUrl, Number(process.env.E2E_SERVICE_TIMEOUT_MS || 120_000));
   }
+
+  await warmStorefrontRoutes();
 
   const seedMode = process.env.E2E_SEED_MODE || "auto";
   let seedSummary: SeedSummary | undefined;

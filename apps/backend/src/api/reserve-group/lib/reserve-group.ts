@@ -637,6 +637,7 @@ export async function claimGroupShippingBarcode(
        FROM orders_reserve_shipment_links l
       WHERE l.order_id = o.id
         AND l.reserve_group_id = ?
+        AND o.status IN ('Started', 'Done', 'Shipment')
         AND (o.shipping_barcode IS NULL OR o.shipping_barcode = '')
       RETURNING o.id`,
     [effective, params.groupId],

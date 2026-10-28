@@ -1,5 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
 import { runRawSql } from "../../../../utils/transactionExecutor";
+import { chargeableVariationPrice } from "../../../../utils/productAvailability";
 
 /**
  * Post-payment cart cleanup, scoped to what the checkout actually consumed.
@@ -127,9 +128,7 @@ export async function consumeCheckoutCartLines(
       const remaining = currentCount - quantity;
 
       if (remaining > 0) {
-        const unitPrice = Number(
-          cartItem.product_variation?.DiscountPrice ?? cartItem.product_variation?.Price ?? 0,
-        );
+        const unitPrice = chargeableVariationPrice(cartItem.product_variation);
         await itemQuery.update({
           where: { id: cartItemId },
           data: { Count: remaining, Sum: remaining * unitPrice },

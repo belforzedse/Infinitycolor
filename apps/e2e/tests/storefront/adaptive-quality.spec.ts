@@ -123,7 +123,6 @@ function collectStrictRuntimeErrors(page: Page) {
 
 async function installAdaptiveCapabilities(page: Page, preset: AdaptivePreset) {
   await page.addInitScript((options: AdaptivePreset) => {
-    window.localStorage.setItem("analytics-consent", "denied");
     window.localStorage.setItem("pdp_debug", "0");
 
     const originalMatchMedia = window.matchMedia.bind(window);

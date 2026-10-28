@@ -55,9 +55,24 @@ jest.mock("@/lib/analytics", () => ({
 }));
 
 jest.mock("@/lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async (options: unknown) => {
+        try {
+          const token = await (
+            jest.requireMock("@/lib/central-auth") as {
+              centralAuth: {
+                tokenManager: { getToken: (options: unknown) => Promise<string | null> };
+              };
+            }
+          ).centralAuth.tokenManager.getToken(options);
+          return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+        } catch (error) {
+          return { state: "unavailable", reasonCode: "network" };
+        }
+      }),
     },
   },
   subscribeToAuthState: jest.fn(),
@@ -99,10 +114,14 @@ const cartItem: CartItem = {
 };
 
 function CartProbe() {
-  const { cartItems, removeFromCart } = useCart();
+  const { cartItems, removeFromCart, isCartReady, authRecoveryUnavailable, retryAuthRecovery } =
+    useCart();
 
   return (
     <div>
+      <span data-testid="cart-ready">{String(isCartReady)}</span>
+      <span data-testid="auth-unavailable">{String(authRecoveryUnavailable)}</span>
+      <button onClick={retryAuthRecovery}>retry auth</button>
       <span data-testid="cart-count">{cartItems.length}</span>
       <span data-testid="cart-names">{cartItems.map((item) => item.name).join("|")}</span>
       <button type="button" onClick={() => removeFromCart(cartItem.id)}>
@@ -383,6 +402,144 @@ describe("CartProvider identity and storage hardening", () => {
     localStorage.clear();
   });
 
+  it("does not initialize or overwrite a guest cart during temporary auth failure", async () => {
+    const stored = JSON.stringify([cartItem]);
+    localStorage.setItem("cart", stored);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValueOnce(
+      new Error("temporary network failure"),
+    );
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("auth-unavailable")).toHaveTextContent("true"));
+    expect(screen.getByTestId("cart-ready")).toHaveTextContent("false");
+    expect(localStorage.getItem("cart")).toBe(stored);
+    expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "retry auth" }));
+    await waitFor(() => expect(screen.getByTestId("cart-ready")).toHaveTextContent("true"));
+    expect(screen.getByTestId("cart-count")).toHaveTextContent("1");
+  });
+
+  describe("automatic session recovery", () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it("recovers from a failed initial check and restores the guest cart", async () => {
+      const stored = JSON.stringify([cartItem]);
+      localStorage.setItem("cart", stored);
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mockRejectedValueOnce(
+        new Error("network"),
+      );
+      render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("false");
+      expect(localStorage.getItem("cart")).toBe(stored);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1_000);
+      });
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("true");
+      expect(screen.getByTestId("auth-unavailable")).toHaveTextContent("false");
+      expect(screen.getByTestId("cart-count")).toHaveTextContent("1");
+      expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+    });
+
+    it("bounds retries, preserves an unknown identity, and recovers when connectivity returns", async () => {
+      const stored = JSON.stringify([cartItem]);
+      localStorage.setItem("cart", stored);
+      const getToken = mockedCentralAuth.centralAuth.tokenManager.getToken;
+      getToken.mockRejectedValue(new Error("network"));
+      render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      for (const delay of [1_000, 3_000, 8_000, 60_000]) {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(delay);
+        });
+      }
+      expect(getToken).toHaveBeenCalledTimes(4);
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("false");
+      expect(localStorage.getItem("cart")).toBe(stored);
+      expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+      getToken.mockResolvedValue(null);
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("true");
+      expect(screen.getByTestId("cart-count")).toHaveTextContent("1");
+    });
+
+    it("does not apply a recovery result after logout", async () => {
+      let resolve!: (token: string) => void;
+      const getToken = mockedCentralAuth.centralAuth.tokenManager.getToken;
+      getToken.mockRejectedValueOnce(new Error("network")).mockImplementationOnce(
+        () =>
+          new Promise<string>((r) => {
+            resolve = r;
+          }),
+      );
+      render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1_000);
+      });
+      act(() => mockAuthStateListener?.({ type: "logout", at: Date.now() }));
+      await act(async () => resolve("old-account"));
+      expect(screen.getByTestId("cart-ready")).toHaveTextContent("true");
+      expect(screen.getByTestId("auth-unavailable")).toHaveTextContent("false");
+      expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+    });
+
+    it("cleans up retry timers and recovery listeners on unmount", async () => {
+      const getToken = mockedCentralAuth.centralAuth.tokenManager.getToken;
+      getToken.mockRejectedValue(new Error("network"));
+      const { unmount } = render(
+        <CartProvider>
+          <CartProbe />
+        </CartProvider>,
+      );
+      await act(async () => {});
+      unmount();
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+        window.dispatchEvent(new Event("focus"));
+        await jest.advanceTimersByTimeAsync(60_000);
+      });
+      expect(getToken).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("discards a token result arriving after explicit logout", async () => {
+    let resolve!: (value: string) => void;
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockImplementationOnce(
+      () =>
+        new Promise<string>((r) => {
+          resolve = r;
+        }),
+    );
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+    act(() => mockAuthStateListener?.({ type: "logout", at: Date.now() }));
+    await act(async () => resolve("old-account"));
+    await waitFor(() => expect(screen.getByTestId("cart-ready")).toHaveTextContent("true"));
+    expect(mockCartService.getUserCart).not.toHaveBeenCalled();
+  });
+
   it("discards malformed guest cart storage without crashing", async () => {
     localStorage.setItem("cart", JSON.stringify({ item: cartItem }));
 
@@ -571,5 +728,186 @@ describe("CartProvider guest cart handover", () => {
 
     await waitFor(() => expect(screen.getByTestId("cart-count")).toHaveTextContent("1"));
     expect(mockCartService.mergeGuestCart).not.toHaveBeenCalled();
+  });
+});
+
+const mockAnalytics = jest.requireMock("@/lib/analytics") as {
+  trackFunnelStep: jest.Mock;
+  trackAnalyticsEvent: jest.Mock;
+};
+
+function analyticsActions(): string[] {
+  return mockAnalytics.trackAnalyticsEvent.mock.calls.map(([event]) => event.action);
+}
+
+function SignedInCartProbe() {
+  const { cartItems, addToCart, removeFromCart, updateQuantity } = useCart();
+  const item = cartItems[0];
+  return (
+    <div>
+      <span data-testid="signed-in-count">{cartItems.length}</span>
+      <button type="button" disabled={!item} onClick={() => item && removeFromCart(item.id)}>
+        remove first
+      </button>
+      <button
+        type="button"
+        disabled={!item}
+        onClick={() => item && updateQuantity(item.id, item.quantity + 1)}
+      >
+        increase first
+      </button>
+      <button type="button" onClick={() => addToCart({ ...cartItem, variationId: "209" })}>
+        add
+      </button>
+    </div>
+  );
+}
+
+describe("CartProvider analytics outcomes", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue("account-a");
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation(() => jest.fn());
+    mockIsOnline.mockReturnValue(true);
+    mockCartService.getUserCart.mockResolvedValue(apiCart("محصول تست", 1, 5));
+    mockCartService.checkCartStock.mockResolvedValue({ valid: true });
+    mockCartService.updateCartItem.mockResolvedValue({});
+    mockCartService.removeCartItem.mockResolvedValue({});
+    mockCartService.addItemToCart.mockResolvedValue({});
+    localStorage.clear();
+  });
+
+  async function renderSignedIn() {
+    render(
+      <CartProvider>
+        <SignedInCartProbe />
+      </CartProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("signed-in-count")).toHaveTextContent("1"));
+  }
+
+  it("records update_quantity only after the server accepts it", async () => {
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "increase first" }));
+
+    await waitFor(() => expect(analyticsActions()).toContain("update_quantity"));
+    expect(mockCartService.updateCartItem).toHaveBeenCalledWith(101, 2);
+    expect(mockAnalytics.trackAnalyticsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "update_quantity",
+        properties: expect.objectContaining({ quantity: 2 }),
+      }),
+    );
+  });
+
+  it("records no update_quantity when the server rejects it", async () => {
+    mockCartService.updateCartItem.mockRejectedValueOnce(new Error("boom"));
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "increase first" }));
+
+    await waitFor(() => expect(mockNotify.error).toHaveBeenCalled());
+    expect(analyticsActions()).not.toContain("update_quantity");
+  });
+
+  it("records remove_from_cart only after the server accepts it", async () => {
+    await renderSignedIn();
+    mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
+    fireEvent.click(screen.getByRole("button", { name: "remove first" }));
+
+    await waitFor(() => expect(analyticsActions()).toEqual(["remove_from_cart"]));
+    expect(mockCartService.removeCartItem).toHaveBeenCalledWith(101);
+  });
+
+  it("records no remove_from_cart when the server rejects it", async () => {
+    mockCartService.removeCartItem.mockRejectedValueOnce(new Error("boom"));
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "remove first" }));
+
+    await waitFor(() =>
+      expect(mockNotify.error).toHaveBeenCalledWith("حذف کالا از سبد خرید با خطا مواجه شد"),
+    );
+    expect(analyticsActions()).not.toContain("remove_from_cart");
+  });
+
+  it("says why an add was refused and resyncs the cart", async () => {
+    await renderSignedIn();
+    mockCartService.getUserCart.mockClear();
+    // The shape ApiClient rejects with for ctx.badRequest("Product is currently unavailable").
+    mockCartService.addItemToCart.mockRejectedValueOnce({
+      message: "Product is currently unavailable",
+      status: 400,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+
+    await waitFor(() =>
+      expect(mockNotify.error).toHaveBeenCalledWith("این محصول در حال حاضر قابل خرید نیست."),
+    );
+    expect(mockCartService.getUserCart).toHaveBeenCalled();
+  });
+
+  it("records add_to_cart once on success and never on failure", async () => {
+    await renderSignedIn();
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+    await waitFor(() => expect(mockAnalytics.trackFunnelStep).toHaveBeenCalledTimes(1));
+    expect(mockAnalytics.trackFunnelStep).toHaveBeenCalledWith("add_to_cart", expect.anything());
+
+    mockAnalytics.trackFunnelStep.mockClear();
+    mockCartService.addItemToCart.mockRejectedValueOnce(new Error("out of stock"));
+    fireEvent.click(screen.getByRole("button", { name: "add" }));
+    await waitFor(() => expect(mockCartService.addItemToCart).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockAnalytics.trackFunnelStep).not.toHaveBeenCalled();
+  });
+});
+
+describe("CartProvider login-time stock correction", () => {
+  function NoticeProbe() {
+    const { stockNotice, cartItems, isLoading } = useCart();
+    return (
+      <div>
+        <span data-testid="loading">{String(isLoading)}</span>
+        <span data-testid="count">{cartItems.length}</span>
+        <span data-testid="notice">
+          {stockNotice ? stockNotice.removedNames.join("|") : "none"}
+        </span>
+      </div>
+    );
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue("account-a");
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation(() => jest.fn());
+    mockIsOnline.mockReturnValue(true);
+    localStorage.clear();
+  });
+
+  it("names a line the stock check removed when the cart loads", async () => {
+    mockCartService.checkCartStock.mockResolvedValue({
+      success: true,
+      valid: false,
+      cartIsEmpty: true,
+      itemsRemoved: [
+        {
+          cartItemId: 7,
+          productVariationId: 9,
+          productTitle: "E2E Fixture Product S17",
+          reason: "inactive",
+        },
+      ],
+    });
+    mockCartService.getUserCart.mockResolvedValue({ id: 1, cart_items: [] });
+
+    render(
+      <CartProvider>
+        <NoticeProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
+    await waitFor(() => expect(mockCartService.getUserCart).toHaveBeenCalled());
+    expect(screen.getByTestId("notice")).toHaveTextContent("E2E Fixture Product S17");
   });
 });

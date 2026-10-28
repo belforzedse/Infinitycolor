@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import UserSearchSection, { type User } from "@/components/SuperAdmin/Order/UserSearchSection";
 import ProductSelectionSection from "@/components/SuperAdmin/Order/ProductSelectionSection";
+import ProvinceCityField from "@/components/SuperAdmin/UpsertPage/ContentWrapper/Fields/ProvinceCityField";
 import Footer from "@/components/SuperAdmin/Order/SummaryFooter";
 import Sidebar from "@/components/SuperAdmin/Order/Sidebar";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
@@ -30,6 +31,8 @@ export type OrderFormData = SuperAdminOrderDetail & {
 
 export default function Page() {
   const router = useRouter();
+  const [deliveryProvinceId, setDeliveryProvinceId] = useState("");
+  const [deliveryCityId, setDeliveryCityId] = useState("");
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [selectedItems, setSelectedItems] = useState<OrderFormItem[]>([]);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -181,6 +184,11 @@ export default function Page() {
 
   const submitOrder = async (data: OrderFormData) => {
     try {
+      if ((data.address?.trim() || data.postalCode?.trim() || deliveryCityId) &&
+        (!deliveryCityId || !data.address?.trim() || !data.postalCode?.trim() || !data.userName?.trim() || !data.phoneNumber?.trim())) {
+        toast.error("اطلاعات گیرنده، شهر، آدرس و کد پستی را کامل کنید");
+        return;
+      }
       logger.info("Creating order", {
         Status: data.orderStatus,
         userId: selectedUser?.id || null,
@@ -214,6 +222,10 @@ export default function Page() {
             CustomerPhone: data.phoneNumber,
             CustomerEmail: data.email || null,
             CustomerName: data.userName || null,
+            ...(deliveryCityId ? { deliveryAddress: {
+              shippingCityId: Number(deliveryCityId), fullAddress: data.address, postalCode: data.postalCode,
+              recipientName: data.userName, recipientPhone: data.phoneNumber,
+            } } : {}),
           },
         },
       );
@@ -484,6 +496,12 @@ export default function Page() {
           />
         </div>
       </div>
+
+      <section className="rounded-2xl bg-white p-4" dir="rtl">
+        <h3 className="mb-3 text-base font-semibold text-slate-900">شهر مقصد</h3>
+        <ProvinceCityField provinceValue={deliveryProvinceId} cityValue={deliveryCityId}
+          onProvinceChange={setDeliveryProvinceId} onCityChange={setDeliveryCityId} />
+      </section>
 
       {/* Order Form */}
       <UpsertPageContentWrapper<OrderFormData>

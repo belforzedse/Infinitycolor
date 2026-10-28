@@ -181,6 +181,7 @@ function registerOrderLifecycle(strapi: Strapi) {
             "ShippingCost",
             "Description",
             "Note",
+            "CancellationReason",
             "ShippingBarcode",
           ],
           populate: {
@@ -193,6 +194,19 @@ function registerOrderLifecycle(strapi: Strapi) {
         }
       );
 
+      const data = (event as any).params?.data;
+      if (data) {
+        // Notification scheduling is server-owned, including generic admin edits.
+        delete data.ShippingSmsDueAt;
+        delete data.ShippingSmsCompletedAt;
+        delete data.ShippingSmsLastAttemptAt;
+        if (
+          ["Done", "Shipment"].includes(data.Status) &&
+          !["Done", "Shipment"].includes((previous as any)?.Status)
+        ) {
+          data.ShippingSmsDueAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+        }
+      }
       (event as any).state = { ...((event as any).state || {}), previousOrder: previous };
     },
 
@@ -213,6 +227,7 @@ function registerOrderLifecycle(strapi: Strapi) {
             "ShippingCost",
             "Description",
             "Note",
+            "CancellationReason",
             "ShippingBarcode",
           ],
           populate: { user: true, contract: true, shipping: true },
@@ -243,6 +258,14 @@ function registerOrderLifecycle(strapi: Strapi) {
 
       const oldStatus = previous?.Status;
       const newStatus = (current as any)?.Status;
+      const cancellationReasonText =
+        typeof changes?.CancellationReason?.to === "string"
+          ? changes.CancellationReason.to
+          : typeof changes?.Description?.to === "string"
+          ? changes.Description.to
+          : typeof changes?.Note?.to === "string"
+          ? changes.Note.to
+          : undefined;
       const trackingChange = changes.ShippingBarcode as
         | { from?: unknown; to?: unknown }
         | undefined;
@@ -288,8 +311,7 @@ function registerOrderLifecycle(strapi: Strapi) {
           if (normalizedStatus === "shipment" && activityService?.logOrderShipped) {
             await activityService.logOrderShipped(orderUserId, result.id, trackingCode);
           } else if (normalizedStatus === "cancelled" && activityService?.logOrderCancelled) {
-            const reason = changes?.Description || changes?.Note || undefined;
-            await activityService.logOrderCancelled(orderUserId, result.id, reason);
+            await activityService.logOrderCancelled(orderUserId, result.id, cancellationReasonText);
           }
         } catch (activityError) {
           strapi.log.error("Failed to log status change to user activity", {
@@ -306,12 +328,7 @@ function registerOrderLifecycle(strapi: Strapi) {
           oldStatus,
           newStatus,
           trackingCode,
-          reason:
-            typeof changes?.Description?.to === "string"
-              ? changes.Description.to
-              : typeof changes?.Note?.to === "string"
-              ? changes.Note.to
-              : undefined,
+          reason: cancellationReasonText,
         }).catch((smsError) => {
           strapi.log.error("Failed to queue order-status SMS", {
             orderId: result.id,

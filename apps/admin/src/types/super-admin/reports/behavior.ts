@@ -54,6 +54,8 @@ export type BehaviorRange = { start: string; end: string };
 export type BehaviorMetadata = {
   source?: string;
   provider?: string;
+  /** The Umami release the backend's report contract targets (declared, not detected). */
+  providerContractVersion?: string;
   timezone?: string;
   unit?: string;
   currency?: string;
@@ -102,3 +104,74 @@ export type BehaviorResponse<T = BehaviorReportPayload | BehaviorRealtimeData> =
     /** The endpoint that answered; useful while compatibility aliases exist. */
     endpoint?: string;
   };
+
+/** One step of an ordered Umami funnel. Counts are distinct sessions («بازدیدکننده»). */
+export type FunnelStepRow = {
+  type?: string;
+  value?: string;
+  visitors?: number | null;
+  previous?: number | null;
+  dropped?: number | null;
+  dropoff?: number | null;
+  remaining?: number | null;
+};
+
+export type FunnelKey = "core" | "checkout" | "payment";
+export type BreakdownDimension = "device" | "os" | "browser";
+
+export type TrendPoint = {
+  t: string;
+  pageviews?: number | null;
+  visitors?: number | null;
+};
+
+export type TrendSeries = {
+  unit: "hour" | "day" | "month";
+  points: TrendPoint[];
+};
+
+export type CommerceSeriesPoint = {
+  t: string;
+  paidOrders: number | null;
+  revenueToman: number | null;
+};
+
+export type PurchaseTrackingStatus =
+  | "live"
+  | "degraded"
+  | "not_live"
+  | "unknown"
+  | "unavailable";
+
+/** Commerce ↔ Umami reconciliation of the `purchase` step for one period. */
+export type PurchaseTracking = {
+  umamiPurchaseSessions: number | null;
+  commercePaidOrders: number | null;
+  coverage: number | null;
+  status: PurchaseTrackingStatus;
+};
+
+/** Which report filters an ordered funnel/goal honoured (session-level only). */
+export type StepFilterScope = { applied: string[]; ignored: string[] };
+
+export type ConversionDetailRequest =
+  | { detail: "trend"; funnel: FunnelKey }
+  | { detail: "breakdown"; funnel: FunnelKey; dimension: BreakdownDimension }
+  | { detail: "journey"; step: string };
+
+export type ConversionTrendBucket = {
+  startDate: string;
+  endDate: string;
+  days: number;
+  incomplete: boolean;
+  beforeDataStart?: boolean;
+  failed?: boolean;
+  steps?: FunnelStepRow[];
+  purchaseGoal?: { num?: number | null; total?: number | null } | null;
+};
+
+export type ConversionBreakdownSegment = {
+  value: string;
+  visitors?: number | null;
+  steps?: FunnelStepRow[];
+};

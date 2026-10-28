@@ -60,6 +60,9 @@ test.describe("category editorial", () => {
       testInfo.project.name.includes("mobile"),
       "The admin smoke configuration exercises desktop browser engines; mobile behavior is asserted explicitly.",
     );
+    // About ten page loads against the dev storefront: WebKit in CI needs
+    // ~62 s, so the default 60 s ran out in the final unpublish (pipeline 1118).
+    test.setTimeout(120_000);
 
     const project = testInfo.project.name
       .toLowerCase()

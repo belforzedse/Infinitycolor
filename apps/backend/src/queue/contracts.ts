@@ -14,9 +14,12 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   scheduledProductReconcile: "scheduledProducts.reconcile",
   cartCleanupReconcile: "cartCleanup.reconcile",
   anipoBarcodeReconcile: "anipoBarcodes.reconcile",
+  productTrashRetention: "productTrash.retention",
+  anipoRegisterOne: "anipoOrders.registerOne",
   anipoRecipientSyncOne: "anipoRecipients.syncOne",
   edgeCachePurge: "edgeCache.purge",
   staffOrderAlert: "staffAlerts.orderStarted",
+  shippingSmsDispatch: "shippingSms.dispatch",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -34,17 +37,31 @@ export const WALLET_TOPUP_PAYMENT_JOBS = {
   reconcile: "walletTopups.reconcile",
 } as const;
 
+export const MELLAT_PAYMENT_JOBS = {
+  reconcile: "mellat.reconcile",
+  sweep: "mellat.sweep",
+} as const;
+
 export const MEDIA_JOBS = {
   /** Transcode a story's video to web-safe progressive MP4 (see services/media). */
   normalizeStoryVideo: "media.normalizeStoryVideo",
   /** Transcode one product gallery/cover video to web-safe progressive MP4. */
   normalizeProductVideo: "media.normalizeProductVideo",
+  /**
+   * Transcode a raw `plugin::upload.file` row as soon as it lands, independent of any
+   * product/story attachment. The product/story jobs only fire once the entity that owns
+   * the file is saved — an admin picking a phone-recorded clip in the add-product form
+   * (no product row yet) would otherwise never get a playable preview until after save.
+   */
+  normalizeUploadedFile: "media.normalizeUploadedFile",
 } as const;
 
 export type MediaJobName = (typeof MEDIA_JOBS)[keyof typeof MEDIA_JOBS];
 
 export type NormalizeStoryVideoJobData = {
   storyId: number;
+  itemKey: string;
+  fileId: number;
 };
 
 export type NormalizeProductVideoJobData = {
@@ -52,17 +69,28 @@ export type NormalizeProductVideoJobData = {
   fileId: number;
 };
 
+export type NormalizeUploadedFileJobData = {
+  fileId: number;
+  /** Backfill only: reprocess rows automatic triggers skip (permanent failure, rollback). */
+  force?: boolean;
+  webmEnabled?: boolean;
+  hlsEnabled?: boolean;
+};
+
 export const MAINTENANCE_SCHEDULERS = {
   stockReservationExpiry: "sched:stockReservations.expire",
   reserveOrderExpiry: "sched:reserveOrders.expire",
   scheduledProductReconcile: "sched:scheduledProducts.reconcile",
   cartCleanupReconcile: "sched:cartCleanup.reconcile",
+  shippingSmsDispatch: "sched:shippingSms.dispatch",
   viewCounterFlush: "sched:viewCounters.flush",
   analyticsDailyRollup: "sched:analyticsDailyRollup.run",
   analyticsOutboxRepair: "sched:analyticsOutboxRepair.run",
   snappaySweep: "sched:snappay.sweep",
   walletTopupReconcile: "sched:walletTopups.reconcile",
+  mellatSweep: "sched:mellat.sweep",
   anipoBarcodeReconcile: "sched:anipoBarcodes.reconcile",
+  productTrashRetention: "sched:productTrash.retention",
 } as const;
 
 export type CommerceMaintenanceJobName =
@@ -88,6 +116,8 @@ export type AnipoRecipientSyncJobData = {
   orderId: number;
   expectedRevision: number;
 };
+
+export type AnipoRegistrationJobData = { orderId: number };
 
 /**
  * Refresh the gateway page cache and purge the edge for a set of storefront
@@ -130,6 +160,7 @@ export type MaintenanceJobData =
   | Record<string, never>
   | NormalizeStoryVideoJobData
   | NormalizeProductVideoJobData
+  | NormalizeUploadedFileJobData
   | ScheduledProductPublicationJobData
   | AnipoRecipientSyncJobData
   | EdgeCachePurgeJobData

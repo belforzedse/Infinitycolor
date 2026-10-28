@@ -20,6 +20,11 @@ export interface StoryPlaybackSnapshot {
   progress: number;
   /** Story item id the progress belongs to, so a stale publish can be discarded. */
   itemId: string | null;
+  /**
+   * Item id of the live story once it has enough buffered (or is an image/text) that
+   * warming the next video will not starve it. Compared with the active id by the modal.
+   */
+  readyForNext: string | null;
 }
 
 export interface StoryAudioPreference {
@@ -31,6 +36,7 @@ export interface StoryAudioPreference {
 
 export interface StoryPlaybackStore {
   publishProgress(itemId: string, progress: number): void;
+  publishReadyForNext(itemId: string): void;
   subscribe(listener: () => void): () => void;
   getSnapshot(): StoryPlaybackSnapshot;
   audio: StoryAudioPreference;
@@ -46,6 +52,9 @@ export interface StoryMediaIssue {
   failure: MediaFailureKind;
   /** HTMLMediaElement.error.code, when the browser supplied one. */
   mediaErrorCode: number | null;
+  videoEngine?: "mp4" | "webm" | "native-hls" | "hls.js";
+  attemptedEngines?: string[];
+  playback?: import("@repo/video-player").PlaybackDiagnostics;
 }
 
 export type StoryMediaIssueReporter = (issue: StoryMediaIssue) => void;
@@ -80,14 +89,25 @@ export function createAudioPreference(): StoryAudioPreference {
   };
 }
 
-export function createPlaybackStore(reportIssue?: StoryMediaIssueReporter): StoryPlaybackStore {
+export function createPlaybackStore(
+  reportIssue?: StoryMediaIssueReporter,
+): StoryPlaybackStore {
   const listeners = new Set<() => void>();
-  let snapshot: StoryPlaybackSnapshot = { progress: 0, itemId: null };
+  let snapshot: StoryPlaybackSnapshot = {
+    progress: 0,
+    itemId: null,
+    readyForNext: null,
+  };
 
   return {
     publishProgress(itemId: string, progress: number) {
       if (snapshot.itemId === itemId && snapshot.progress === progress) return;
-      snapshot = { itemId, progress };
+      snapshot = { ...snapshot, itemId, progress };
+      listeners.forEach((listener) => listener());
+    },
+    publishReadyForNext(itemId: string) {
+      if (snapshot.readyForNext === itemId) return;
+      snapshot = { ...snapshot, readyForNext: itemId };
       listeners.forEach((listener) => listener());
     },
     subscribe(listener: () => void) {
@@ -106,16 +126,24 @@ export function createPlaybackStore(reportIssue?: StoryMediaIssueReporter): Stor
   };
 }
 
-export const StoryPlaybackContext = createContext<StoryPlaybackStore | null>(null);
+export const StoryPlaybackContext = createContext<StoryPlaybackStore | null>(
+  null,
+);
 
 export function useStoryPlaybackStore(): StoryPlaybackStore | null {
   return useContext(StoryPlaybackContext);
 }
 
 /** Splits a resolved media URL into the parts that are safe to log. */
-export function describeMediaUrl(url: string): { mediaHost: string; mediaPath: string } {
+export function describeMediaUrl(url: string): {
+  mediaHost: string;
+  mediaPath: string;
+} {
   try {
-    const parsed = new URL(url, typeof window === "undefined" ? "http://localhost" : window.location.href);
+    const parsed = new URL(
+      url,
+      typeof window === "undefined" ? "http://localhost" : window.location.href,
+    );
     return { mediaHost: parsed.host, mediaPath: parsed.pathname };
   } catch {
     return { mediaHost: "", mediaPath: "" };

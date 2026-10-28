@@ -8,6 +8,12 @@ import {
 } from "./helpers/env";
 
 const isCI = !!process.env.CI;
+// Playwright discards a web server's stdout by default, so a server that dies
+// on start-up fails the run as "Exit code: 254" with no cause (pipelines
+// 1104/1105). CI keeps the output; local runs stay quiet.
+const webServerOutput = isCI
+  ? ({ stdout: "pipe", stderr: "pipe" } as const)
+  : {};
 const authServerCommand = process.env.E2E_AUTH_SERVER_COMMAND?.trim();
 const adminServerCommand = process.env.E2E_ADMIN_SERVER_COMMAND?.trim();
 const storefrontServerCommand = process.env.E2E_WEB_SERVER_COMMAND?.trim();
@@ -110,45 +116,8 @@ export default defineConfig({
     },
   ],
   webServer: [
-    ...(authServerCommand
-      ? [
-          {
-            command: authServerCommand,
-            url: `${centralAuthOrigin().replace(/\/$/, "")}/api/health/ready`,
-            name: "central-auth",
-            reuseExistingServer: !isCI,
-            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
-            env: {
-              ...stringProcessEnvironment(),
-              AUTH_TRUSTED_ADMIN_ORIGINS: adminBaseURL(),
-            },
-          },
-        ]
-      : []),
-    ...(storefrontServerCommand
-      ? [
-          {
-            command: storefrontServerCommand,
-            url: storefrontBaseURL(),
-            name: "storefront",
-            reuseExistingServer: !isCI,
-            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
-            env: {
-              ...stringProcessEnvironment(),
-              HOME_BATCHED_SECTIONS_ENABLED:
-                process.env.HOME_BATCHED_SECTIONS_ENABLED ?? "true",
-              HOME_BATCHED_SECTION_ALLOWLIST:
-                process.env.HOME_BATCHED_SECTION_ALLOWLIST ??
-                "newest,discounted",
-              HOME_PRODUCT_SERVER_SHELL_SECTION:
-                process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
-              E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
-                process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
-              ...storefrontServerApiEnv(),
-            },
-          },
-        ]
-      : []),
+    // Build the admin before the auth/storefront dev servers are resident.
+    // Its live health endpoint has no dependency on those services.
     ...(adminServerCommand
       ? [
           {
@@ -156,7 +125,8 @@ export default defineConfig({
             url: `${adminBaseURL().replace(/\/$/, "")}/api/health/live`,
             name: "admin",
             reuseExistingServer: !isCI,
-            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
+            ...webServerOutput,
+            timeout: Number(process.env.E2E_ADMIN_SERVER_TIMEOUT_MS || process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
             env: {
               ...stringProcessEnvironment(),
               NEXT_PUBLIC_ADMIN_ENVIRONMENT: "e2e",
@@ -173,6 +143,47 @@ export default defineConfig({
               NEXT_PUBLIC_AUTH_ORIGIN: centralAuthOrigin(),
               NEXT_PUBLIC_AUTH_URL: centralAuthOrigin(),
               AUTH_SERVER_ORIGIN: centralAuthOrigin(),
+            },
+          },
+        ]
+      : []),
+    ...(authServerCommand
+      ? [
+          {
+            command: authServerCommand,
+            url: `${centralAuthOrigin().replace(/\/$/, "")}/api/health/ready`,
+            name: "central-auth",
+            reuseExistingServer: !isCI,
+            ...webServerOutput,
+            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
+            env: {
+              ...stringProcessEnvironment(),
+              AUTH_TRUSTED_ADMIN_ORIGINS: adminBaseURL(),
+            },
+          },
+        ]
+      : []),
+    ...(storefrontServerCommand
+      ? [
+          {
+            command: storefrontServerCommand,
+            url: storefrontBaseURL(),
+            name: "storefront",
+            reuseExistingServer: !isCI,
+            ...webServerOutput,
+            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
+            env: {
+              ...stringProcessEnvironment(),
+              HOME_BATCHED_SECTIONS_ENABLED:
+                process.env.HOME_BATCHED_SECTIONS_ENABLED ?? "true",
+              HOME_BATCHED_SECTION_ALLOWLIST:
+                process.env.HOME_BATCHED_SECTION_ALLOWLIST ??
+                "newest,discounted",
+              HOME_PRODUCT_SERVER_SHELL_SECTION:
+                process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
+              E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
+                process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
+              ...storefrontServerApiEnv(),
             },
           },
         ]

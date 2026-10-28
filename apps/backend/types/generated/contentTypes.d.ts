@@ -2056,6 +2056,7 @@ export interface ApiOrderOrder extends Schema.CollectionType {
       > &
       Attribute.DefaultTo<0>;
     AppliedGeneralDiscountId: Attribute.Integer;
+    CancellationReason: Attribute.Text;
     CartCleanupCompletedAt: Attribute.DateTime;
     contract: Attribute.Relation<"api::order.order", "oneToOne", "api::contract.contract">;
     createdAt: Attribute.DateTime;
@@ -2809,7 +2810,14 @@ export interface ApiProductCategoryProductCategory extends Schema.CollectionType
     external_id: Attribute.String;
     external_source: Attribute.String;
     featured: Attribute.Boolean & Attribute.DefaultTo<false>;
-    homepageOrder: Attribute.Integer & Attribute.DefaultTo<1000>;
+    homepageOrder: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<1000>;
     Image: Attribute.Media<"images">;
     isMainCategory: Attribute.Boolean & Attribute.DefaultTo<false>;
     MegaMenuImage: Attribute.Media<"images">;
@@ -2925,6 +2933,9 @@ export interface ApiProductLogProductLog extends Schema.CollectionType {
         "CancelSchedule",
         "Publish",
         "Unpublish",
+        "Trash",
+        "Restore",
+        "PermanentDelete",
       ]
     > &
       Attribute.Required;
@@ -3218,6 +3229,9 @@ export interface ApiProductStockProductStock extends Schema.CollectionType {
       Attribute.Private;
     external_id: Attribute.String;
     external_source: Attribute.String;
+    StockRevision: Attribute.Integer &
+      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.DefaultTo<0>;
     product_stock_logs: Attribute.Relation<
       "api::product-stock.product-stock",
       "oneToMany",
@@ -3532,12 +3546,16 @@ export interface ApiProductProduct extends Schema.CollectionType {
   attributes: {
     AverageRating: Attribute.Decimal;
     CleaningTips: Attribute.Text;
+    ColorGalleries: Attribute.Component<"product.color-gallery", true>;
     CoverImage: Attribute.Media<"images" | "videos">;
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<"api::product.product", "oneToOne", "admin::user"> &
       Attribute.Private;
     Description: Attribute.RichText;
     discounts: Attribute.Relation<"api::product.product", "manyToMany", "api::discount.discount">;
+    EditRevision: Attribute.Integer &
+      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.DefaultTo<0>;
     external_id: Attribute.String;
     external_source: Attribute.String;
     Files: Attribute.Media<"files", true>;
@@ -3549,6 +3567,8 @@ export interface ApiProductProduct extends Schema.CollectionType {
       "oneToMany",
       "api::product-attribute.product-attribute"
     >;
+    preRemovalScheduledPublishAt: Attribute.DateTime;
+    preRemovalStatus: Attribute.Enumeration<["Active", "InActive", "Scheduled"]>;
     product_attribute_assignments: Attribute.Relation<
       "api::product.product",
       "oneToMany",
@@ -3613,8 +3633,12 @@ export interface ApiProductProduct extends Schema.CollectionType {
       > &
       Attribute.DefaultTo<0>;
     PublishedAt: Attribute.DateTime;
+    purgedAt: Attribute.DateTime;
+    purgedById: Attribute.Integer;
     RatingCount: Attribute.Integer;
     removedAt: Attribute.DateTime;
+    removedById: Attribute.Integer;
+    removedByLabel: Attribute.String;
     ReturnConditions: Attribute.Text;
     scheduledPublishAt: Attribute.DateTime;
     scheduledPublishAttemptCount: Attribute.Integer &
@@ -3859,6 +3883,9 @@ export interface ApiSettingsSettings extends Schema.SingleType {
     homeHeroSliderMeta: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeHeroSliderPublished: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeNewestProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
+    HomepageProductsRevision: Attribute.Integer &
+      Attribute.SetMinMax<{ min: 0 }, number> &
+      Attribute.DefaultTo<0>;
     homeWeeklyPicksEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
     homeWeeklyPicksProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     siteGifAltText: Attribute.String & Attribute.DefaultTo<"">;
@@ -4042,6 +4069,15 @@ export interface ApiStorySeenStorySeen extends Schema.CollectionType {
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<"api::story-seen.story-seen", "oneToOne", "admin::user"> &
       Attribute.Private;
+    DedupeKey: Attribute.String &
+      Attribute.Unique &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    ItemKey: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
     SeenAt: Attribute.DateTime & Attribute.Required;
     story: Attribute.Relation<"api::story-seen.story-seen", "manyToOne", "api::story.story">;
     updatedAt: Attribute.DateTime;
@@ -4076,7 +4112,7 @@ export interface ApiStoryStory extends Schema.CollectionType {
       }>;
     CtaUrl: Attribute.String &
       Attribute.SetMinMaxLength<{
-        maxLength: 500;
+        maxLength: 2048;
       }>;
     DurationMs: Attribute.Integer &
       Attribute.SetMinMax<
@@ -4088,6 +4124,15 @@ export interface ApiStoryStory extends Schema.CollectionType {
       Attribute.DefaultTo<5000>;
     EndAt: Attribute.DateTime;
     IsActive: Attribute.Boolean & Attribute.DefaultTo<false>;
+    Items: Attribute.Component<"story.story-item", true> &
+      Attribute.Required &
+      Attribute.SetMinMax<
+        {
+          max: 20;
+          min: 1;
+        },
+        number
+      >;
     Media: Attribute.Media<"images" | "videos">;
     MediaType: Attribute.Enumeration<["image", "video"]> &
       Attribute.Required &

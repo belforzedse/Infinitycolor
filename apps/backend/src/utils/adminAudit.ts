@@ -4,6 +4,7 @@ import { resolveAuditActor } from "./audit";
 import { getAuditContext } from "./audit-context";
 import { redactSensitive } from "./redactSensitive";
 import { writeAuditEvent } from "../audit/writer";
+import { resolveRawExecutor } from "./transactionExecutor";
 import {
   MANAGEMENT_ROLES,
   normalizeRoleName,
@@ -259,7 +260,8 @@ export async function markProductEditedByAdmin(
   const id = Number(productRef);
   if (!id || Number.isNaN(id)) return;
   try {
-    await strapi.db.connection("products").where({ id }).update({
+    const executor = await resolveRawExecutor(strapi);
+    await executor("products").where({ id }).update({
       last_edited_by_admin_at: new Date(),
     });
   } catch (error: any) {

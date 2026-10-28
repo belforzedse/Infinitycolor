@@ -1,3 +1,5 @@
+import { catalogFailureTags } from "./catalog-error-diagnostics";
+
 type CatalogErrorContext = {
   routePath?: string;
 };
@@ -6,17 +8,20 @@ type CatalogErrorLike = {
   name?: string;
   message?: string;
   code?: unknown;
+  digest?: unknown;
 };
 
 type SentryScopeLike = {
   setTag: (key: string, value: string) => void;
   setFingerprint: (fingerprint: string[]) => void;
+  setContext?: (key: string, value: Record<string, string | number>) => void;
 };
 
 /** Matches Sentry `Primitive` so `beforeSend(event: ErrorEvent)` can return `T`. */
 type SentryTagValue = string | number | boolean | bigint | symbol | null | undefined;
 
 type SentryEventLike = {
+  contexts?: Record<string, Record<string, unknown> | undefined>;
   fingerprint?: string[];
   tags?: { [key: string]: SentryTagValue };
   transaction?: string;
@@ -36,6 +41,7 @@ function catalogErrorFields(error: unknown): CatalogErrorLike {
     name: typeof record.name === "string" ? record.name : undefined,
     message: typeof record.message === "string" ? record.message : undefined,
     code: record.code,
+    digest: record.digest,
   };
 }
 
@@ -49,6 +55,25 @@ export function requestRoutePath(errorContext: unknown): string | undefined {
   if (!("routePath" in errorContext)) return undefined;
   const routePath = (errorContext as CatalogErrorContext).routePath;
   return typeof routePath === "string" && routePath ? routePath : undefined;
+}
+
+function catalogCorrelation(error: unknown): Record<string, string | number> {
+  const safe: Record<string, string | number> = {};
+  if (!error || typeof error !== "object") return safe;
+  const fields = error as {
+    requestId?: unknown;
+    attempts?: unknown;
+    requestShape?: Record<string, unknown>;
+  };
+  if (typeof fields.requestId === "string" && /^[a-zA-Z0-9_.:-]{1,100}$/.test(fields.requestId))
+    safe.request_id = fields.requestId;
+  if (typeof fields.attempts === "number" && fields.attempts >= 1 && fields.attempts <= 2)
+    safe.attempts = fields.attempts;
+  for (const key of ["request_target_bytes", "application_header_bytes", "trace_header_bytes"]) {
+    const value = fields.requestShape?.[key];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) safe[key] = value;
+  }
+  return safe;
 }
 
 /**
@@ -75,13 +100,17 @@ export function catalogRscFingerprint(
 }
 
 function catalogRscFingerprintFromEvent(event: SentryEventLike): string[] | undefined {
-  const first = event.exception?.values?.[0];
-  const type = first?.type || "";
-  const value = first?.value || "";
-  if (type === "PLPProductsError") {
-    return ["catalog-rsc", "plp", "PLPProductsError"];
+  const values = event.exception?.values || [];
+  if (values.some((value) => value.type === "PLPProductsError")) {
+    const code = event.tags?.catalog_error_code;
+    return ["catalog-rsc", "plp", typeof code === "string" ? code : "PLPProductsError"];
   }
-  if (type === "PdpProductUnavailableError" || value === "PRODUCT_DATA_UNAVAILABLE") {
+  if (
+    values.some(
+      (value) =>
+        value.type === "PdpProductUnavailableError" || value.value === "PRODUCT_DATA_UNAVAILABLE",
+    )
+  ) {
     return ["catalog-rsc", "pdp", "PRODUCT_DATA_UNAVAILABLE"];
   }
   return undefined;
@@ -92,10 +121,14 @@ export function applyCatalogRscSentryScope(
   error: unknown,
   errorContext?: unknown,
 ): void {
-  const { name } = catalogErrorFields(error);
+  const { name, digest } = catalogErrorFields(error);
+  const correlation = catalogCorrelation(error);
+  if (Object.keys(correlation).length) scope.setContext?.("catalog_correlation", correlation);
+  if (typeof digest === "string" && digest) scope.setTag("next_error_digest", digest);
   if (name) scope.setTag("error_name", name);
   const code = catalogErrorCode(error);
   if (code) scope.setTag("catalog_error_code", code);
+  for (const [key, value] of Object.entries(catalogFailureTags(error))) scope.setTag(key, value);
   const routePath = requestRoutePath(errorContext);
   if (routePath) scope.setTag("route_path", routePath);
   const fingerprint = catalogRscFingerprint(error, { routePath });
@@ -113,11 +146,17 @@ export function applyCatalogRscEvent<T extends SentryEventLike>(
     event.fingerprint = fingerprint;
   }
 
-  const { name } = catalogErrorFields(hint?.originalException);
+  const original = hint?.originalException;
+  const correlation = catalogCorrelation(original);
+  if (Object.keys(correlation).length)
+    event.contexts = { ...event.contexts, catalog_correlation: correlation };
+  const { name, digest } = catalogErrorFields(original);
   const code = catalogErrorCode(hint?.originalException);
   event.tags = event.tags || {};
+  if (typeof digest === "string" && digest) event.tags.next_error_digest = digest;
   if (name && !event.tags.error_name) event.tags.error_name = name;
   if (code && !event.tags.catalog_error_code) event.tags.catalog_error_code = code;
+  Object.assign(event.tags, catalogFailureTags(hint?.originalException));
   if (routePath && !event.tags.route_path) event.tags.route_path = routePath;
   return event;
 }

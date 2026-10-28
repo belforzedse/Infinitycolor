@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { ABOUT_PRICE_BANNERS } from "./aboutBanners";
+import { ABOUT_PRICE_BANNERS } from "./aboutBannerData";
 
 export default function AboutBanners() {
   return (

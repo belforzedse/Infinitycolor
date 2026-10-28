@@ -124,14 +124,17 @@ export default function Filter({
       void setQuery({ available: "true" });
     }
   }, [showAvailableOnly, available, setQuery]);
-
   const handleCategorySelect = useCallback(
     (id: string) => {
-      router.push(getCategoryPlpHrefWithQuery(id, searchParams));
+      const params = new URLSearchParams(searchParams.toString());
+
+      // Remove the synthetic menu group when selecting a real category.
+      params.delete("menuGroup");
+
+      router.push(getCategoryPlpHrefWithQuery(id, params));
     },
     [router, searchParams],
   );
-
   const handleAvailabilityChange = useCallback(
     (checked: boolean) => {
       void setQuery({ available: checked ? "true" : null, page: 1 });

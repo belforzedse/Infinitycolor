@@ -1,5 +1,6 @@
 import { jotaiStore } from "@/lib/jotaiStore";
 import { currentUserAtom } from "@/lib/atoms/auth";
+import { centralAuth } from "@/lib/central-auth";
 import { onHttpError } from "@/lib/api-client";
 import type { MeResponse } from "@/services/user/me";
 
@@ -38,12 +39,15 @@ describe("admin auth error handling", () => {
     global.fetch = jest
       .fn()
       .mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+    jest
+      .spyOn(centralAuth.tokenManager, "getTokenOutcome")
+      .mockResolvedValue({ state: "unauthenticated" });
     jotaiStore.set(currentUserAtom, SIGNED_IN);
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
-    jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
   it("keeps the signed-in identity when a single resource returns 403", async () => {
@@ -91,3 +95,24 @@ describe("admin auth error handling", () => {
     }
   });
 });
+
+it.each(["authenticated", "unavailable"] as const)(
+  "preserves the admin identity after API 401 when central state is %s",
+  async (state) => {
+    jotaiStore.set(currentUserAtom, SIGNED_IN);
+    const outcome =
+      state === "authenticated"
+        ? { state, token: "jwt" }
+        : { state, reasonCode: "timeout" as const };
+    const spy = jest
+      .spyOn(centralAuth.tokenManager, "getTokenOutcome")
+      .mockResolvedValue(outcome);
+    try {
+      onHttpError({ status: 401, message: "Unauthorized" }, { status: 401 });
+      await flushAsyncWork();
+      expect(jotaiStore.get(currentUserAtom)).toBe(SIGNED_IN);
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);

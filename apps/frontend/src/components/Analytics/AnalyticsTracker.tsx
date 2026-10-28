@@ -6,16 +6,13 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import {
-  ANALYTICS_CONSENT_EVENT,
   analyticsBeforeSend,
   deleteAnalyticsContext,
   flushPendingAnalytics,
-  getAnalyticsCorrelationId,
   identify,
   isAnalyticsEnabled,
   resetIdentity,
   setAnalyticsContext,
-  syncAnalyticsConsentState,
   trackPage,
 } from "@/lib/analytics";
 
@@ -48,7 +45,7 @@ export function derivePageType(pathname: string): string {
   if (first === "plp" || first === "categories") return "plp";
   if (first === "search") return "search";
   if (first === "cart") return "cart";
-  if (first === "checkout") return "checkout";
+  if (first === "checkout" || first === "payment") return "checkout";
   if (first === "orders") return "orders";
   if (first === "blog") return "blog";
   if (["account", "addresses", "wallet", "likes"].includes(first)) return "account";
@@ -78,7 +75,6 @@ export function AnalyticsTracker() {
   useIsomorphicLayoutEffect(() => {
     if (!enabled || typeof window === "undefined") return;
     window.__infinityAnalyticsBeforeSend = analyticsBeforeSend;
-    getAnalyticsCorrelationId();
     return () => {
       delete window.__infinityAnalyticsBeforeSend;
     };
@@ -117,13 +113,8 @@ export function AnalyticsTracker() {
     };
   }, [routePath, enabled]);
 
-  useEffect(() => {
-    if (!enabled || typeof window === "undefined") return;
-    const handler = () => syncAnalyticsConsentState();
-    window.addEventListener(ANALYTICS_CONSENT_EVENT, handler);
-    return () => window.removeEventListener(ANALYTICS_CONSENT_EVENT, handler);
-  }, [enabled]);
-
+  // Only a signed-in customer's opaque id is ever sent. `identify` skips a
+  // repeat of the active id, and signing out only forgets it locally.
   useEffect(() => {
     if (!enabled) return;
     const userId = (currentUser as { id?: number | string } | null)?.id;

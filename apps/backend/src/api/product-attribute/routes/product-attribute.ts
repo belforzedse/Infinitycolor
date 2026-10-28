@@ -1,4 +1,10 @@
 // @ts-nocheck
+import { catalogEditRoutes } from "../../../utils/catalogEditRoutes";
 import { factories } from "@strapi/strapi";
+import { publicProductVisibilityRoutes } from "../../../utils/publicProductVisibilityRoutes";
 
-export default factories.createCoreRouter("api::product-attribute.product-attribute");
+// Public readers cannot populate or filter by the product relation, which would
+// otherwise list drafts, scheduled and trashed products; staff are unaffected.
+export default factories.createCoreRouter("api::product-attribute.product-attribute", {
+  config: catalogEditRoutes("api::product-attribute.product-attribute", "attribute", publicProductVisibilityRoutes({ mode: "strip", uid: "api::product-attribute.product-attribute", relations: ["owner_product"] })),
+});

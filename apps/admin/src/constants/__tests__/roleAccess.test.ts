@@ -1,7 +1,14 @@
 import { canRoleAccessPath, isStoreManagerRole } from "../roleAccess";
-import { getSalesNavForRole, SALES_NAV_ITEMS } from "../salesNav";
+import {
+  getSalesNavForRole,
+  SALES_NAV_ITEMS,
+} from "../salesNav";
 import { getSidebarItemsForRole } from "../superAdminSidebar";
-import { ADMIN_ROLE_DEFINITIONS, ADMIN_ROLE_IDS } from "@repo/auth-core";
+import {
+  ADMIN_ROLE_DEFINITIONS,
+  ADMIN_ROLE_IDS,
+  capabilitiesForRole,
+} from "@repo/auth-core";
 
 /**
  * Moving the sales analytics from /reports/* into /sales/* is the one part of
@@ -309,6 +316,34 @@ describe("getSalesNavForRole", () => {
       expect(getSalesNavForRole(role).map((item) => item.href)).not.toContain(
         "/sales/activity",
       );
+    }
+  });
+});
+
+describe("Excel report route", () => {
+  it("limits the export route and sidebar link to Superadmin", () => {
+    expect(capabilitiesForRole("superadmin")).toContain("report.excel.export");
+    expect(capabilitiesForRole("founder")).not.toContain("report.excel.export");
+    expect(capabilitiesForRole("finance")).not.toContain("report.excel.export");
+    expect(canRoleAccessPath("Superadmin", "/reports/exports")).toBe(true);
+    expect(canRoleAccessPath("Founder", "/reports/exports")).toBe(false);
+    expect(canRoleAccessPath("Finance", "/reports/exports")).toBe(false);
+    expect(getSalesNavForRole("Superadmin").map((item) => item.href)).toContain("/reports/exports");
+    expect(getSalesNavForRole("Founder").map((item) => item.href)).not.toContain("/reports/exports");
+    expect(getSalesNavForRole("Finance").map((item) => item.href)).not.toContain("/reports/exports");
+    for (const role of ["Founder", "Finance"]) {
+      const sales = getSidebarItemsForRole(role).find((item) => item.id === "sales");
+      expect(sales?.children.map((child) => child.href)).not.toContain("/reports/exports");
+    }
+    const superadminSales = getSidebarItemsForRole("Superadmin").find((item) => item.id === "sales");
+    expect(superadminSales?.children.map((child) => child.href)).toContain("/reports/exports");
+  });
+
+  it("keeps legacy sales and finance reports accessible to Finance and Founder", () => {
+    for (const role of ["Founder", "Finance"]) {
+      for (const path of ["/sales", "/sales/products", "/sales/breakdown", "/sales/liquidity"]) {
+        expect(canRoleAccessPath(role, path)).toBe(true);
+      }
     }
   });
 });

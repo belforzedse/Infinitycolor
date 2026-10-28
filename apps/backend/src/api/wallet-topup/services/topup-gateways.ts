@@ -163,10 +163,11 @@ export async function initiateTopup(
       return { outcome: "failed", errorCode: "MELLAT_UNAVAILABLE", message: "Mellat service missing" };
     }
     const response = await mellat.requestPayment({
-      orderId: Number(params.saleOrderId),
+      orderId: params.saleOrderId,
       amount: params.amountIrr,
       amountInRial: true,
       callbackURL: callbackUrl,
+      callbackPurpose: "wallet",
     });
     if (response?.success && text(response.refId)) {
       return {

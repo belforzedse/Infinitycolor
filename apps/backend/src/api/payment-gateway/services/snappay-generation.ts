@@ -21,6 +21,18 @@ export type SnappayGenerationRecord = {
   /** Raw token kept so a late callback can still verify the retired generation. */
   paymentToken?: string;
   terminalEvidence?: SnappayTerminalEvidence;
+  /**
+   * SnappPay environment this token was minted against.
+   *
+   * A 404/1007 status answer carries no body to correlate, so the only way to
+   * know the token being declared missing is the one *we* issued — and issued
+   * against the environment we are now asking — is to have recorded that at
+   * mint time. Without it, a base-URL or client-id change would make every
+   * pre-existing token read as "not found" and, once NOT_FOUND release is
+   * enforcing, cancel live orders.
+   */
+  providerHost?: string;
+  clientIdFingerprint?: string;
 };
 
 export type SnappayPendingDispatch = {
@@ -73,6 +85,10 @@ function parseGenerationRecord(value: unknown): SnappayGenerationRecord | undefi
   if (paymentToken) parsed.paymentToken = paymentToken;
   const terminalEvidence = asTerminalEvidence(record.terminalEvidence);
   if (terminalEvidence) parsed.terminalEvidence = terminalEvidence;
+  const providerHost = asNonEmpty(record.providerHost);
+  if (providerHost) parsed.providerHost = providerHost;
+  const clientIdFingerprint = asNonEmpty(record.clientIdFingerprint);
+  if (clientIdFingerprint) parsed.clientIdFingerprint = clientIdFingerprint;
   return parsed;
 }
 
@@ -135,14 +151,49 @@ export function snappayDispatchWasAttempted(
   return Boolean(asNonEmpty(trackId));
 }
 
-export function snappayProviderGenerationIsTerminal(attempt: {
-  providerStatus?: unknown;
-  providerResponse?: unknown;
-}): boolean {
+/**
+ * Evidence kinds that prove the *provider* has nothing live left for this
+ * token.
+ *
+ * Deliberately excludes every local decision — `not_found_confirmed`,
+ * `local_ttl`, `local_ceiling`, `registered_aged`. Those say Infinity ended the
+ * checkout; they say nothing about what SnappPay is still holding, and treating
+ * them as terminal is exactly how a late payment would be silently dropped.
+ */
+export const SNAPPAY_PROVIDER_RESOLVED_EVIDENCE_KINDS = [
+  "provider_revert",
+  "provider_cancel",
+  "late_success_reverted",
+  "registered_reverted",
+] as const;
+
+export function snappayProviderGenerationIsTerminal(
+  attempt: {
+    providerStatus?: unknown;
+    providerResponse?: unknown;
+  },
+  /**
+   * Append-only evidence rows for the attempt, when the caller has them.
+   *
+   * The JSON marker below is a cache, not the record: the observation writer
+   * merges shallowly and guards only `status <> 'Succeeded'`, and a generation
+   * rotation replaces the whole `generation` object including
+   * `terminalEvidence`. A durable answer comes from the evidence table.
+   */
+  evidence?: Array<{ kind?: unknown; decision?: unknown }>,
+): boolean {
   const status = String(attempt.providerStatus || "")
     .trim()
     .toUpperCase();
   if (status === "REVERT" || status === "CANCEL") return true;
+  if (Array.isArray(evidence)) {
+    const resolved = evidence.some((row) =>
+      (SNAPPAY_PROVIDER_RESOLVED_EVIDENCE_KINDS as readonly string[]).includes(
+        String(row?.kind || ""),
+      ),
+    );
+    if (resolved) return true;
+  }
   const state = readSnappayGenerationState(attempt.providerResponse);
   return Boolean(state.generation?.terminalEvidence);
 }
@@ -155,10 +206,11 @@ export function snappayProviderPaymentIsUnresolved(
     providerReference?: unknown;
   },
   trackId?: unknown,
+  evidence?: Array<{ kind?: unknown; decision?: unknown }>,
 ): boolean {
   if (String(attempt.Status || "") === "Succeeded") return false;
   if (!snappayDispatchWasAttempted(attempt, trackId)) return false;
-  return !snappayProviderGenerationIsTerminal(attempt);
+  return !snappayProviderGenerationIsTerminal(attempt, evidence);
 }
 
 export function nextSnappayGenerationSeq(currentSeq: number): number {
@@ -286,6 +338,8 @@ export function withIssuedSnappayToken(
     callbackNonceHash: string;
     paymentTokenFingerprint: string;
     paymentToken: string;
+    providerHost?: string;
+    clientIdFingerprint?: string;
   },
 ): Record<string, unknown> {
   const previous = asRecord(providerResponse) || {};
@@ -297,6 +351,8 @@ export function withIssuedSnappayToken(
     callbackNonceHash: input.callbackNonceHash,
     paymentTokenFingerprint: input.paymentTokenFingerprint,
     paymentToken: input.paymentToken,
+    ...(input.providerHost ? { providerHost: input.providerHost } : {}),
+    ...(input.clientIdFingerprint ? { clientIdFingerprint: input.clientIdFingerprint } : {}),
   };
   const rest = { ...previous };
   delete rest.pendingDispatch;

@@ -16,6 +16,10 @@
       "name": "uq_orders_external_source_id",
       "columns": ["external_source", "external_id"],
       "type": "unique"
+    },
+    {
+      "name": "idx_orders_shipping_sms_due",
+      "columns": ["status", "shipping_sms_completed_at", "shipping_sms_due_at"]
     }
   ],
   "attributes": {
@@ -23,6 +27,9 @@
       "type": "text"
     },
     "Note": {
+      "type": "text"
+    },
+    "CancellationReason": {
       "type": "text"
     },
     "user": {
@@ -88,6 +95,24 @@
     "ShippingMethodTitle": {
       "type": "string"
     },
+    "ShippingSmsDueAt": {
+      "type": "datetime",
+      "columnName": "shipping_sms_due_at",
+      "private": true,
+      "configurable": false
+    },
+    "ShippingSmsCompletedAt": {
+      "type": "datetime",
+      "columnName": "shipping_sms_completed_at",
+      "private": true,
+      "configurable": false
+    },
+    "ShippingSmsLastAttemptAt": {
+      "type": "datetime",
+      "columnName": "shipping_sms_last_attempt_at",
+      "private": true,
+      "configurable": false
+    },
     "ShippingBarcode": {
       "type": "string"
     },
@@ -114,6 +139,9 @@
     "AnipoBarcodeState": {
       "type": "enumeration",
       "enum": ["Pending", "Issued", "NeedsAttention", "Stopped", "Voided"]
+    },
+    "AnipoBarcodeData": {
+      "type": "json"
     },
     "AnipoSubmittedAt": {
       "type": "datetime"

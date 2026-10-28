@@ -17,7 +17,7 @@
  */
 import path from "node:path";
 import {
-  findStoriesNeedingNormalization,
+  findStoryVideosNeedingNormalization,
   normalizeStoryVideo,
   type NormalizeResult,
 } from "../../src/services/media/normalize-story-video";
@@ -56,8 +56,10 @@ function describe(result: NormalizeResult): string {
       result.probe.fastStart ? "faststart" : "moov-at-end",
     );
   }
-  if (result.fromBytes) parts.push(`${formatBytes(result.fromBytes)} → ${formatBytes(result.toBytes)}`);
-  if (result.decision?.reasons.length) parts.push(`[${result.decision.reasons.join("; ")}]`);
+  const output = result.video?.output;
+  const sourceBytes = result.video?.source?.size ? result.video.source.size * 1024 : undefined;
+  if (output) parts.push(`${formatBytes(sourceBytes)} → ${formatBytes(output.mp4.bytes)}`);
+  if (result.reasons?.length) parts.push(`[${result.reasons.join("; ")}]`);
   if (result.detail) parts.push(result.detail);
   return parts.join(" | ");
 }
@@ -86,21 +88,35 @@ async function main() {
   const uploadsDir = path.join((strapi as any).dirs.static.public, "uploads");
 
   try {
-    const targets = options.storyIds ?? (await findStoriesNeedingNormalization(strapi as any));
+    const discovered = await findStoryVideosNeedingNormalization(strapi as any);
+    const targets = options.storyIds
+      ? discovered.filter((target) => options.storyIds?.includes(target.storyId))
+      : discovered;
     console.log(
       `[normalize] ${dryRun ? "DRY RUN" : "APPLYING"} — ${targets.length} story/stories, uploads at ${uploadsDir}`,
     );
 
     const results: NormalizeResult[] = [];
-    for (const storyId of targets) {
+    for (const target of targets) {
       try {
-        const result = await normalizeStoryVideo(storyId, { strapi: strapi as any, uploadsDir, dryRun });
+        const result = await normalizeStoryVideo(
+          target.storyId,
+          target.itemKey,
+          target.fileId,
+          { strapi: strapi as any, uploadsDir, dryRun },
+        );
         results.push(result);
         process.stdout.write(`[normalize] ${describe(result)}\n`);
       } catch (error) {
         // One bad file must not abandon the rest of the batch.
-        console.error(`[normalize] story ${storyId} FAILED: ${(error as Error).message}`);
-        results.push({ storyId, fileId: null, status: "missing", detail: (error as Error).message });
+        console.error(`[normalize] story ${target.storyId} FAILED: ${(error as Error).message}`);
+        results.push({
+          storyId: target.storyId,
+          itemKey: target.itemKey,
+          fileId: null,
+          status: "missing",
+          detail: (error as Error).message,
+        });
       }
     }
 

@@ -5,6 +5,7 @@
 ############################
 
 node_modules/
+.pnpm-store/
 /.pnp
 .pnp.*
 .yarn/*
@@ -40,6 +41,7 @@ SECRETS_REFERENCE.txt
 /out/
 apps/frontend/out/
 apps/frontend/.next/
+apps/frontend/.next-color-gallery-check/
 apps/auth/.next/
 apps/admin/.next/
 apps/auth/out/
@@ -111,10 +113,13 @@ apps/backend/junit.xml
 apps/frontend/junit.xml
 apps/e2e/playwright-report/
 apps/e2e/test-results/
+apps/e2e/.cache/
 apps/e2e/e2e-admin-results.xml
 apps/e2e/e2e-results.xml
 apps/e2e/*-e2e-results.xml
 apps/e2e/.auth/
+apps/e2e/reports/
+apps/e2e/blob-report/
 apps/admin/coverage/
 apps/admin/junit.xml
 tmp/*
@@ -171,3 +176,32 @@ apps/frontend/public/sw-version.js
 /.playwright-cli/
 /output/
 *.bak
+__pycache__/
+
+# Local development and generated artifacts
+/outputs/
+/artifacts/
+/.tmp-chrome*/
+**/__pycache__/
+*.py[cod]
+**/playwright-report/
+**/test-results/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.venv/
+**/node_modules/
+**/.next/
+!**/.env.example
+!**/env.example
+!**/*.env.example
+
+# Personal agent overrides
+.claude/settings.local.json
+
+# Serialized local environment setup
+/.dev-env-setup.lock/
+
+# Local synthetic demo account (generated; never publish credentials)
+.local-demo-credentials.json
+.local-demo.lock/

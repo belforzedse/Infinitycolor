@@ -73,6 +73,19 @@ describe("harness", () => {
 });
 
 describe("reserveStockAtomic", () => {
+  it("distinguishes a real database error from a shortage and leaves stock untouched", async () => {
+    const stock = await f.createStock({ count: 10, reserved: 0 });
+    await strapi.db.connection.transaction(async (trx: any) => {
+      await trx.raw("SAVEPOINT inventory_failure");
+      // Hide the table only inside this disposable transaction; never alter its schema.
+      await trx.raw("SET LOCAL search_path = pg_temp");
+      const result = await reserveStockAtomic(strapi, stock.id, 1, trx);
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe("database_failure");
+      await trx.raw("ROLLBACK TO SAVEPOINT inventory_failure");
+    });
+    expect(Number((await f.getStock(stock.id)).reservedCount)).toBe(0);
+  });
   it("increments reservedCount when stock is available", async () => {
     const stock = await f.createStock({ count: 10, reserved: 0 });
     const res = await reserveStockAtomic(strapi, stock.id, 3);
@@ -112,6 +125,7 @@ describe("reserveStockAtomic", () => {
     expect(results.filter((result) => result.success)).toHaveLength(1);
     expect(results.filter((result) => !result.success)).toHaveLength(1);
     expect(results.find((result) => !result.success)?.error).toMatch(/insufficient/i);
+    expect(results.find((result) => !result.success)?.reason).toBe("insufficient_stock");
 
     const final = await f.getStock(stock.id);
     expect(Number(final.Count)).toBe(1);

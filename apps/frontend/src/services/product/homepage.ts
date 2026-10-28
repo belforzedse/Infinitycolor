@@ -1,6 +1,5 @@
 import { apiClient } from "@/services";
 import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
-import { buildTitleKeywordFilter } from "@/constants/productKeywords";
 import type { ProductCardProps } from "@/components/Product/Card";
 import { formatProductsToCardProps } from "./product";
 import { parseStockCount, productTitleMatchesKeywords } from "@/utils/product";
@@ -280,8 +279,10 @@ export const getGifPromoProducts = async (
 };
 
 /**
- * Fetch homepage product sections: batch for discounted + favorites, separate request for "new" (title matches PRODUCT_BOOST_KEYWORDS).
- * If settings contain curated product IDs (homeNewestProductIds, homeDiscountedProductIds), those are used instead of algorithmic selection.
+ * Fetch homepage product sections: batch for discounted + favorites, and the first in-stock
+ * cards of the Newest listing for "new" (curated homeNewestProductIds lead it server-side).
+ * If settings contain curated product IDs (homeDiscountedProductIds, homeFavoriteProductIds),
+ * those are used instead of algorithmic selection.
  */
 export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<typeof getPublicSuperAdminSettings>>): Promise<{
   discounted: ProductCardProps[];
@@ -296,14 +297,11 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     `pagination[limit]=36&` +
     `pagination[withCount]=false`;
 
-  const titleFilter = buildTitleKeywordFilter();
+  // The rail is the start of the Newest listing (/offer?type=newest): the backend puts the
+  // curated homeNewestProductIds first and fills the rest by listing date, in stock only.
   const newEndpoint =
-    `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&filters[Status][$eq]=Active&` +
-    `filters[removedAt][$null]=true&` +
-    (titleFilter ? `${titleFilter}&` : "") +
-    `filters[product_variations][Price][$gte]=1&` +
+    `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&offer=newest&` +
     `availability=in-stock&` +
-    `sort[0]=createdAt:desc&` +
     `pagination[limit]=20&` +
     `pagination[withCount]=false`;
 
@@ -330,31 +328,29 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
 
     // Wait for settings to determine strategy for "new" and "discounted" sections
     const settings = await settingsPromise;
-    const curatedNewest = settings.homeNewestProductIds.length > 0;
     const curatedFavorites = settings.homeFavoriteProductIds.length > 0;
     const curatedDiscounted = settings.homeDiscountedProductIds.length > 0;
 
     // Start new products and curated discounted fetches in parallel
-    const newPromise = curatedNewest
-      ? getProductsByIds(settings.homeNewestProductIds)
-      : fetch(`${getStrapiServerUrl()}${withHomepageCacheBust(newEndpoint)}`, homepageFetchOptions())
-          .then(async (res) => {
-            const data = await res.json();
-            if (!res.ok) {
-              logger.error("[Homepage] New products API error", {
-                status: res.status,
-                error: (data as { error?: { message?: string } })?.error?.message ?? data,
-              });
-              return { data: [] };
-            }
-            return data as { data?: unknown[] };
-          })
-          .then((newResponse: { data?: unknown[] }) => {
-            const raw = newResponse?.data ?? [];
-            return formatProductsToCardProps(
-              (raw as unknown[]).filter(productHasStock).slice(0, 20),
-            );
+    const newPromise = fetch(
+      `${getStrapiServerUrl()}${withHomepageCacheBust(newEndpoint)}`,
+      homepageFetchOptions(),
+    )
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          logger.error("[Homepage] New products API error", {
+            status: res.status,
+            error: (data as { error?: { message?: string } })?.error?.message ?? data,
           });
+          return { data: [] };
+        }
+        return data as { data?: unknown[] };
+      })
+      .then((newResponse: { data?: unknown[] }) => {
+        const raw = newResponse?.data ?? [];
+        return formatProductsToCardProps((raw as unknown[]).filter(productHasStock).slice(0, 20));
+      });
     const discountedCuratedPromise = curatedDiscounted
       ? getProductsByIds(settings.homeDiscountedProductIds, false)
       : getDiscountedProducts();

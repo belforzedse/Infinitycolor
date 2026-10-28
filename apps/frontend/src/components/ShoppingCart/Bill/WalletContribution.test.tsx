@@ -124,3 +124,70 @@ describe("WalletContribution", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe("credit committed to an unfinished payment", () => {
+  const heldOnly = (heldIrr: number, boundAt: string | null = "2026-09-20T11:30:00.000Z") =>
+    render(
+      <WalletContribution
+        totalToman={1_200_000}
+        availableIrr={0}
+        heldIrr={heldIrr}
+        holds={[
+          {
+            attemptId: "attempt-1",
+            paymentAttemptId: 11,
+            orderId: 22,
+            gateway: "snappay",
+            amountIrr: heldIrr,
+            heldAt: "2026-09-20T10:00:00.000Z",
+            state: "reconciling",
+            nextCheckAt: null,
+            boundAt,
+          },
+        ]}
+        capabilities={capabilities}
+        enabled
+        onEnabledChange={jest.fn()}
+      />,
+    );
+
+  it("explains the held credit instead of vanishing when nothing is spendable", () => {
+    // This is the worst moment of the defect: the shopper's money is tied up in
+    // a checkout they abandoned, and the card that would explain it disappears
+    // precisely because the spendable balance reads zero.
+    heldOnly(3_000_000);
+    const notice = screen.getByTestId("wallet-contribution-held-only");
+    expect(notice).toHaveTextContent("رزرو شده");
+    expect(notice).toHaveTextContent("به‌طور خودکار آزاد می‌شود");
+  });
+
+  it("still renders nothing when there is neither spendable nor held credit", () => {
+    render(
+      <WalletContribution
+        totalToman={1_200_000}
+        availableIrr={0}
+        heldIrr={0}
+        capabilities={capabilities}
+        enabled
+        onEnabledChange={jest.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("wallet-contribution-held-only")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wallet-contribution")).not.toBeInTheDocument();
+  });
+
+  it("keeps the ordinary card when some credit is still spendable", () => {
+    render(
+      <WalletContribution
+        totalToman={1_200_000}
+        availableIrr={5_000_000}
+        heldIrr={3_000_000}
+        capabilities={capabilities}
+        enabled
+        onEnabledChange={jest.fn()}
+      />,
+    );
+    expect(screen.getByTestId("wallet-contribution")).toBeInTheDocument();
+    expect(screen.getByTestId("wallet-contribution-held")).toBeInTheDocument();
+  });
+});

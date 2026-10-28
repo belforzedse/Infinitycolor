@@ -17,6 +17,18 @@ export interface CheckoutAddressPayload {
   FullAddress: string;
   Description?: string;
   save?: boolean;
+  FullName?: string;
+  Phone?: string;
+}
+
+/**
+ * Who receives the parcel, as typed at checkout. It can differ from the account
+ * placing the order (staff ordering for a customer), so the server stores it on
+ * the order's own delivery address rather than reading the profile.
+ */
+export interface CheckoutRecipient {
+  FullName?: string;
+  Phone?: string;
 }
 
 export interface CheckoutQuoteRequest {
@@ -26,6 +38,8 @@ export interface CheckoutQuoteRequest {
   callbackURL?: string;
   addressId?: number;
   addressPayload?: CheckoutAddressPayload;
+  /** Sent on every checkout that is not attaching to a reserve shipment. */
+  recipient?: CheckoutRecipient;
   gateway?: CheckoutGatewayCode;
   mobile?: string;
   discountCode?: string;
@@ -175,6 +189,10 @@ export interface FinalizeCartResponse {
   attemptId?: string;
   paymentStatus?: PaymentAttemptStatus;
   errorCode?: string;
+  /** Present only for a confirmed concurrent stock shortage. */
+  details?: { reason?: "insufficient_stock" };
+  /** The backend owns the actionable report; the client logs customer impact. */
+  telemetryOwner?: "backend";
   reserveGroupId?: string;
   reserveExpiresAt?: string;
   /** True when this order joined an existing window rather than opening one. */
@@ -199,11 +217,36 @@ export interface OrderPaymentStatusResponse {
   /** What the gateway was asked to charge, in IRR. Equals `amountIrr` when no wallet was used. */
   gatewayAmountIrr?: number;
   /**
+   * Paid orders only: the sum of the order's settled, non-return charge legs,
+   * in IRR (wallet + gateway for a split). The analytics `purchase` revenue.
+   */
+  paidAmountIrr?: number;
+  /** Paid orders only: when the last charge leg settled, ISO. */
+  paidAt?: string;
+  /**
    * Lifecycle of this checkout's wallet credit. `Active` means the money is
    * still committed to this payment and cannot be spent anywhere else, which is
    * the only state where offering to abandon the checkout makes sense.
    */
   walletHoldStatus?: "None" | "DirectDebit" | "Active" | "Captured" | "Released";
+  /**
+   * How a live hold reads right now.
+   *
+   * `reclaimable` is the only state where the shopper's own claim can move
+   * anything: their statement that they did not pay is consulted only for a
+   * token the provider still reports as uncommitted. Everywhere else the
+   * release is the worker's job and offering a button would promise something
+   * the server would refuse.
+   */
+  walletHoldState?: "reconciling" | "awaiting_provider" | "reclaimable" | "releasing";
+  /** When the credit was committed, ISO. Used to hold the manual button back. */
+  walletHeldAt?: string;
+  /**
+   * Latest moment this hold can still be held: the SnappPay reservation
+   * ceiling, or the order's reservation expiry for a bank gateway. Lets the
+   * page promise an automatic release *and* say by when.
+   */
+  walletHoldBoundAt?: string;
   /**
    * Only present on a reconcile sent with `abandon: true`. `false` means the
    * claim was refused — the attempt is already resolved, or the shopper's own
@@ -211,6 +254,12 @@ export interface OrderPaymentStatusResponse {
    * coming and the page must not promise one.
    */
   walletReleaseRequested?: boolean;
+  /**
+   * Why `walletReleaseRequested` is what it is. `not_applicable` means this
+   * gateway has no provider call behind the claim, so the button is not offered
+   * at all rather than offered and silently ignored.
+   */
+  walletReleaseReason?: "queued" | "already_resolved" | "not_applicable";
   canRetry?: boolean;
   nextAction?: "view_order" | "return_to_cart" | "recheck";
   failureCode?: string;

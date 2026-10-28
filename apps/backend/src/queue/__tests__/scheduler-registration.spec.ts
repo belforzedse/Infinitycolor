@@ -29,10 +29,16 @@ describe("scheduler registration", () => {
         QUEUE_CRON_SNAPPAY_SWEEP: "*/1 * * * *",
         QUEUE_CRON_WALLET_TOPUP_RECONCILE: "*/6 * * * *",
         QUEUE_CRON_ANIPO_BARCODE_RECONCILE: "*/15 * * * *",
+        QUEUE_CRON_PRODUCT_TRASH_RETENTION: "45 3 * * *",
         QUEUE_TIMEZONE: "Asia/Tehran",
       } as any),
     );
 
+    expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.shippingSmsDispatch,
+      { every: 60_000 },
+      expect.objectContaining({ name: COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch, data: {} }),
+    );
     expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.stockReservationExpiry,
       { pattern: "*/2 * * * *", tz: "Asia/Tehran" },
@@ -62,6 +68,14 @@ describe("scheduler registration", () => {
       { pattern: "*/15 * * * *", tz: "Asia/Tehran" },
       expect.objectContaining({
         name: COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile,
+        data: {},
+      }),
+    );
+    expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.productTrashRetention,
+      { pattern: "45 3 * * *", tz: "Asia/Tehran" },
+      expect.objectContaining({
+        name: COMMERCE_MAINTENANCE_JOBS.productTrashRetention,
         data: {},
       }),
     );

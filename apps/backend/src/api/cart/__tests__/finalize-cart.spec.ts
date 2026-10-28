@@ -1,4 +1,9 @@
 import { finalizeToOrderHandler } from "../controllers/handlers/finalizeToOrder";
+
+jest.mock("../../payment-gateway/services/mellat-coordinator", () => ({
+  prepareMellatInitiation: jest.fn().mockResolvedValue(undefined),
+  recordMellatInitiation: jest.fn().mockResolvedValue(undefined),
+}));
 import {
   cancelOrderAndRelease,
   ensurePaymentGateway,

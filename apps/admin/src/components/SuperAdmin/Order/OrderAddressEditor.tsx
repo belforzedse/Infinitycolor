@@ -67,10 +67,12 @@ export default function OrderAddressEditor({ isOpen, order, onClose, onSaved }: 
       await onSaved(body as AddressUpdateResponse);
       onClose();
     } catch (error) {
+      // The admin API client throws `{ status, message }` carrying the backend's
+      // reason; reading `response.data` hid it behind the generic text.
       const value = error as any;
       toast.error(
-        value?.response?.data?.error?.message ||
-          value?.response?.data?.message ||
+        value?.message ||
+          value?.response?.data?.error?.message ||
           "ویرایش اطلاعات گیرنده انجام نشد",
       );
     } finally {

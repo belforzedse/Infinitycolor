@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import type { Strapi } from "@strapi/strapi";
+import { formatCancellationReasonForSms } from "../../../services/sms/notifications";
 import { consumeOrderReservation, releaseOrderReservation } from "../../../utils/stockReservations";
 import { decrementStockAtomic } from "../../cart/services/lib/stock";
 import {
@@ -7,7 +8,7 @@ import {
   releaseOrderDiscountClaim,
 } from "../../cart/services/lib/discount-claim";
 import { consumeCheckoutCartLines } from "../../cart/services/lib/order-cart-cleanup";
-import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../../report/analytics/outbox";
+import { enqueueOrderPaid, enqueueRefundForReturn } from "../../report/analytics/outbox";
 import { confirmReservePaymentForOrder } from "../../reserve-group/lib/reserve-group";
 import { captureWalletLegForSettlement } from "../../local-user-wallet/services/wallet-holds";
 import {
@@ -17,6 +18,10 @@ import {
 } from "../../order/controllers/helpers/notifyAnipoParcelCancelled";
 import { creditWalletBalanceAtomic } from "../../local-user-wallet/services/local-user-wallet";
 import { planSnappayTenderAdjustment } from "./snappay-split-tender";
+import {
+  recordEvidence,
+  type EvidenceRow,
+} from "../../payment-attempt-evidence/services/evidence";
 
 type FinalizationIds = {
   attemptId: number;
@@ -29,6 +34,17 @@ type FinalizationIds = {
 type SnappayRefundTransaction = {
   id: number;
   amountIrr: number;
+};
+
+const cancellationDescription = (providerStatus: string): string => {
+  switch (providerStatus) {
+    case "NOT_FOUND":
+      return "SnappPay reported the payment token as not found; order cancelled automatically";
+    case "REGISTERED_REVERTED":
+      return "SnappPay payment was never started and has been reverted; order cancelled automatically";
+    default:
+      return "SnappPay cancellation confirmed by provider";
+  }
 };
 
 async function createSnappayRefundTransactions(
@@ -445,11 +461,44 @@ async function restockConsumedOrder(strapi: Strapi, order: any, trx: any): Promi
   }
 }
 
+/**
+ * Local cancellation statuses.
+ *
+ * `REVERT` and `CANCEL` name what SnappPay did. `NOT_FOUND` and
+ * `REGISTERED_REVERTED` name why *we* ended the attempt when the provider had
+ * nothing to reverse — a confirmed missing token, and an aged registered token
+ * that we reverted ourselves. They are recorded strings, not new enum members:
+ * `payment_attempts.providerStatus` is a free-text column.
+ */
+export type SnappayCancellationStatus =
+  | "REVERT"
+  | "CANCEL"
+  | "NOT_FOUND"
+  | "REGISTERED_REVERTED";
+
+export type SnappayCancellationOptions = {
+  /**
+   * Names the evidence in the wallet's release reason instead of the generic
+   * `reservation_Released`, so a hold released by a confirmed NOT_FOUND is
+   * distinguishable from one released by a stock timeout for the rest of its
+   * life.
+   */
+  walletReleaseReason?: string;
+  /**
+   * Written inside this transaction. For a decision that moves money this is
+   * not optional bookkeeping: the row exists if and only if the release
+   * committed, and a duplicate violates the partial unique index and aborts the
+   * cancellation rather than releasing the same hold twice.
+   */
+  evidence?: EvidenceRow;
+};
+
 export async function applySnappayCancellation(
   strapi: Strapi,
   ids: FinalizationIds,
-  providerStatus: "REVERT" | "CANCEL",
+  providerStatus: SnappayCancellationStatus,
   reason: string,
+  options: SnappayCancellationOptions = {},
 ): Promise<{ replayed: boolean }> {
   let anipoCancelSnapshot: AnipoCancelSnapshot | null = null;
   let cancellationRefundTransactions: SnappayRefundTransaction[] = [];
@@ -462,6 +511,30 @@ export async function applySnappayCancellation(
       ...(trx ? { transacting: trx } : {}),
     } as any);
     if (!attempt) throw new Error("SNAPPAY_ATTEMPT_NOT_FOUND");
+
+    // A locally decided cancellation loses to anything that already ended the
+    // attempt — including the reservation sweep, which stamps `Expired` rather
+    // than `Cancelled`.
+    //
+    // Without this, a confirmed NOT_FOUND landing at +30:59 against a sweep
+    // that won at +31:00 would sail past the narrow check below (`Expired` is
+    // not `Cancelled`), re-run the release as a no-op, overwrite the attempt's
+    // terminal record, and write a *second* `released` evidence row for the
+    // same money — `local_ttl` and `not_found_confirmed` are different kinds,
+    // so the partial unique index does not catch it and the 24-hour wallet
+    // value breaker would count the same release twice.
+    //
+    // Scoped to the two statuses that describe a decision we made locally:
+    // `REVERT`/`CANCEL` still mean "SnappPay did this", and an operator
+    // cancelling a settled order must still work.
+    const locallyDecided =
+      providerStatus === "NOT_FOUND" || providerStatus === "REGISTERED_REVERTED";
+    if (
+      locallyDecided &&
+      ["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(attempt.Status))
+    ) {
+      return { replayed: true };
+    }
     if (attempt.Status === "Cancelled" && attempt.providerStatus === providerStatus) {
       return { replayed: true };
     }
@@ -495,7 +568,11 @@ export async function applySnappayCancellation(
     } as any);
     if (!contract) throw new Error("SNAPPAY_CONTRACT_NOT_FOUND");
     if (reservationStatus === "Reserved") {
-      await releaseOrderReservation(strapi, ids.orderId, "Released", trx);
+      await releaseOrderReservation(strapi, ids.orderId, "Released", trx, {
+        ...(options.walletReleaseReason
+          ? { walletReleaseReason: options.walletReleaseReason }
+          : {}),
+      });
     } else if (reservationStatus === "Consumed") {
       await restockConsumedOrder(strapi, order, trx);
       await strapi.db.query("api::order.order").update({
@@ -539,7 +616,13 @@ export async function applySnappayCancellation(
 
     const now = new Date();
     anipoCancelSnapshot = captureAnipoCancelSnapshot(order);
-    const orderUpdate: Record<string, unknown> = { Status: "Cancelled" };
+    const orderUpdate: Record<string, unknown> = {
+      Status: "Cancelled",
+      // SnappPay's diagnostic reason strings are our own internal codes (or, on
+      // the operator-cancel path, an admin's own typed text) — safe to thread
+      // through raw, unlike the vendor-callback-sourced reasons in gateway-helpers.ts.
+      CancellationReason: formatCancellationReasonForSms(reason, "payment_gateway_declined"),
+    };
     // Local Anipo void in-txn; provider «لغو شده» runs after commit.
     if (order.ShippingBarcode) {
       orderUpdate.ShippingBarcode = null;
@@ -593,18 +676,27 @@ export async function applySnappayCancellation(
         providerStatus,
         nextAction: null,
         nextActionAt: null,
-        failureCode: providerStatus,
-        failureMessage: "SnappPay payment was cancelled",
+        failureCode:
+          providerStatus === "NOT_FOUND"
+            ? "SNAPPAY_STATUS_NOT_FOUND_TERMINAL"
+            : providerStatus,
+        failureMessage: cancellationDescription(providerStatus),
         resolvedAt: now,
         lastReconciledAt: now,
       },
       ...(trx ? { transacting: trx } : {}),
     } as any);
+    // Inside the transaction, after the release and before the commit: an
+    // evidence insert that fails takes the whole cancellation with it.
+    if (options.evidence) {
+      await recordEvidence(strapi, options.evidence, trx);
+    }
+
     await strapi.db.query("api::order-log.order-log").create({
       data: {
         order: ids.orderId,
         Action: "Update",
-        Description: "SnappPay cancellation confirmed by provider",
+        Description: cancellationDescription(providerStatus),
         Changes: {
           transactionId: ids.transactionId,
           providerStatus,
@@ -686,7 +778,7 @@ export async function runSnappaySideEffects(
   }
   // Analytics is durable-but-asynchronous; a provider/DB outage must never
   // hold the commerce side-effects lease or replay cart/stock work.
-  void enqueuePurchaseForOrder(strapi as any, orderId).catch(() => undefined);
+  void enqueueOrderPaid(strapi as any, orderId).catch(() => undefined);
   await strapi.db.query("api::payment-attempt.payment-attempt").update({
     where: { id: attemptId },
     data: { sideEffectsCompletedAt: new Date() },

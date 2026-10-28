@@ -3,7 +3,9 @@
  * settings controller
  */
 
+import { CatalogEditError, runCatalogMutation, sendCatalogEditError, staffEditor, withHomepageSettingsWrite } from "../../../utils/catalogEdit";
 import { getFrontendUrls } from "../../../utils/revalidate";
+import { clearAllProductCaches } from "../../../utils/productOriginCache";
 import type { Attribute } from "@strapi/types";
 import { factories } from "@strapi/strapi";
 import { writeAuditEvent } from "../../../audit/writer";
@@ -55,7 +57,7 @@ const HOMEPAGE_PRODUCT_FIELDS = [
 ] as const;
 
 function projectHomepageProductSettings(settings: any) {
-  return Object.fromEntries(
+  return { HomepageProductsRevision: Number(settings?.HomepageProductsRevision || 0), ...Object.fromEntries(
     HOMEPAGE_PRODUCT_FIELDS.map((field) => [
       field,
       (HOMEPAGE_PRODUCT_ENABLED_FIELDS as readonly string[]).includes(field)
@@ -64,7 +66,7 @@ function projectHomepageProductSettings(settings: any) {
           ? settings[field]
           : [],
     ]),
-  );
+  ) };
 }
 
 // Newest/Favorite/Discounted arrays now also drive the full "View all" storefront
@@ -277,6 +279,15 @@ async function triggerHeroSliderRevalidation(strapi: { log: { warn: (msg: string
 }
 
 export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
+  async create(ctx) {
+    if ([...HOMEPAGE_PRODUCT_FIELDS, "HomepageProductsRevision"].some((field) => field in (ctx.request?.body?.data || {}))) return ctx.badRequest("Use the homepage products operation");
+    return super.create(ctx);
+  },
+  async update(ctx) {
+    if ([...HOMEPAGE_PRODUCT_FIELDS, "HomepageProductsRevision"].some((field) => field in (ctx.request?.body?.data || {}))) return ctx.badRequest("Use the homepage products operation");
+    return super.update(ctx);
+  },
+
   async getBlogBanners(ctx) {
     const settingsEntity = await ensureSettingsEntity(strapi);
     ctx.body = {
@@ -384,12 +395,29 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       data[field] = value;
     }
     const settingsEntity = await ensureSettingsEntity(strapi);
-    const updated = await strapi.db.transaction(async ({ trx }) => {
-      const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
+    const expectedRevision = ctx.request.body?.expectedRevision;
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      return sendCatalogEditError(ctx, new CatalogEditError("HOMEPAGE_VERSION_CONFLICT"));
+    }
+    let changed = false;
+    const changedMembership = new Set<number>();
+    for (const field of HOMEPAGE_PRODUCT_ID_FIELDS) {
+      if (!(field in data)) continue;
+      const before = new Set<number>(settingsEntity[field] || []);
+      const after = new Set<number>(data[field] as number[]);
+      for (const id of before) if (!after.has(id)) changedMembership.add(id);
+      for (const id of after) if (!before.has(id)) changedMembership.add(id);
+    }
+    const mutate = async (trx: any) => {
+      const locked = await trx("site_settings").where({ id: settingsEntity.id }).forUpdate().first();
+      if (Number(locked.homepage_products_revision || 0) !== expectedRevision) throw new CatalogEditError("HOMEPAGE_VERSION_CONFLICT");
+      data.HomepageProductsRevision = expectedRevision + 1;
+      const entity = await withHomepageSettingsWrite(() => strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
         data,
         transacting: trx,
-      });
+      }));
       const changes = settingChanges(settingsEntity, entity, Object.keys(data));
+      changed = changes.length > 0;
       await writeAuditEvent(
         strapi,
         {
@@ -411,7 +439,20 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
         { trx },
       );
       return entity;
-    });
+    };
+    let updated: any;
+    try {
+      if (changedMembership.size) {
+        const editor = await staffEditor(ctx, strapi);
+        updated = (await runCatalogMutation(strapi, [...changedMembership], { kind: "transient", editor }, mutate)).value;
+      } else {
+        updated = await strapi.db.transaction(({ trx }) => mutate(trx));
+      }
+    } catch (error) { return sendCatalogEditError(ctx, error); }
+    // The rails and the Newest listing read these ids per request, but the product
+    // endpoint caches (homepage-sections, rest-cache card lists) only clear on product
+    // writes, so a reorder would otherwise wait out their TTLs.
+    if (changed) await clearAllProductCaches(strapi, "homepage-products");
     ctx.body = {
       data: {
         id: updated.id,

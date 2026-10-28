@@ -1,4 +1,6 @@
+import { prepareMellatInitiation, recordMellatInitiation } from "../../../payment-gateway/services/mellat-coordinator";
 import { Strapi } from "@strapi/strapi";
+import { canonicalIranPhone } from "@repo/auth-core";
 import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../../utils/roles";
 import {
   cancelOrderAndRelease,
@@ -32,6 +34,12 @@ import {
   hasPaidMember,
 } from "../../../reserve-group/lib/reserve-group";
 
+const cleanRecipientName = (value: unknown) =>
+  String(value ?? "").normalize("NFC").trim().replace(/\s+/g, " ").slice(0, 255);
+const cleanRecipientPhone = (value: unknown) => String(value ?? "").trim().slice(0, 32);
+const comparablePhone = (value: unknown) =>
+  canonicalIranPhone(value) || String(value ?? "").replace(/\D/g, "");
+
 export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
     shipping,
@@ -50,7 +58,14 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     analyticsCorrelationId,
     walletAmountToman,
     supersedeAttemptId,
+    recipient,
   } = ctx.request.body;
+
+  // Who receives the parcel, as typed at checkout. It can differ from the
+  // account placing the order (staff order on a customer's behalf), so it is
+  // stored on the order's delivery address rather than read from the profile.
+  const recipientName = cleanRecipientName(recipient?.FullName);
+  const recipientPhone = cleanRecipientPhone(recipient?.Phone);
 
   // The browser correlation id is opaque and never used for authorization. It
   // is persisted only to join a later server-side settlement event with the
@@ -76,7 +91,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const normalizedQuoteHash = String(quoteHash || "").trim();
 
     if (managesPaymentAttempt) {
-      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway);
+      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway, Number(user.id));
       if (!gatewayEnabled) {
         return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
           data: {
@@ -125,6 +140,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       resumeDecision === "replay" && Boolean(checkoutAttemptOrderId(existingAttempt));
 
     let resolvedAddressId = addressId;
+    // Set only when the order would link a saved address-book row.
+    let savedAddress: any = null;
     let resolvedShippingId = shipping;
     let resolvedShippingCost = 0;
     let shippingSnapshot: { code?: string; title?: string } = {};
@@ -300,8 +317,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         // ordering on a customer's behalf), so this is stored separately from
         // `user`, which stays the authenticated account. Empty/whitespace-only
         // values fall back to the account's own name/phone at render time.
-        FullName: String(FullName || "").trim().slice(0, 255) || undefined,
-        Phone: String(Phone || mobile || "").trim().slice(0, 32) || undefined,
+        FullName: cleanRecipientName(FullName) || recipientName || undefined,
+        Phone: cleanRecipientPhone(Phone || recipientPhone || mobile) || undefined,
         IsTemporary: !save,
         user: user.id,
       };
@@ -366,6 +383,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             },
           });
         }
+
+        if (addressId) savedAddress = address;
       } catch (err) {
         strapi.log.error("Failed to validate address:", err);
         return ctx.badRequest("خطا در بررسی آدرس", {
@@ -422,6 +441,47 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       }
     }
 
+    // A saved address is shared by every order that ever used it, so a
+    // different recipient must not be written onto it -- that would rename the
+    // recipient of past orders too. The order gets its own copy instead, the
+    // same snapshot the admin recipient editor makes.
+    if (!resumeExistingCheckout && savedAddress) {
+      const nameChanged =
+        Boolean(recipientName) && recipientName !== cleanRecipientName(savedAddress.FullName);
+      const phoneChanged =
+        Boolean(recipientPhone) &&
+        comparablePhone(recipientPhone) !== comparablePhone(savedAddress.Phone);
+      if (nameChanged || phoneChanged) {
+        try {
+          const snapshot = await strapi.entityService.create(
+            "api::local-user-address.local-user-address",
+            {
+              data: {
+                shipping_city: savedAddress.shipping_city?.id ?? savedAddress.shipping_city,
+                PostalCode: savedAddress.PostalCode,
+                FullAddress: savedAddress.FullAddress,
+                Description: savedAddress.Description || undefined,
+                FullName: recipientName || savedAddress.FullName || undefined,
+                Phone: recipientPhone || savedAddress.Phone || undefined,
+                IsTemporary: true,
+                user: user.id,
+              },
+            },
+          );
+          resolvedAddressId = snapshot.id;
+        } catch (err) {
+          strapi.log.error("Failed to snapshot checkout recipient during finalize", err);
+          return ctx.badRequest("خطا در ثبت آدرس", {
+            data: {
+              success: false,
+              errorCode: "ADDRESS_CREATION_FAILED",
+              message: "خطا در ثبت آدرس",
+            },
+          });
+        }
+      }
+    }
+
     const resumeQuoteHash =
       normalizedQuoteHash || String(existingAttempt?.quoteHash || "").trim();
 
@@ -463,6 +523,12 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const result = await cartService.finalizeCartToOrder(user.id, shippingData);
 
     if (!result.success) {
+      const diagnostics = {
+        ...(result.telemetryOwner === "backend" ? { telemetryOwner: "backend" } : {}),
+        ...(result.errorCode === "STOCK_RESERVATION_FAILED" && result.details?.reason === "insufficient_stock"
+          ? { details: { reason: "insufficient_stock" } }
+          : {}),
+      };
       if (result.status === 503 || result.errorCode === "RESERVATION_LOOKUP_FAILED") {
         ctx.status = 503;
         return {
@@ -470,6 +536,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             success: false,
             errorCode: result.errorCode,
             message: result.message,
+            ...diagnostics,
           },
         };
       }
@@ -481,6 +548,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             errorCode: result.errorCode,
             message: result.message,
             quote: result.quote,
+            ...diagnostics,
             ...(result.paymentCapabilities
               ? { paymentCapabilities: result.paymentCapabilities }
               : {}),
@@ -497,6 +565,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           itemsRemoved: result.itemsRemoved,
           itemsAdjusted: result.itemsAdjusted,
           cart: result.cart,
+          ...diagnostics,
         },
       });
     }
@@ -568,7 +637,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     });
 
     if (!managesPaymentAttempt) {
-      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway);
+      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway, Number(user.id));
       if (!gatewayEnabled) {
         return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
           data: {
@@ -761,6 +830,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       });
       paymentResult = pr;
     } else {
+      await prepareMellatInitiation(strapi, Number(paymentAttempt.id), Number(order.id), Math.round(gatewayAmountToman * 10));
       paymentResult = await requestMellatPayment(strapi, {
         orderId: order.id,
         // Contract amounts are stored in toman; mellat-v3 performs the single
@@ -770,6 +840,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         callbackURL: callbackURL,
         contractId: contract.id,
       });
+      await recordMellatInitiation(strapi, Number(paymentAttempt.id), paymentResult);
     }
 
     strapi.log.info(`Payment result for Order ${order.id}:`, {
@@ -795,7 +866,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             Status: "Unknown",
             failureCode: classification.errorCode,
             failureMessage: errMsg,
-            providerResponse: detailed,
+            ...(selectedGateway === "mellat" ? {} : { providerResponse: detailed }),
             nextAction: "manual_review",
           }).catch(() => undefined);
         }
@@ -834,7 +905,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           Status: "Failed",
           failureCode: "PAYMENT_INITIATION_FAILED",
           failureMessage: errMsg,
-          providerResponse: detailed,
+          ...(selectedGateway === "mellat" ? {} : { providerResponse: detailed }),
           resolvedAt: new Date(),
         });
       }
@@ -893,10 +964,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           Status: "Redirected",
           providerReference: String(paymentResult.refId || paymentResult.requestId || ""),
           redirectUrl: paymentResult.redirectUrl,
-          providerResponse: {
+          ...(selectedGateway === "mellat" ? {} : { providerResponse: {
             requestId: paymentResult.requestId,
             hasProviderReference: Boolean(paymentResult.refId),
-          },
+          } }),
           redirectedAt: new Date(),
         });
       }
@@ -968,6 +1039,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           success: false,
           errorCode,
           message,
+          ...(error?.payload?.data?.telemetryOwner === "backend" ? { telemetryOwner: "backend" } : {}),
+          ...(errorCode === "STOCK_RESERVATION_FAILED" && error?.payload?.data?.details?.reason === "insufficient_stock"
+            ? { details: { reason: "insufficient_stock" } }
+            : {}),
           timestamp: new Date().toISOString(),
           userId: user?.id,
         },

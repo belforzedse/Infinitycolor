@@ -3,7 +3,7 @@
 import React, { useState, useRef, useCallback } from "react";
 import toast from "react-hot-toast";
 import { Upload, X, ToggleLeft, ToggleRight } from "lucide-react";
-import type { StoryMediaType, CreateStoryData } from "@/types/story";
+import type { StoryItem, StoryItemInput, StoryMediaType, CreateStoryData } from "@/types/story";
 import { uploadFile } from "@/services/super-admin/files/upload";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
@@ -17,6 +17,8 @@ export interface StoryFormValues {
   mediaUrl?: string;
   thumbnailId?: number;
   thumbnailUrl?: string;
+  /** Full canonical array; this compatibility editor changes item one without dropping the rest. */
+  Items?: StoryItem[];
 }
 
 interface StoryFormProps {
@@ -80,13 +82,37 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
     if (!title.trim()) { toast.error("عنوان الزامی است."); return; }
     if (!mediaId) { toast.error("آپلود رسانه الزامی است."); return; }
 
+    const originalItems = initialValues?.Items ?? [];
+    const first = originalItems[0];
+    const items: StoryItemInput[] = [
+      {
+        ...(first?.id ? { id: first.id } : {}),
+        ...(first?.Key ? { Key: first.Key } : {}),
+        MediaType: mediaType,
+        Media: mediaId,
+        Thumbnail: first?.Thumbnail?.id ?? null,
+        DurationMs: first?.DurationMs ?? 5000,
+        CtaUrl: first?.CtaUrl ?? null,
+        Overlays: first?.Overlays ?? [],
+      },
+      ...originalItems.slice(1).map((item) => ({
+        ...(item.id ? { id: item.id } : {}),
+        Key: item.Key,
+        MediaType: item.MediaType,
+        Media: item.Media!.id,
+        Thumbnail: item.Thumbnail?.id ?? null,
+        DurationMs: item.DurationMs,
+        CtaUrl: item.CtaUrl ?? null,
+        Overlays: item.Overlays ?? [],
+      })),
+    ];
+
     await onSubmit({
       Title: title.trim(),
-      MediaType: mediaType,
       IsActive: isActive,
       SortOrder: sortOrder,
-      Media: mediaId,
       Thumbnail: thumbnailId,
+      Items: items,
     });
   };
 
@@ -107,6 +133,12 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
 
       {/* ── Main column ───────────────────────── */}
       <div className="space-y-5 lg:col-span-2">
+
+        {(initialValues?.Items?.length ?? 0) > 1 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            این داستان {initialValues?.Items?.length} آیتم دارد. این فرم آیتم اول را ویرایش می‌کند و همه آیتم‌های دیگر را بدون تغییر نگه می‌دارد.
+          </div>
+        )}
 
         {/* Title */}
         <div className="rounded-2xl bg-white p-5 shadow-sm">

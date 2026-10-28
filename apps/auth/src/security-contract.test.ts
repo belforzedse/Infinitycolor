@@ -26,11 +26,7 @@ import {
 } from "./server/application-session";
 import { proxy } from "./proxy";
 
-function jwt(
-  expSeconds: number,
-  marker: string,
-  iatSeconds?: number,
-): string {
+function jwt(expSeconds: number, marker: string, iatSeconds?: number): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
   ).toString("base64url");
@@ -781,4 +777,105 @@ test("strapi's password reset is reachable only through the signed bridge", () =
     resetRoute.slice(0, resetRoute.indexOf("},\n    {") + 1 || undefined),
     /api::internal-auth\.verify-bridge/,
   );
+});
+
+test("typed token outcomes preserve temporary failures and clear only a confirmed 401", async () => {
+  let status = 200;
+  const manager = createTokenManager({
+    authOrigin: "https://auth.test",
+    now: () => 1_700_000_000_000,
+    fetchImpl: (async () =>
+      status === 200
+        ? new Response(JSON.stringify({ token: jwt(1_700_000_060, "valid") }))
+        : new Response(null, { status })) as typeof fetch,
+  });
+  assert.equal((await manager.getTokenOutcome()).state, "authenticated");
+  const cached = manager.peek();
+  status = 503;
+  assert.deepEqual(await manager.getTokenOutcome({ forceRefresh: true }), {
+    state: "unavailable",
+    reasonCode: "http_failure",
+    status: 503,
+  });
+  assert.equal(manager.peek(), cached);
+  await assert.rejects(manager.getToken({ forceRefresh: true }), {
+    name: "TokenAcquisitionError",
+    status: 503,
+  });
+  status = 401;
+  assert.deepEqual(await manager.getTokenOutcome({ forceRefresh: true }), {
+    state: "unauthenticated",
+  });
+  assert.equal(manager.peek(), null);
+});
+test("token timeout remains active while reading the response body", async () => {
+  const manager = createTokenManager({
+    authOrigin: "https://auth.test",
+    fetchImpl: (async (_input, init) =>
+      ({
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((_resolve, reject) =>
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("aborted", "AbortError")),
+              { once: true },
+            ),
+          ),
+      }) as Response) as typeof fetch,
+  });
+  assert.deepEqual(await manager.getTokenOutcome(), {
+    state: "unavailable",
+    reasonCode: "timeout",
+  });
+});
+
+test("a changed identity can acquire immediately without an old result overwriting it", async () => {
+  const oldToken = jwt(Math.floor(Date.now() / 1000) + 120, "old");
+  const newToken = jwt(Math.floor(Date.now() / 1000) + 121, "new");
+  let resolveOld!: (value: Response) => void;
+  let calls = 0;
+  const manager = createTokenManager({
+    authOrigin: "https://auth.test",
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1)
+        return new Promise<Response>((resolve) => {
+          resolveOld = resolve;
+        });
+      return new Response(JSON.stringify({ token: newToken }));
+    },
+  });
+  const pending = manager.getTokenOutcome();
+  manager.clearForLogout();
+  assert.deepEqual(await manager.getTokenOutcome(), {
+    state: "authenticated",
+    token: newToken,
+  });
+  resolveOld(new Response(JSON.stringify({ token: oldToken })));
+  assert.deepEqual(await pending, { state: "invalidated" });
+  assert.equal(manager.peek(), newToken);
+});
+
+
+test("return validation preserves only explicitly trusted HTTP loopback targets", () => {
+  const fallback = "https://infinitycolor.co";
+  for (const origin of ["http://localhost:2891", "http://127.0.0.1:2891", "http://[::1]:2891"]) {
+    const target = origin + "/orders?page=2#details";
+    assert.equal(resolveReturnTarget(target, [fallback, origin], fallback), target);
+    assert.equal(resolveReturnTarget(target, [fallback], fallback), fallback + "/");
+  }
+  const allowed = [fallback, "http://localhost:2891", "http://internal.example", "http://192.168.1.2"];
+  for (const target of [
+    "http://localhost:2892/orders",
+    "http://localhost.evil.example:2891/orders",
+    "http://localhost:2891@evil.example/orders",
+    "http://internal.example/orders",
+    "http://192.168.1.2/orders",
+    "http://infinitycolor.co/orders",
+    "ftp://localhost:2891/orders",
+  ]) {
+    assert.equal(resolveReturnTarget(target, allowed, fallback), fallback + "/");
+  }
 });

@@ -1,12 +1,16 @@
 import { adminTransitionOrderHandler } from "../controllers/helpers/adminTransition";
 import { logAdminOrderFieldUpdate } from "../../../utils/adminActivity";
 import { notifyOrderStatusSms } from "../../../services/sms/notifications";
+import { enqueueAnipoRegistration } from "../../../queue/anipo-registration";
 
 jest.mock("../../../utils/adminActivity", () => ({
   logAdminOrderFieldUpdate: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../../../services/sms/notifications", () => ({
   notifyOrderStatusSms: jest.fn().mockResolvedValue({ ok: true }),
+}));
+jest.mock("../../../queue/anipo-registration", () => ({
+  enqueueAnipoRegistration: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockedAudit = logAdminOrderFieldUpdate as jest.MockedFunction<
@@ -15,11 +19,13 @@ const mockedAudit = logAdminOrderFieldUpdate as jest.MockedFunction<
 const mockedNotify = notifyOrderStatusSms as jest.MockedFunction<
   typeof notifyOrderStatusSms
 >;
+const mockedEnqueue = enqueueAnipoRegistration as jest.MockedFunction<typeof enqueueAnipoRegistration>;
 
 function createHarness(
   status: string,
   roleName = "Store manager",
   paymentGateway = "Mellat",
+  shippingMethodCode?: string,
 ) {
   const raw = jest.fn().mockResolvedValue({ rows: [{ id: 44 }] });
   const orderLogCreate = jest.fn().mockResolvedValue({ id: 1 });
@@ -32,8 +38,10 @@ function createHarness(
         id: 44,
         Status: status,
         PaymentGateway: paymentGateway,
+        ShippingMethodCode: shippingMethodCode,
         user: { id: 9 },
       }),
+      update: jest.fn().mockResolvedValue({ id: 44 }),
     },
     "api::order-log.order-log": { create: orderLogCreate },
   };
@@ -64,16 +72,18 @@ function createHarness(
 describe("adminTransitionOrderHandler", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("allows the operational Started to Done transition and leaves the order at Done", async () => {
-    const { strapi, ctx, raw, orderLogCreate } = createHarness("Started");
+  it("atomically records Done then Shipment and enqueues postal registration", async () => {
+    const { strapi, ctx, raw, orderLogCreate } = createHarness("Started", "Store manager", "Mellat", "post");
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
-    expect(raw).toHaveBeenCalledTimes(1);
+    expect(raw).toHaveBeenCalledTimes(4);
     expect(raw).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE orders SET status = ?"),
       ["Done", 44, "Started"],
     );
+    expect(raw).toHaveBeenCalledWith(expect.stringContaining("UPDATE orders SET status = ?"), ["Shipment", 44, "Done"]);
+    expect(raw).toHaveBeenCalledWith(expect.stringContaining("anipo_barcode_state = 'Pending'"), [44]);
     expect(orderLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         order: 44,
@@ -91,18 +101,32 @@ describe("adminTransitionOrderHandler", () => {
       "Store manager",
       expect.objectContaining({ raw: expect.any(Function) }),
     );
+    expect(raw).toHaveBeenCalledWith(
+      expect.stringContaining("shipping_sms_due_at = COALESCE(shipping_sms_due_at, NOW() + INTERVAL '48 hours')"),
+      [44],
+    );
     expect(mockedNotify).toHaveBeenCalledTimes(1);
     expect(mockedNotify).toHaveBeenCalledWith(strapi, {
       orderId: 44,
       oldStatus: "Started",
-      newStatus: "Done",
+      newStatus: "Shipment",
     });
     expect(strapi.service().logOrderDelivered).not.toHaveBeenCalled();
-    expect(strapi.service().logOrderShipped).not.toHaveBeenCalled();
-    expect(result).toEqual({ data: { success: true, orderId: 44, status: "Done" } });
+    expect(strapi.service().logOrderShipped).toHaveBeenCalled();
+    expect(mockedEnqueue).toHaveBeenCalledWith(44);
+    expect(result).toEqual({ data: { success: true, orderId: 44, status: "Shipment" } });
   });
 
-  it("still completes a reserved order, because the hold only blocks shipping", async () => {
+  it("keeps the committed Shipment recoverable if enqueueing fails", async () => {
+    const { strapi, ctx, raw } = createHarness("Started", "Store manager", "Mellat", "post");
+    mockedEnqueue.mockRejectedValueOnce(new Error("queue unavailable"));
+    const result = await adminTransitionOrderHandler(strapi, ctx);
+    expect(result).toEqual({ data: { success: true, orderId: 44, status: "Shipment" } });
+    expect(raw).toHaveBeenCalledWith(expect.stringContaining("anipo_barcode_state = 'Pending'"), [44]);
+    expect(strapi.log.error).toHaveBeenCalledWith("Anipo registration enqueue failed", expect.objectContaining({ orderId: 44 }));
+  });
+
+  it("leaves a reserved order Started during its 48-hour hold", async () => {
     const { strapi, ctx, raw } = createHarness("Started");
     strapi.db.query("api::order.order").findOne
       .mockResolvedValueOnce({
@@ -111,17 +135,15 @@ describe("adminTransitionOrderHandler", () => {
         PaymentGateway: "Mellat",
         user: { id: 9 },
         reserve_shipment: { State: "Active" },
-      });
+      })
+      .mockResolvedValueOnce({ id: 44, reserve_shipment: { State: "Active" } });
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
-    expect(raw).toHaveBeenCalledTimes(1);
-    expect(raw).toHaveBeenCalledWith(
-      expect.stringContaining("UPDATE orders SET status = ?"),
-      ["Done", 44, "Started"],
-    );
+    expect(raw).not.toHaveBeenCalled();
+    expect(mockedEnqueue).not.toHaveBeenCalled();
     expect(strapi.service().logOrderShipped).not.toHaveBeenCalled();
-    expect(result).toEqual({ data: { success: true, orderId: 44, status: "Done" } });
+    expect(result).toEqual(expect.objectContaining({ payload: expect.objectContaining({ data: expect.objectContaining({ errorCode: "RESERVE_HOLD_ACTIVE" }) }) }));
   });
 
   it("allows Done to Shipment and logs the shipment against the customer", async () => {
@@ -139,6 +161,14 @@ describe("adminTransitionOrderHandler", () => {
     expect(result).toEqual({ data: { success: true, orderId: 44, status: "Shipment" } });
   });
 
+  it("does not enqueue again for a repeated Shipment update", async () => {
+    const { strapi, ctx, raw } = createHarness("Shipment", "Store manager", "Mellat", "post");
+    ctx.request.body.status = "Shipment";
+    expect(await adminTransitionOrderHandler(strapi, ctx)).toEqual({ data: { success: true, orderId: 44, status: "Shipment", unchanged: true } });
+    expect(raw).not.toHaveBeenCalled();
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
   it("refuses Done to Shipment while a reserve hold is active", async () => {
     const { strapi, ctx, raw } = createHarness("Done");
     ctx.request.body.status = "Shipment";
@@ -153,7 +183,7 @@ describe("adminTransitionOrderHandler", () => {
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
     expect(ctx.conflict).toHaveBeenCalledWith(
-      "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل ارسال نیست",
+      "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل تکمیل و ارسال نیست",
       expect.objectContaining({
         data: expect.objectContaining({
           errorCode: "RESERVE_HOLD_ACTIVE",
@@ -210,16 +240,17 @@ describe("adminTransitionOrderHandler", () => {
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
-    expect(raw).toHaveBeenCalledTimes(1);
+    expect(raw).toHaveBeenCalledTimes(3);
     expect(raw).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE orders SET status = ?"),
       ["Done", 44, "Started"],
     );
     expect(result).toEqual({
-      data: { success: true, orderId: 44, status: "Done" },
+      data: { success: true, orderId: 44, status: "Shipment" },
     });
     expect(ctx.conflict).not.toHaveBeenCalled();
     expect(mockedAudit).toHaveBeenCalled();
     expect(mockedNotify).toHaveBeenCalled();
+    expect(mockedEnqueue).not.toHaveBeenCalled();
   });
 });

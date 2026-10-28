@@ -1,3 +1,9 @@
+jest.mock("../../../../../utils/orderDeliverySnapshot", () => ({
+  effectiveOrderDeliveryAddress: jest.fn(async (_strapi, _id, address) => address),
+  captureOrderDeliverySnapshot: jest.fn(async () => undefined),
+  updateExistingOrderDeliverySnapshot: jest.fn(async () => undefined),
+}));
+
 jest.mock("../../../../../utils/adminAuthorization", () => ({
   requireCapability: jest.fn().mockResolvedValue(true),
 }));
@@ -93,6 +99,12 @@ describe("parseOrderAddressInput", () => {
     });
   });
 
+  it("accepts the all-zero placeholder checkout allows for an unknown postal code", () => {
+    expect(parseOrderAddressInput({ ...input, postalCode: "۰۰۰۰۰۰۰۰۰۰" }).postalCode).toBe(
+      "0000000000",
+    );
+  });
+
   it.each([
     [{ ...input, postalCode: "123" }, "postalCode"],
     [{ ...input, recipientPhone: "021123" }, "recipientPhone"],
@@ -163,7 +175,11 @@ describe("adminUpdateAddressHandler", () => {
       data: expect.objectContaining({ delivery_address: 50 }),
     }));
     expect(context.body.data.affectedOrderIds).toEqual([10, 11]);
-    expect(enqueueAnipoRecipientSync).toHaveBeenCalledWith(10, 2);
+    expect(groupQuery.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ AnipoRecipientRevision: 1, AnipoRecipientSyncState: "Pending" }),
+    }));
+    expect(enqueueAnipoRecipientSync).toHaveBeenCalledTimes(1);
+    expect(enqueueAnipoRecipientSync).toHaveBeenCalledWith(10, 1);
   });
 
   it("does not queue provider work when the transactional audit fails", async () => {

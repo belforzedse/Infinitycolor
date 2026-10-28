@@ -2,7 +2,7 @@ import { applySnappayAdminUpdate } from "../services/snappay-finalization";
 import { enqueueRefundForReturn } from "../../report/analytics/outbox";
 
 jest.mock("../../report/analytics/outbox", () => ({
-  enqueuePurchaseForOrder: jest.fn(),
+  enqueueOrderPaid: jest.fn(),
   enqueueRefundForReturn: jest.fn().mockResolvedValue(1),
 }));
 

@@ -7,6 +7,8 @@ import {
   findOrderedProductIds,
   FindProductCardsParams,
   isEnabledCardParam,
+  isNewestOffer,
+  NEWEST_OFFER,
   parseQuerySortKey,
   PRODUCT_CARD_FIELDS,
   PRODUCT_CARD_POPULATE,
@@ -17,6 +19,7 @@ import {
   type VariationAvailabilityInput,
 } from "../../../utils/productAvailability";
 import { getAvailableStockCount } from "../../cart/services/lib/stock";
+import { catalogProductFilters, publicProductFilters } from "../../../utils/productVisibility";
 
 const CARD_COLOR_CODE_LIMIT = 8;
 const HOMEPAGE_CARD_LIMIT = 20;
@@ -25,8 +28,9 @@ const HOMEPAGE_BATCH_LIMIT = 36;
 
 // Storefront "View all" sections whose curated order comes from the same settings
 // fields the homepage rails already use. See findProductCards/isCanonicalCuratedView.
+// Newest is not one of them: it has its own listing (NEWEST_OFFER) whose curated block
+// comes from homeNewestProductIds on every request, not only the unfiltered view.
 export const CURATED_SECTION_SETTINGS_FIELD: Record<string, string> = {
-  newest: "homeNewestProductIds",
   popular: "homeFavoriteProductIds",
   discount: "homeDiscountedProductIds",
 };
@@ -43,75 +47,6 @@ const HOMEPAGE_SECTION_IDS = [
   "customThree",
   "everyoneFollows",
 ] as const;
-
-const PRODUCT_BOOST_KEYWORDS: readonly string[] = [
-  "G",
-  "G0020",
-  "W0069",
-  "W0043",
-  "W0039",
-  "W0096",
-  "W002",
-  "W0042",
-  "W0018",
-  "W0036",
-  "W009",
-  "W0010",
-  "W0035",
-  "G0015",
-  "G0018",
-  "W0030",
-  "G004",
-  "G005",
-  "G006",
-  "G003",
-  "G007",
-  "W0022",
-  "W0029",
-  "G0017",
-  "W0025",
-  "W0014",
-  "W0033",
-  "G0023",
-  "G0024",
-  "G0013",
-  "W0012",
-  "W0027",
-  "W008",
-  "W0024",
-  "W0031",
-  "W004",
-  "W0015",
-  "G002",
-  "W0076",
-  "W0087",
-  "W0089",
-  "G009",
-  "G0011",
-  "G0019",
-  "G0030",
-  "G0021",
-  "G008",
-  "G0022",
-  "G0035",
-  "G0031",
-  "G0036",
-  "W007",
-  "G001",
-  "W0058",
-  "G0014",
-  "G0029",
-  "G0039",
-  "G0038",
-  "W005",
-  "W0032",
-  "W0038",
-  "W0080",
-  "G0028",
-  "G00101",
-  "G0098",
-  "G0096",
-];
 
 type HomepageSectionId = (typeof HOMEPAGE_SECTION_IDS)[number];
 type HomepageAssignment = {
@@ -173,22 +108,13 @@ const uniqueOrderedIds = (groups: Array<number[] | undefined>): number[] => {
  * (`buildProductAvailabilityExistsSql`) instead.
  */
 const baseHomepageProductFilters = () => ({
-  Status: { $eq: "Active" },
-  removedAt: { $null: true },
+  ...publicProductFilters(),
   product_variations: {
     Price: { $gte: 1 },
   },
 });
 
 const HOMEPAGE_IN_STOCK = "in-stock" as const;
-
-const buildHomepageTitleFilter = () => {
-  return {
-    $or: PRODUCT_BOOST_KEYWORDS.map((keyword) => ({
-      Title: { $containsi: keyword },
-    })),
-  };
-};
 
 const relationData = (relation: any): any => {
   if (!relation) return null;
@@ -234,7 +160,6 @@ export const isCanonicalCuratedView = (
 
   if (section === "discount") return hasDiscount && !sortKey;
   if (section === "popular") return !hasDiscount && sortKey === "AverageRating:desc";
-  if (section === "newest") return !hasDiscount && sortKey === "LastEditedByAdminAt:desc";
   return false;
 };
 
@@ -365,13 +290,6 @@ const productHasDiscount = (product: any): boolean => {
   const discountPrice = toNumber(attrs?.DiscountPrice);
   const discount = toNumber(attrs?.Discount);
   return discount > 0 || (price > 0 && discountPrice > 0 && discountPrice < price);
-};
-
-const productTitleMatchesKeywords = (product: any): boolean => {
-  const attrs = product?.attributes ?? product;
-  const title = String(attrs?.Title || "").toLowerCase();
-  if (!title) return false;
-  return PRODUCT_BOOST_KEYWORDS.some((keyword) => title.includes(keyword.toLowerCase()));
 };
 
 const sectionPayload = (
@@ -509,7 +427,16 @@ export default factories.createCoreService(
       const section = typeof params.curated === "string" ? params.curated : undefined;
       const settingsField = section ? CURATED_SECTION_SETTINGS_FIELD[section] : undefined;
 
-      if (settingsField && isCanonicalCuratedView(section!, params)) {
+      if (isNewestOffer(params.offer)) {
+        // The curated block leads the default Newest ranking whatever filters narrow it;
+        // applyNewestOfferOrder drops it when the shopper picks another sort.
+        const settingsEntity = await strapi.db.query("api::settings.settings").findOne();
+        effectiveParams = {
+          ...params,
+          curated: undefined,
+          curatedProductIds: normalizeIds(attrsOf(settingsEntity).homeNewestProductIds),
+        };
+      } else if (settingsField && isCanonicalCuratedView(section!, params)) {
         const settingsEntity = await strapi.db.query("api::settings.settings").findOne();
         const settings = attrsOf(settingsEntity);
         const curatedProductIds = normalizeIds(settings[settingsField]);
@@ -563,18 +490,17 @@ export default factories.createCoreService(
         availability: HOMEPAGE_IN_STOCK,
         pagination: { limit: HOMEPAGE_BATCH_LIMIT, withCount: false },
       });
-      const newestPromise =
-        newestManualIds.length > 0
-          ? Promise.resolve({ ids: newestManualIds.slice(0, HOMEPAGE_CARD_LIMIT), source: "manual" as const })
-          : findOrderedProductIds(strapi, {
-              filters: {
-                ...baseHomepageProductFilters(),
-                ...buildHomepageTitleFilter(),
-              },
-              availability: HOMEPAGE_IN_STOCK,
-              sort: ["createdAt:desc"],
-              pagination: { limit: HOMEPAGE_CARD_LIMIT, withCount: false },
-            }).then(({ ids }) => ({ ids, source: "algorithm" as const }));
+      // The first in-stock products of the Newest listing (/offer?type=newest): curated
+      // picks, then the newest listings filling whatever the picks leave of the rail.
+      const newestPromise = findOrderedProductIds(strapi, {
+        offer: NEWEST_OFFER,
+        curatedProductIds: newestManualIds,
+        availability: HOMEPAGE_IN_STOCK,
+        pagination: { limit: HOMEPAGE_CARD_LIMIT, withCount: false },
+      }).then(({ ids }) => ({
+        ids,
+        source: newestManualIds.length > 0 ? ("manual" as const) : ("algorithm" as const),
+      }));
       const discountedPromise =
         discountedManualIds.length > 0
           ? Promise.resolve({
@@ -780,14 +706,9 @@ export default factories.createCoreService(
             { Description: { $containsi: variant } },
           ]),
         },
-        { removedAt: { $null: true } },
+        // Admins also see drafts and scheduled products; trashed ones never.
+        catalogProductFilters(isAdmin),
       ];
-
-      // Only filter by Active status for non-admin users
-      // Admins can see all products including drafts
-      if (!isAdmin) {
-        filterConditions.push({ Status: "Active" });
-      }
 
       const filters: any = {
         $and: filterConditions,

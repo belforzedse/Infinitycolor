@@ -25,6 +25,17 @@ export interface ApiError {
   /** Product payload supplied through ctx.badRequest/conflict helpers. */
   data?: unknown;
   errorCode?: string;
+  /** Sanitized transport context; never contains response text or request URLs. */
+  cause?: Error;
+  diagnostics?: {
+    stage: "request" | "response_json" | "response_status";
+    /** Present only when an HTTP response was received. */
+    httpStatus?: number;
+    name?: string;
+    code?: string;
+    requestId?: string;
+    cancelled?: boolean;
+  };
 }
 
 export interface ApiRequestOptions {

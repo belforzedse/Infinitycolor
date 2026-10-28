@@ -3,8 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { BarChart3, ChevronLeft, TicketPercent } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import SalesPage from "../_components/SalesPage";
+import { AdminCard } from "@/components/admin";
+import { cn } from "@/utils/tailwind";
+import { ShareCell } from "@/components/SuperAdmin/reports/shared/AnalyticsTable";
+import { ShareSummary, ShareTip } from "@/components/SuperAdmin/reports/shared/ShareBar";
+import ReportTabs from "@/components/SuperAdmin/reports/shared/ReportTabs";
+import { buildShares, shareOf } from "@/components/SuperAdmin/reports/shared/shares";
+import { numberText, ratioText, tomanText } from "@/components/SuperAdmin/reports/shared/format";
+import { SWAP, useEntered } from "@/components/SuperAdmin/reports/shared/motion";
+import { Notice } from "@/components/SuperAdmin/reports/shared/ui";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import ReportExportButton from "@/components/SuperAdmin/reports/shared/ReportExportButton";
 import SalesGeographyMap from "@/components/SuperAdmin/reports/shared/SalesGeographyMap";
@@ -39,6 +48,16 @@ const DIMENSION_LABELS: Record<SalesBreakdownDimension, string> = {
 
 const CHART_TOP_N = 8;
 
+/**
+ * Dimensions whose rows partition the orders, so their net sales add up to
+ * the total and can be drawn as shares. A product counts in every category it
+ * belongs to, so category rows overlap and never get a share.
+ */
+const ADDITIVE: ReadonlySet<SalesBreakdownDimension> = new Set(["status", "customer", "coupon", "geography"]);
+
+/** The server folds a long tail into this row; it is a remainder, not a group. */
+const REMAINDER_KEY = "__other__";
+
 function toman(value: number): string {
   return `${priceFormatter(value)} تومان`;
 }
@@ -50,43 +69,40 @@ function RankedBreakdownChart({
   dimension: SalesBreakdownDimension;
   rows: SalesBreakdownResponse["rows"];
 }) {
+  const entered = useEntered();
   if (!rows.length) return null;
   const maximum = Math.max(...rows.map((row) => Math.abs(row.netToman)), 1);
   const isCoupon = dimension === "coupon";
-  const Icon = isCoupon ? TicketPercent : BarChart3;
   return (
-    <figure
-      className="mb-6 overflow-hidden rounded-2xl border border-neutral-100 bg-neutral-50/60"
-      aria-labelledby="sales-breakdown-chart-title"
-    >
-      <figcaption className="flex items-start gap-3 border-b border-neutral-100 bg-white px-4 py-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-infinity-primary/10 text-infinity-primary">
-          <Icon aria-hidden className="size-5" />
-        </span>
+    <figure className="mb-6" aria-labelledby="sales-breakdown-chart-title">
+      <figcaption className="mb-2">
         <div>
-          <h2 id="sales-breakdown-chart-title" className="text-sm font-semibold text-neutral-800">
+          <h2 id="sales-breakdown-chart-title" className="text-sm font-semibold text-slate-900">
             {isCoupon ? "اثر کدهای تخفیف بر فروش" : `بیشترین فروش بر اساس ${DIMENSION_LABELS[dimension]}`}
           </h2>
-          <p className="mt-1 text-xs leading-5 text-neutral-500">
+          <p className="mt-1 text-xs leading-5 text-slate-600">
             {isCoupon
               ? "فروش خالص، تعداد سفارش و مبلغ تخفیف هر کد را در یک نگاه مقایسه کنید."
               : "طول هر نوار فروش خالص را نشان می‌دهد؛ مبلغ و تعداد سفارش کنار همان مورد نوشته شده است."}
           </p>
         </div>
       </figcaption>
-      <ol className="divide-y divide-neutral-100 p-2">
+      <ol className="divide-y divide-slate-100">
         {rows.map((row, index) => {
           const width = Math.max(0, Math.min(100, (Math.abs(row.netToman) / maximum) * 100));
           return (
-            <li key={row.key || `${row.label}-${index}`} className="relative overflow-hidden rounded-xl px-3 py-3">
+            <li key={row.key || `${row.label}-${index}`} className="relative overflow-hidden px-3 py-3">
               <span
                 aria-hidden
-                className={`absolute inset-y-1 right-1 rounded-lg ${row.netToman < 0 ? "bg-rose-100" : "bg-infinity-primary/[0.075]"}`}
-                style={{ width: `${width}%` }}
+                className={cn(
+                  "absolute inset-y-1.5 right-0 rounded-md transition-[width] duration-700 ease-out motion-reduce:transition-none",
+                  row.netToman < 0 ? "bg-rose-100" : "bg-infinity-primary/[0.08]",
+                )}
+                style={{ width: `${entered ? width : 0}%`, transitionDelay: `${index * 40}ms` }}
               />
               <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-white text-xs font-semibold text-neutral-500 shadow-sm">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-white text-xs font-semibold tabular-nums text-slate-500 ring-1 ring-slate-200">
                     {faNum(index + 1)}
                   </span>
                   <div className="min-w-0">
@@ -218,6 +234,25 @@ export default function SalesBreakdownReportPage() {
     setExpanded(allExpanded ? new Set() : new Set(allExpandable));
   }, [allExpanded, allExpandable]);
 
+  // Without a gateway settlement in the window, refunds (read from the
+  // settlement ledger) are unknown for every row; say so instead of 0.
+  const refundsUnknown = data?.ordersDefinition === "completed";
+  const additive = ADDITIVE.has(dimension);
+  const shares = useMemo(
+    () =>
+      additive
+        ? buildShares(
+            rows.map((row) => ({
+              key: row.key,
+              label: row.label,
+              value: row.netToman,
+              fold: row.key === REMAINDER_KEY,
+            })),
+          )
+        : null,
+    [additive, rows],
+  );
+
   const columns = useMemo<ColumnDef<SalesBreakdownResponse["rows"][number]>[]>(
     () => [
       {
@@ -253,15 +288,24 @@ export default function SalesBreakdownReportPage() {
       {
         accessorKey: "refundsToman",
         header: "مرجوعی (تومان)",
-        cell: ({ getValue }) => priceFormatter(getValue() as number),
+        cell: ({ getValue }) =>
+          refundsUnknown ? (
+            <span className="text-amber-800">نامعلوم</span>
+          ) : (
+            priceFormatter(getValue() as number)
+          ),
       },
       {
         accessorKey: "netToman",
         header: "خالص فروش (تومان)",
-        cell: ({ getValue }) => priceFormatter(getValue() as number),
+        cell: ({ getValue }) => {
+          const net = getValue() as number;
+          const text = priceFormatter(net);
+          return shares ? <ShareCell share={shareOf(net, shares.total)}>{text}</ShareCell> : text;
+        },
       },
     ],
-    [dimension, isTree, toggleRow],
+    [dimension, isTree, toggleRow, refundsUnknown, shares],
   );
 
   // Deliberately the full row set, not the visible one: the chart ranks by net
@@ -274,40 +318,33 @@ export default function SalesBreakdownReportPage() {
       description="فروش را بر اساس وضعیت سفارش، دسته‌بندی، مشتری، کد تخفیف یا استان مقایسه کنید."
     >
       <div className="space-y-6" dir="rtl">
-        <div className="rounded-2xl bg-white p-5">
-          <p className="text-xs text-neutral-500">
+        <AdminCard>
+          <p className="text-xs text-slate-600">
             برای فروش بر اساس تاریخ، محصول، مدل یا درگاه پرداخت به{" "}
             <Link href="/sales/products" className="text-infinity-primary hover:underline">
               گزارش فروش هر محصول
             </Link>{" "}
             مراجعه کنید.
           </p>
-        </div>
+        </AdminCard>
 
-        <div className="rounded-2xl bg-white p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-2">
-              {SALES_BREAKDOWN_DIMENSIONS.map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => setTab?.(d)}
-                  className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-                    dimension === d
-                      ? "bg-infinity-primary text-white"
-                      : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
-                  }`}
-                >
-                  {DIMENSION_LABELS[d]}
-                </button>
-              ))}
+        <AdminCard>
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <ReportTabs
+                tabs={SALES_BREAKDOWN_DIMENSIONS.map((d) => ({ id: d, label: DIMENSION_LABELS[d] }))}
+                value={dimension}
+                onChange={(next) => setTab?.(next)}
+                label="تفکیک فروش بر اساس"
+                idPrefix="breakdown"
+              />
             </div>
             <div className="flex items-center gap-2">
               {isTree && (
                 <button
                   type="button"
                   onClick={toggleAll}
-                  className="rounded-lg bg-neutral-100 px-3 py-2 text-sm font-medium text-neutral-600 transition hover:bg-neutral-200"
+                  className="rounded-control border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary"
                 >
                   {allExpanded ? "بستن همه" : "باز کردن همه"}
                 </button>
@@ -318,15 +355,17 @@ export default function SalesBreakdownReportPage() {
             </div>
           </div>
 
+          <div key={dimension} id="breakdown-panel" role="tabpanel" aria-labelledby={`breakdown-tab-${dimension}`} className={SWAP}>
           {error && (
-            <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+            <Notice tone="error" className="mb-4">{error}</Notice>
           )}
 
-          {!loading && data?.ordersDefinition === "completed" && (
-            <div className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
-              در این بازه هیچ تراکنش موفق درگاهی ثبت نشده است، بنابراین این گزارش بر پایه سفارش‌های
-              «تحویل شده» محاسبه شده و مبالغ تسویه‌نشده صفر در نظر گرفته شده‌اند.
-            </div>
+          {!loading && refundsUnknown && (
+            <Notice tone="warning" className="mb-4">
+              در این بازه هیچ پرداخت موفقی از درگاه ثبت نشده است، بنابراین این گزارش بر پایه سفارش‌های
+              «تحویل شده» محاسبه شده است. فروش، تعداد و تخفیف واقعی‌اند؛ مرجوعی این سفارش‌ها ثبت نشده
+              («نامعلوم») و «خالص فروش» بدون کسر مرجوعی است.
+            </Notice>
           )}
 
           {/*
@@ -334,36 +373,60 @@ export default function SalesBreakdownReportPage() {
             shipping is an order-level charge and belongs to no status, category,
             customer, coupon or province, so it is never in this table (D16).
           */}
-          <p className="mb-4 rounded-lg bg-neutral-50 px-4 py-3 text-xs leading-5 text-neutral-600">
+          <Notice className="mb-4">
             «فروش ناخالص» این جدول فقط اقلام سفارش است و هزینه ارسال در آن نیست، چون هزینه ارسال به
             سفارش تعلق دارد نه به دسته یا محصول. در «نمای کلی فروش» هزینه ارسال به فروش ناخالص افزوده
             شده است، پس آن رقم به همان اندازه بزرگ‌تر است.
-          </p>
+          </Notice>
 
           {isTree && (
-            <p className="mb-4 rounded-lg bg-neutral-50 px-4 py-3 text-xs leading-5 text-neutral-600">
+            <Notice className="mb-4">
               دسته‌های اصلی نمایش داده شده‌اند و عدد هر دسته شامل زیرمجموعه‌های آن هم هست. برای دیدن
               جزئیات، دسته را باز کنید. ردیف «(مستقیم)» فروشی است که روی خودِ آن دسته ثبت شده و در
               هیچ زیرمجموعه‌ای نیست. هر کالا در همهٔ دسته‌هایی که به آن اختصاص داده شده (دستهٔ اصلی و
               دسته‌های دیگر) شمرده می‌شود؛ بنابراین هیچ‌کدام از ستون‌ها جمع‌پذیر نیستند و جمع ردیف‌ها
               بیشتر از فروش کل می‌شود. عدد هر ردیف به‌تنهایی درست است و هر قلم فروش در هر دسته فقط
               یک‌بار حساب شده است.
-            </p>
+            </Notice>
           )}
 
           {!loading && (data?.warnings?.length ?? 0) > 0 && (
-            <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <Notice tone="warning" className="mb-4">
               {data!.warnings!.map((warning) => (
                 <p key={warning.code}>{warning.message}</p>
               ))}
-            </div>
+            </Notice>
           )}
 
           {data?.truncated && (
-            <div className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            <Notice className="mb-4">
               تعداد ردیف‌ها زیاد است؛ کمترین موارد در ردیف «سایر» جمع شده‌اند.
-            </div>
+            </Notice>
           )}
+
+          {!loading && shares ? (
+            <ShareSummary
+              className="mb-6"
+              segments={shares.segments}
+              label={`سهم هر ${DIMENSION_LABELS[dimension]} از فروش خالص`}
+              describe={(segment) => `${segment.label}: ${ratioText(segment.share)}، ${tomanText(segment.value)}`}
+              tipContent={(segment) => {
+                const row = rows.find((entry) => entry.key === segment.key);
+                return (
+                  <ShareTip
+                    segment={segment}
+                    valueText={`${tomanText(segment.value)} فروش خالص`}
+                    extra={row ? <p className="text-slate-600">{numberText(row.ordersCount)} سفارش</p> : null}
+                  />
+                );
+              }}
+              note={
+                shares.excluded
+                  ? `${numberText(shares.excluded)} ردیف با فروش خالص صفر یا منفی در سهم‌ها نیامده است.`
+                  : null
+              }
+            />
+          ) : null}
 
           {!loading && dimension === "geography" ? (
             <SalesGeographyMap rows={data?.rows ?? []} />
@@ -389,7 +452,8 @@ export default function SalesBreakdownReportPage() {
             getRowId={(row) => row.key}
             loading={loading}
           />
-        </div>
+          </div>
+        </AdminCard>
       </div>
     </SalesPage>
   );

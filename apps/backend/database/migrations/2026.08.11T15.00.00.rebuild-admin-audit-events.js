@@ -129,6 +129,14 @@ async function ensureUniqueConstraint(knex, columnName, constraintName) {
  * Keep in sync with apps/backend/src/audit/catalog.ts.
  */
 const CATALOG_TITLE_TO_EVENT_KEY = {
+  "تغییرات محصول ذخیره شد": "products.edit_committed",
+  "Product edit committed": "products.edit_committed",
+  "ویرایش محصول آغاز شد": "products.edit_acquired",
+  "Product editing acquired": "products.edit_acquired",
+  "دسترسی ویرایش محصول منتقل شد": "products.edit_taken_over",
+  "Product editing taken over": "products.edit_taken_over",
+  "ذخیره تغییرات محصول رد شد": "products.edit_rejected",
+  "Product edit rejected": "products.edit_rejected",
   "ورود موفق": "authentication.login_succeeded",
   "Login succeeded": "authentication.login_succeeded",
   "ورود ناموفق": "authentication.login_failed",
@@ -189,6 +197,10 @@ const CATALOG_TITLE_TO_EVENT_KEY = {
   "Product deleted": "products.deleted",
   "محصول بازیابی شد": "products.restored",
   "Product restored": "products.restored",
+  "محصول به سطل زباله منتقل شد": "products.trashed",
+  "Product moved to Trash": "products.trashed",
+  "محصول برای همیشه حذف شد": "products.permanently_deleted",
+  "Product permanently deleted": "products.permanently_deleted",
   "وضعیت محصول تغییر کرد": "products.status_changed",
   "Product status changed": "products.status_changed",
   "محصول منتشر شد": "products.published",
@@ -258,6 +270,10 @@ const EXACT_TITLE_RULES = [
  * Kept in sync by src/audit/__tests__/storage-backfill-guard.spec.ts.
  */
 const CATALOG_KEY_TO_DOMAIN_OPERATION = {
+  "products.edit_committed": ["products", "edit"],
+  "products.edit_acquired": ["products", "edit"],
+  "products.edit_taken_over": ["products", "edit"],
+  "products.edit_rejected": ["products", "edit"],
   "authentication.login_succeeded": ["authentication", "login"],
   "authentication.login_failed": ["authentication", "login"],
   "authentication.logout": ["authentication", "logout"],
@@ -302,6 +318,8 @@ const CATALOG_KEY_TO_DOMAIN_OPERATION = {
   "products.updated": ["catalog", "update"],
   "products.deleted": ["catalog", "delete"],
   "products.restored": ["catalog", "restore"],
+  "products.trashed": ["catalog", "delete"],
+  "products.permanently_deleted": ["catalog", "purge"],
   "products.status_changed": ["catalog", "status_change"],
   "products.publication_scheduled": ["catalog", "schedule"],
   "products.publication_rescheduled": ["catalog", "schedule"],

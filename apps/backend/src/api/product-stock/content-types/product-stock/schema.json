@@ -49,6 +49,11 @@
     },
     "external_source": {
       "type": "string"
+    },
+    "StockRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
     }
   }
 }

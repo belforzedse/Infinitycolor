@@ -68,6 +68,7 @@ afterEach(() => {
   jest.useRealTimers();
   uninstallMediaStub();
   document.body.style.overflow = "";
+  document.documentElement.style.overflow = "";
   jest.clearAllMocks();
 });
 
@@ -118,7 +119,7 @@ describe("StoriesViewerModal", () => {
     // The package's own timer is inert, so a story with unloadable media stays put
     // instead of being skipped past after its nominal duration.
     expect(onStoryView).toHaveBeenCalledTimes(1);
-    expect(onStoryView).toHaveBeenCalledWith(VIDEO_STORY.id);
+    expect(onStoryView).toHaveBeenCalledWith(VIDEO_STORY.id, `legacy:${VIDEO_STORY.id}`);
   });
 
   it("reports each story view exactly once", async () => {
@@ -127,7 +128,7 @@ describe("StoriesViewerModal", () => {
       jest.advanceTimersByTime(500);
     });
     expect(onStoryView).toHaveBeenCalledTimes(1);
-    expect(onStoryView).toHaveBeenCalledWith(IMAGE_STORY.id);
+    expect(onStoryView).toHaveBeenCalledWith(IMAGE_STORY.id, `legacy:${IMAGE_STORY.id}`);
   });
 
   it("does not re-report a story the caller already knows is seen", async () => {
@@ -140,14 +141,43 @@ describe("StoriesViewerModal", () => {
     expect(onStoryView).not.toHaveBeenCalled();
   });
 
-  it("locks body scroll while open and releases it on close", () => {
+  it("locks both document scroll containers while open and restores both", () => {
     const { view } = renderViewer();
     expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(document.body.style.overscrollBehavior).toBe("none");
+    expect(document.documentElement.style.overscrollBehavior).toBe("none");
 
     // Upstream applied the lock inside an uncleared 1500ms timeout, so closing quickly
     // left the page permanently unscrollable.
     view.unmount();
     expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
+  });
+
+  it("keeps the document locked through React Strict Mode effect replay", () => {
+    const view = render(
+      <React.StrictMode>
+        <StoriesViewerModal
+          stories={[IMAGE_STORY]}
+          seenIds={new Set()}
+          isOpen
+          initialIndex={0}
+          onClose={jest.fn()}
+          onStoryView={jest.fn()}
+          resolveMediaUrl={resolveMediaUrl}
+        />
+      </React.StrictMode>,
+    );
+
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(document.body.style.overscrollBehavior).toBe("none");
+    expect(document.documentElement.style.overscrollBehavior).toBe("none");
+
+    view.unmount();
+    expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
   });
 
   it("pauses and mutes the video when the viewer closes", async () => {
@@ -214,5 +244,48 @@ describe("StoriesViewerModal", () => {
   it("falls back to the unavailable copy when such a story has no title either", () => {
     renderViewer([{ ...IMAGE_STORY, Title: "", Media: { id: 99, url: "", mime: "image/webp" } }]);
     expect(screen.getByText("Story unavailable")).toBeInTheDocument();
+  });
+
+  it("maps all ordered items into one upstream user and resumes at the first unseen item", async () => {
+    const multi: StoryRailStory = {
+      ...IMAGE_STORY,
+      id: 10,
+      Title: "چند آیتمی",
+      Items: [
+        { Key: "first", MediaType: "image", Media: { url: "/uploads/one.webp", mime: "image/webp" }, DurationMs: 4000 },
+        { Key: "second", MediaType: "video", Media: { url: "/uploads/two.mp4", mime: "video/mp4" }, DurationMs: 3000 },
+        { Key: "third", MediaType: "image", Media: { url: "/uploads/three.webp", mime: "image/webp" }, DurationMs: 4000 },
+      ],
+    };
+    const seenItems = new Map([[multi.id, new Set(["first"])]]);
+    const onStoryView = jest.fn();
+    render(
+      <StoriesViewerModal
+        stories={[multi]}
+        seenItems={seenItems}
+        isOpen
+        initialIndex={0}
+        onClose={jest.fn()}
+        onStoryView={onStoryView}
+        resolveMediaUrl={resolveMediaUrl}
+        dir="rtl"
+      />,
+    );
+    expect(document.querySelectorAll(".story-progress-bar")).toHaveLength(3);
+    expect(document.querySelector(".story-viewer")?.getAttribute("dir")).toBe("rtl");
+    await act(async () => jest.advanceTimersByTime(100));
+    expect(onStoryView).toHaveBeenCalledWith(multi.id, "second");
+    expect(document.querySelector("video")).not.toBeNull();
+  });
+
+  it("supports the 20-item boundary without flattening the story group", () => {
+    const items = Array.from({ length: 20 }, (_, index) => ({
+      Key: `item-${index + 1}`,
+      MediaType: "image" as const,
+      Media: { url: `/uploads/${index + 1}.webp`, mime: "image/webp" },
+      DurationMs: 1000,
+    }));
+    renderViewer([{ ...IMAGE_STORY, id: 20, Items: items }]);
+    expect(document.querySelectorAll(".story-progress-bar")).toHaveLength(20);
   });
 });

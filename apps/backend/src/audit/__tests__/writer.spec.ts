@@ -1,6 +1,12 @@
-import { AuditValidationError, writeAuditEvent } from "../writer";
+import { AuditValidationError, writeAuditEvent, resolveCurrentAuditContext } from "../writer";
 
 describe("typed audit writer", () => {
+  it("uses the live request when no audit middleware context was installed", () => {
+    const previous = (global as any).strapi;
+    (global as any).strapi = { requestContext: { get: () => ({ state: { user: { id: 7, username: "staff" } }, path: "/products/1/editor", method: "PUT" }) } };
+    try { expect(resolveCurrentAuditContext()?.initiator.id).toBe(7); }
+    finally { (global as any).strapi = previous; }
+  });
   const human = {
     type: "human" as const,
     id: 7,

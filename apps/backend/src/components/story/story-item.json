@@ -1,0 +1,53 @@
+{
+  "collectionName": "components_story_story_items",
+  "info": {
+    "displayName": "Story item",
+    "icon": "play"
+  },
+  "options": {},
+  "attributes": {
+    "Key": {
+      "type": "string",
+      "required": true,
+      "maxLength": 64
+    },
+    "MediaType": {
+      "type": "enumeration",
+      "enum": ["image", "video"],
+      "required": true,
+      "default": "image"
+    },
+    "Media": {
+      "type": "media",
+      "multiple": false,
+      "required": true,
+      "allowedTypes": ["images", "videos"]
+    },
+    "Thumbnail": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": ["images"]
+    },
+    "DurationMs": {
+      "type": "integer",
+      "default": 5000,
+      "min": 1000
+    },
+    "CtaLabel": {
+      "type": "string",
+      "maxLength": 60
+    },
+    "CtaUrl": {
+      "type": "string",
+      "maxLength": 2048,
+      "columnType": {
+        "type": "string",
+        "args": [2048]
+      }
+    },
+    "Overlays": {
+      "type": "json"
+    }
+  }
+}

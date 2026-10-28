@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import { authStorageStatePath } from "../../helpers/auth";
 import {
   cleanupRuntimeOrders,
@@ -7,6 +7,26 @@ import {
 } from "../../helpers/admin";
 import { apiGet, expectApiOk } from "../../helpers/api";
 import { prepareStorefrontPage } from "../../helpers/page";
+
+type AdvancedFilter = { field?: string; operator?: string; value?: string };
+
+/** An option of an advanced-filter select; the selects portal their lists to document.body. */
+function filterOption(page: Page, label: string) {
+  return page.locator("ul button:visible").filter({ hasText: new RegExp(`^${label}$`) });
+}
+
+/** The orders page lists through POST /admin/orders-list/query, filters in the JSON body. */
+function ordersQueryFilters(req: Request): AdvancedFilter[] | null {
+  if (req.method() !== "POST" || !req.url().includes("/admin/orders-list/query")) {
+    return null;
+  }
+  try {
+    const body = req.postDataJSON() as { filters?: unknown } | null;
+    return Array.isArray(body?.filters) ? (body.filters as AdvancedFilter[]) : [];
+  } catch {
+    return null;
+  }
+}
 
 test.describe("super-admin order management", () => {
   test.use({ storageState: authStorageStatePath("admin") });
@@ -91,18 +111,21 @@ test.describe("super-admin order management", () => {
     const filterRow = filterDialog.getByTestId("advanced-filter-row");
     await expect(filterRow).toBeVisible({ timeout: 10_000 });
     await filterRow.locator("button").first().click();
-    await filterRow.locator("ul button").filter({ hasText: "توضیحات" }).click();
+    await filterOption(page, "توضیحات").click();
     await filterRow.locator("button").nth(1).click();
-    await filterRow.locator("ul button").filter({ hasText: "شامل" }).click();
+    await filterOption(page, "شامل").click();
     await filterRow.getByPlaceholder("مقدار").fill("E2E_DO_NOT_USE");
 
-    const filteredRequest = page.waitForRequest((req) => {
-      const url = decodeURIComponent(req.url());
-      return (
-        url.includes("/api/orders") &&
-        url.includes("filters[Description][$containsi]=E2E_DO_NOT_USE")
-      );
-    });
+    const filteredRequest = page.waitForRequest((req) =>
+      Boolean(
+        ordersQueryFilters(req)?.some(
+          (item) =>
+            item.field === "[Description]" &&
+            item.operator === "$containsi" &&
+            item.value === "E2E_DO_NOT_USE",
+        ),
+      ),
+    );
     await page.getByTestId("advanced-filter-apply").click();
     await filteredRequest;
 
@@ -113,10 +136,15 @@ test.describe("super-admin order management", () => {
         )
         .first(),
     ).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(/filter=/);
-
+    // Kept in the URL under `af` (the retired `filter` key is stripped), so a
+    // reload or a shared link restores the filter and its request.
+    await expect(page).toHaveURL(/[?&]af=/);
+    const restoredRequest = page.waitForRequest((req) =>
+      Boolean(ordersQueryFilters(req)?.some((item) => item.field === "[Description]")),
+    );
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(/filter=/);
+    await restoredRequest;
+    await expect(page).toHaveURL(/[?&]af=/);
     await expect(
       page.getByText("توضیحات: شامل E2E_DO_NOT_USE").filter({ visible: true }),
     ).toBeVisible({
@@ -132,15 +160,37 @@ test.describe("super-admin order management", () => {
 
     await page.getByRole("button", { name: /فیلتر پیشرفته/ }).filter({ visible: true }).click();
     const clearedRequest = page.waitForRequest((req) => {
-      const url = decodeURIComponent(req.url());
-      return (
-        url.includes("/api/orders") && !url.includes("filters[Description]")
-      );
+      const filters = ordersQueryFilters(req);
+      return filters !== null && !filters.some((item) => item.field === "[Description]");
     });
     await page.getByRole("button", { name: /پاک کردن فیلترها/ }).filter({ visible: true }).click();
     await clearedRequest;
     await expect(
       page.getByText("توضیحات: شامل E2E_DO_NOT_USE").filter({ visible: true }),
     ).toHaveCount(0);
+    await expect(page).not.toHaveURL(/[?&]af=/);
+  });
+
+  // On a phone the filter is a fixed sheet (z-[1200]); the option lists are
+  // portaled to <body>, so they must stack above it. click() waits until the
+  // option itself would receive the tap, so a covered option times out.
+  test("@admin advanced filter options can be picked on a phone", async ({ page }) => {
+    await prepareStorefrontPage(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/orders?pageSize=100", { waitUntil: "domcontentloaded" });
+
+    await page.getByRole("button", { name: /فیلتر پیشرفته/ }).filter({ visible: true }).click();
+    const filterDialog = page.getByRole("dialog", { name: "فیلتر پیشرفته" });
+    await expect(filterDialog).toBeVisible();
+    await filterDialog.getByTestId("advanced-filter-add").click();
+    const filterRow = filterDialog.getByTestId("advanced-filter-row");
+    await expect(filterRow).toBeVisible({ timeout: 10_000 });
+
+    await filterRow.locator("button").first().click();
+    await filterOption(page, "توضیحات").click({ timeout: 10_000 });
+    await expect(filterRow.locator("button").first()).toContainText("توضیحات");
+    await filterRow.locator("button").nth(1).click();
+    await filterOption(page, "شامل").click({ timeout: 10_000 });
+    await expect(filterRow.locator("button").nth(1)).toContainText("شامل");
   });
 });

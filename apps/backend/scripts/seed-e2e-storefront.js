@@ -980,6 +980,9 @@ async function seedUser(client, userDef, now) {
     is_active: true,
     external_id: userDef.externalId,
     external_source: TAG,
+    // Seeded users have their names already; without this central auth sends
+    // every password sign-in to /auth/register/info instead of back to the app.
+    profile_completed_at: now,
     created_at: now,
     updated_at: now,
   });

@@ -49,7 +49,7 @@ function resolveStoryMediaUrl(url?: string): string | undefined {
   return `${base}/${url.replace(/^\/+/, "")}`;
 }
 
-function formatStoryDate(value?: string): string {
+function formatStoryDate(value?: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";

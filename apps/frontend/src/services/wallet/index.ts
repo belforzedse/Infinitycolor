@@ -21,6 +21,32 @@ export interface ChargeIntentResponse {
   message?: string;
 }
 
+/**
+ * One live wallet hold, as the storefront talks about it.
+ *
+ * `boundAt` is the latest moment the money can still be held — the SnappPay
+ * reservation ceiling, or the order's reservation expiry for a bank gateway.
+ * It exists so the page can promise an automatic release *and say by when*,
+ * which is the difference between reassurance and a vague hope.
+ */
+export interface WalletHold {
+  attemptId: string;
+  paymentAttemptId: number;
+  orderId: number | null;
+  gateway: string;
+  amountIrr: number;
+  heldAt: string | null;
+  /**
+   * `reconciling`  — we are asking the provider.
+   * `awaiting_provider` — waiting on the shopper or the gateway's callback.
+   * `reclaimable`  — the shopper can shortcut this with the abandon button.
+   * `releasing`    — resolved; the money is on its way back.
+   */
+  state: "reconciling" | "awaiting_provider" | "reclaimable" | "releasing";
+  nextCheckAt: string | null;
+  boundAt: string | null;
+}
+
 export interface WalletMeResponse {
   success: boolean;
   data?: {
@@ -30,6 +56,8 @@ export interface WalletMeResponse {
     heldBalance?: number;
     /** balance - heldBalance, in IRR. */
     availableBalance?: number;
+    /** Live holds behind `heldBalance`, newest first. */
+    holds?: WalletHold[];
     /**
      * Of `heldBalance`, the part held by the named earlier attempt of this
      * customer's — reclaimable by superseding it, so spendable on this

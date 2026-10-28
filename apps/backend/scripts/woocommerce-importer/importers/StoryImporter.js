@@ -4,7 +4,7 @@ const axios = require("axios");
 const { StrapiClient } = require("../utils/ApiClient");
 const ImageUploader = require("../utils/ImageUploader");
 const {
-  flattenWpStories,
+  groupWpStories,
   parseHomepageStories,
   reverseForNewestFirst,
 } = require("../lib/storyTransform");
@@ -78,30 +78,31 @@ class StoryImporter {
 
     const html = await this.fetchHomepageHtml();
     const circles = parseHomepageStories(html);
-    const slides = flattenWpStories(circles);
-    const ordered = reverseForNewestFirst(slides);
+    const groups = groupWpStories(circles);
+    const ordered = reverseForNewestFirst(groups);
     this.stats.total = ordered.length;
 
     this.logger.info(
-      `🎬 Found ${circles.length} WP story circles (${slides.length} slides). dryRun=${dryRun}`,
+      `🎬 Found ${groups.length} importable WP story circles (${groups.reduce((sum, group) => sum + group.items.length, 0)} items). dryRun=${dryRun}`,
     );
 
     if (ordered.length === 0) {
-      this.logger.warn("📭 No story slides to import");
+      this.logger.warn("📭 No story circles to import");
       this.stats.endTime = Date.now();
       return this.stats;
     }
 
     this.logger.startProgress(ordered.length, "Importing stories");
 
-    const importedSlugs = new Set(ordered.map((slide) => slide.slug));
+    const importedSlugs = new Set();
 
-    for (const slide of ordered) {
+    for (const group of ordered) {
       try {
-        await this.importSlide(slide, { dryRun });
+        const imported = await this.importGroup(group, { dryRun, deactivateExisting });
+        if (imported) importedSlugs.add(group.slug);
       } catch (error) {
         this.stats.failed += 1;
-        this.logger.error(`❌ Failed to import ${slide.slug} (${slide.title}):`, error.message);
+        this.logger.error(`❌ Failed to import ${group.slug} (${group.title}):`, error.message);
         if (!this.config.errorHandling?.continueOnError) {
           throw error;
         }
@@ -121,75 +122,124 @@ class StoryImporter {
     return this.stats;
   }
 
-  async importSlide(slide, { dryRun }) {
-    const existing = await this.findStoryBySlug(slide.slug);
+  async importGroup(group, { dryRun, deactivateExisting }) {
+    const existing = await this.findStoryBySlug(group.slug);
     const existingId = entryId(existing);
+    const legacyRows = await this.findActiveLegacyStories(group.wpStoryId);
+
+    if (legacyRows.length > 0) {
+      const affected = legacyRows.map((row) => `${entryId(row)}:${row.Slug}`).join(", ");
+      this.logger.warn(
+        `⚠️ ${group.slug} would replace ${legacyRows.length} active flattened row(s): ${affected}`,
+      );
+      if (!deactivateExisting) {
+        this.logger.warn(`⏭️ Skipping ${group.slug}; pass --deactivate-existing to migrate this circle safely`);
+        this.stats.skipped += 1;
+        return false;
+      }
+    }
 
     if (dryRun) {
       this.logger.info(
-        `🔍 ${existingId ? "update" : "create"} ${slide.slug} — ${slide.title} (${slide.mediaType}, ${slide.durationMs}ms)`,
+        `🔍 ${existingId ? "update" : "create"} ${group.slug} — ${group.title} (${group.items.length} ordered items)`,
       );
       this.stats.skipped += 1;
-      return;
+      return true;
     }
 
-    const media = await this.imageUploader.downloadAndUploadMedia(
-      slide.mediaUrl,
-      slide.title,
-      `story-${slide.slug}-media`,
-      true,
-    );
-    if (!media?.id) {
-      throw new Error(`Media upload failed for ${slide.mediaUrl}`);
+    const items = [];
+    for (const item of group.items) {
+      const media = await this.imageUploader.downloadAndUploadMedia(
+        item.mediaUrl,
+        group.title,
+        `story-${group.slug}-${item.itemIndex}-media`,
+        true,
+      );
+      if (!media?.id) throw new Error(`Media upload failed for ${item.mediaUrl}`);
+      items.push({
+        Key: item.key,
+        MediaType: item.mediaType,
+        Media: media.id,
+        DurationMs: item.durationMs,
+        CtaUrl: item.ctaUrl || null,
+        CtaLabel: "مشاهده لینک",
+      });
     }
 
     let thumbnailId;
-    if (slide.thumbnailUrl) {
+    if (group.thumbnailUrl) {
       const thumbnail = await this.imageUploader.downloadAndUploadMedia(
-        slide.thumbnailUrl,
-        `${slide.title} cover`,
-        `story-${slide.slug}-thumb`,
+        group.thumbnailUrl,
+        `${group.title} cover`,
+        `story-${group.slug}-thumb`,
         true,
       );
       thumbnailId = thumbnail?.id;
       if (!thumbnailId) {
-        this.logger.warn(`⚠️ Thumbnail upload failed for ${slide.slug}, continuing without cover`);
+        this.logger.warn(`⚠️ Thumbnail upload failed for ${group.slug}, continuing without cover`);
       }
     }
 
     const data = {
-      Title: slide.title,
-      Slug: slide.slug,
+      Title: group.title,
+      Slug: group.slug,
       IsActive: true,
-      SortOrder: slide.sortOrder,
-      MediaType: slide.mediaType,
-      Media: media.id,
-      DurationMs: slide.durationMs,
+      SortOrder: group.sortOrder,
+      Items: items,
     };
     if (thumbnailId) data.Thumbnail = thumbnailId;
-    if (slide.ctaLabel) data.CtaLabel = slide.ctaLabel;
-    if (slide.ctaUrl) data.CtaUrl = slide.ctaUrl;
 
     if (existingId) {
       await this.strapiClient.update(STORIES_ENDPOINT, existingId, data);
       this.stats.updated += 1;
-      this.logger.success(`♻️ Updated story ${slide.slug} (id ${existingId})`);
-      return;
+      this.logger.success(`♻️ Updated story ${group.slug} (id ${existingId})`);
+    } else {
+      const created = await this.strapiClient.create(STORIES_ENDPOINT, data);
+      const createdId = entryId(created);
+      this.stats.created += 1;
+      this.logger.success(`✅ Created story ${group.slug} (id ${createdId ?? "?"})`);
     }
 
-    const created = await this.strapiClient.create(STORIES_ENDPOINT, data);
-    const createdId = entryId(created);
-    this.stats.created += 1;
-    this.logger.success(`✅ Created story ${slide.slug} (id ${createdId ?? "?"})`);
+    const verified = await this.findStoryBySlug(group.slug, true);
+    const savedItems = Array.isArray(verified?.Items) ? verified.Items : [];
+    const savedKeys = savedItems.map((item) => item?.Key).filter(Boolean);
+    const expectedKeys = group.items.map((item) => item.key);
+    if (savedKeys.length !== expectedKeys.length || savedKeys.some((key, index) => key !== expectedKeys[index])) {
+      throw new Error(`Verification failed for ${group.slug}: saved item order does not match source`);
+    }
+
+    if (deactivateExisting && legacyRows.length > 0) {
+      for (const legacy of legacyRows) {
+        const id = entryId(legacy);
+        if (!id) continue;
+        await this.strapiClient.update(STORIES_ENDPOINT, id, { IsActive: false });
+        this.stats.deactivated += 1;
+        this.logger.success(`💤 Deactivated legacy story id=${id} (${legacy.Slug})`);
+      }
+    }
+    return true;
   }
 
-  async findStoryBySlug(slug) {
-    const payload = await this.strapiClient.get(STORIES_ENDPOINT, {
+  async findStoryBySlug(slug, populateItems = false) {
+    const params = {
       "filters[Slug][$eq]": slug,
       "pagination[pageSize]": 1,
-    });
+    };
+    if (populateItems) params["populate[Items]"] = true;
+    const payload = await this.strapiClient.get(STORIES_ENDPOINT, params);
     const rows = Array.isArray(payload?.data) ? payload.data : [];
     return unwrapEntry(rows[0]);
+  }
+
+  async findActiveLegacyStories(wpStoryId) {
+    const payload = await this.strapiClient.get(STORIES_ENDPOINT, {
+      "filters[IsActive][$eq]": true,
+      "filters[Slug][$startsWith]": `wp-${wpStoryId}-`,
+      "pagination[pageSize]": 100,
+      sort: "SortOrder:asc",
+    });
+    const rows = Array.isArray(payload?.data) ? payload.data : [];
+    return rows.map(unwrapEntry).filter(Boolean);
   }
 
   async listActiveStories() {

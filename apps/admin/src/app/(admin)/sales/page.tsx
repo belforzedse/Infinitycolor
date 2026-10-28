@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import SalesPage from "./_components/SalesPage";
-import KpiCard from "@/components/SuperAdmin/reports/products/KpiCard";
+import { AdminCard } from "@/components/admin";
+import KpiCard, { periodFigure, type PeriodDelta } from "@/components/SuperAdmin/reports/shared/KpiCard";
+import WeeklyHeatmap from "@/components/SuperAdmin/reports/shared/WeeklyHeatmap";
+import { numberText, tehranToday, tomanText } from "@/components/SuperAdmin/reports/shared/format";
+import { NO_COMPARISON_BEFORE_FLOOR, previousWasClipped } from "@/components/SuperAdmin/reports/shared/salesSeries";
 import { useReportQueryState } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
 import {
   getOverview,
@@ -42,6 +46,23 @@ export default function OverviewReportPage() {
   // line-only — so its absence switches the page back to the three-term identity
   // rather than rendering a missing term. Admin and API deploy as separate images.
   const shipping = data?.sales.shipping;
+  // The server cuts the previous window at the storefront cutover; a clipped
+  // window holds fewer days, so its change would mislead.
+  const comparable = Boolean(data && !previousWasClipped(data.range, data.previous));
+  const incomplete = end >= tehranToday();
+  type SeriesKey = "gross" | "shipping" | "net" | "orders" | "units" | "discounts" | "refunds";
+  const spark = (key: SeriesKey) => data?.series?.points.map((point) => point[key]) ?? null;
+  const figure = (
+    delta: PeriodDelta | undefined,
+    money: boolean,
+    options: { lowerIsBetter?: boolean; neutral?: boolean } = {},
+  ) =>
+    periodFigure(delta, {
+      format: money ? tomanText : (value) => numberText(value),
+      comparable,
+      noComparisonText: NO_COMPARISON_BEFORE_FLOOR,
+      ...options,
+    });
 
   return (
     <SalesPage title="نمای کلی فروش">
@@ -56,13 +77,13 @@ export default function OverviewReportPage() {
           <div>
             <h3 className="mb-3 text-lg font-medium text-neutral-700">فروش</h3>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <KpiCard title="فروش ناخالص" format="toman" loading />
-              <KpiCard title="هزینه ارسال" format="toman" loading />
-              <KpiCard title="فروش خالص" format="toman" loading />
-              <KpiCard title="سفارش‌ها" format="count" loading />
-              <KpiCard title="تعداد فروش" format="count" loading />
-              <KpiCard title="تخفیف‌ها" format="toman" loading />
-              <KpiCard title="مرجوعی‌ها" format="toman" loading />
+              <KpiCard title="فروش ناخالص" loading />
+              <KpiCard title="هزینه ارسال" loading />
+              <KpiCard title="فروش خالص" loading />
+              <KpiCard title="سفارش‌ها" loading />
+              <KpiCard title="تعداد فروش" loading />
+              <KpiCard title="تخفیف‌ها" loading />
+              <KpiCard title="مرجوعی‌ها" loading />
             </div>
           </div>
         )}
@@ -76,47 +97,59 @@ export default function OverviewReportPage() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <KpiCard
                   title="فروش ناخالص"
-                  delta={data.sales.gross}
-                  format="toman"
-                  tooltip={
+                  {...figure(data.sales.gross, true)}
+                  spark={spark("gross")}
+                  incomplete={incomplete}
+                  info={
                     shipping
                       ? "مبلغ کل سفارش‌های پرداخت‌شده پیش از کسر تخفیف: اقلام سفارش به‌علاوه هزینه ارسال. در گزارش محصولات «فروش ناخالص محصولات» فقط اقلام است، چون هزینه ارسال به هیچ محصولی تعلق ندارد."
-                      : "مجموع مبلغ اقلام سفارش‌های پرداخت‌شده، پیش از تخفیف و بدون هزینه ارسال"
+                      : "مجموع مبلغ اقلام سفارش‌های پرداخت‌شده، پیش از تخفیف و بدون هزینه ارسال."
                   }
+                  order={0}
                 />
                 {shipping && (
                   <KpiCard
                     title="هزینه ارسال"
-                    delta={shipping}
-                    format="toman"
-                    tooltip="مجموع هزینه ارسالی که از مشتری گرفته شده است؛ در «فروش ناخالص» هست و از «فروش خالص» کسر شده."
+                    {...figure(shipping, true, { neutral: true })}
+                    spark={spark("shipping")}
+                    incomplete={incomplete}
+                    info="مجموع هزینه ارسالی که از مشتری گرفته شده است؛ در «فروش ناخالص» هست و از «فروش خالص» کسر شده."
+                    order={1}
                   />
                 )}
                 <KpiCard
                   title="فروش خالص"
-                  delta={data.sales.net}
-                  format="toman"
-                  tooltip="فروش کالا پس از کسر تخفیف و مرجوعی؛ هزینه ارسال در این رقم نیست"
+                  {...figure(data.sales.net, true)}
+                  spark={spark("net")}
+                  incomplete={incomplete}
+                  info="فروش کالا پس از کسر تخفیف و مرجوعی؛ هزینه ارسال در این رقم نیست."
+                  order={2}
                 />
                 <KpiCard
                   title="سفارش‌ها"
-                  delta={data.sales.orders}
-                  format="count"
+                  {...figure(data.sales.orders, false)}
+                  spark={spark("orders")}
+                  incomplete={incomplete}
+                  order={3}
                 />
                 <KpiCard
                   title="تعداد فروش"
-                  delta={data.sales.units}
-                  format="count"
+                  {...figure(data.sales.units, false)}
+                  spark={spark("units")}
+                  incomplete={incomplete}
+                  order={4}
                 />
                 <KpiCard
                   title="تخفیف‌ها"
-                  delta={data.sales.discounts}
-                  format="toman"
+                  {...figure(data.sales.discounts, true, { neutral: true })}
+                  spark={spark("discounts")}
+                  order={5}
                 />
                 <KpiCard
                   title="مرجوعی‌ها"
-                  delta={data.sales.refunds}
-                  format="toman"
+                  {...figure(data.sales.refunds, true, { lowerIsBetter: true })}
+                  spark={spark("refunds")}
+                  order={6}
                 />
               </div>
               {/*
@@ -173,47 +206,17 @@ export default function OverviewReportPage() {
                 ←
               </Link>
             </div>
-
-            <div>
-              <h3 className="mb-3 text-lg font-medium text-neutral-700">
-                وضعیت ثبت آمار خرید و مرجوعی
-              </h3>
-              {data.analyticsDelivery ? (
-                <div
-                  className={`rounded-2xl border p-5 ${data.analyticsDelivery.status === "healthy" ? "border-emerald-100 bg-emerald-50" : data.analyticsDelivery.status === "attention" ? "border-rose-100 bg-rose-50" : "border-amber-100 bg-amber-50"}`}
-                >
-                  <p className="text-sm font-medium text-slate-800">
-                    {data.analyticsDelivery.status === "healthy"
-                      ? "همه خریدها و مرجوعی‌ها در آمار ثبت شده‌اند"
-                      : data.analyticsDelivery.status === "attention"
-                        ? "ثبت بعضی خریدها یا مرجوعی‌ها نیازمند بررسی است"
-                        : "بعضی خریدها یا مرجوعی‌ها هنوز در انتظار ثبت هستند"}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-600">
-                    <span>
-                      منتظر ثبت:{" "}
-                      {data.analyticsDelivery.pending.toLocaleString("fa-IR")}
-                    </span>
-                    <span>
-                      در حال ثبت:{" "}
-                      {data.analyticsDelivery.processing.toLocaleString(
-                        "fa-IR",
-                      )}
-                    </span>
-                    <span>
-                      نیازمند بررسی:{" "}
-                      {data.analyticsDelivery.deadLetter.toLocaleString(
-                        "fa-IR",
-                      )}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-neutral-100 bg-white p-5 text-sm text-neutral-500">
-                  وضعیت ثبت آمار خرید و مرجوعی در دسترس نیست.
-                </div>
-              )}
-            </div>
+            {data.weekly ? (
+              <AdminCard>
+                <WeeklyHeatmap
+                  value={data.weekly}
+                  id="orders-weekly-title"
+                  title="ساعت‌های خرید"
+                  unit="سفارش پرداخت‌شده"
+                  intro="میانگین سفارش‌های پرداخت‌شده در هر ساعت، به وقت تهران و بر پایه زمان ثبت سفارش."
+                />
+              </AdminCard>
+            ) : null}
           </>
         )}
       </div>

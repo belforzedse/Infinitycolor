@@ -8,7 +8,7 @@ describe("product-category destructive route", () => {
 
     expect(route).toBeDefined();
     expect(route?.config.auth).toEqual({ scope: [] });
-    expect(route?.config.middlewares).toBeUndefined();
+    expect(route?.config.middlewares).toEqual([{ name: "global::catalog-edit", config: { resource: "category-associations" } }]);
     expect(route?.config.policies).toEqual([
       {
         name: "global::require-capability",

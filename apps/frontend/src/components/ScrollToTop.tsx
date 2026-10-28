@@ -1,5 +1,7 @@
 "use client";
 
+import { recordBrowserHandler } from "@/lib/browser-failure-diagnostics";
+
 import { useAtomValue } from "jotai";
 import { categoryOverlayOpenAtom } from "@/atoms/storefrontOverlay";
 import React from "react";
@@ -16,17 +18,23 @@ export default function ScrollToTop() {
   const lastProgress = React.useRef(0);
   const lastVisible = React.useRef(false);
   const ticking = React.useRef(false);
+  const lastBottom = React.useRef(80);
 
   React.useEffect(() => {
+    let frame: number | undefined;
     const recalcBottom = () => {
       const isMobile = window.matchMedia("(max-width: 1023px)").matches;
       const nextBottom = isMobile
         ? (document.querySelector<HTMLElement>("nav[data-bottom-nav]")?.offsetHeight ?? 0) + 20
         : 48;
-      setBtnBottom((prev) => (prev === nextBottom ? prev : nextBottom));
+      if (lastBottom.current !== nextBottom) {
+        lastBottom.current = nextBottom;
+        setBtnBottom(nextBottom);
+      }
     };
 
     const updateScrollState = () => {
+      recordBrowserHandler("scroll_update");
       const doc = document.documentElement;
       const scrollTop = window.scrollY || doc.scrollTop;
       const scrollable = Math.max(1, doc.scrollHeight - window.innerHeight);
@@ -39,20 +47,22 @@ export default function ScrollToTop() {
       }
 
       if (Math.abs(nextProgress - lastProgress.current) >= PROGRESS_EPSILON) {
-        setProgress(nextProgress);
         lastProgress.current = nextProgress;
+        setProgress(nextProgress);
       }
       if (nextVisible !== lastVisible.current) {
+        lastVisible.current = nextVisible;
         setVisible(nextVisible);
       }
-      lastVisible.current = nextVisible;
     };
 
     const onScroll = () => {
       if (ticking.current) return;
       ticking.current = true;
-      window.requestAnimationFrame(() => {
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
         updateScrollState();
+        recalcBottom();
         ticking.current = false;
       });
     };
@@ -61,7 +71,6 @@ export default function ScrollToTop() {
     window.addEventListener("scroll", onScroll, { passive: true });
     const onResize = () => {
       onScroll();
-      recalcBottom();
     };
     window.addEventListener("resize", onResize, { passive: true } as any);
 
@@ -69,10 +78,12 @@ export default function ScrollToTop() {
     const nav = document.querySelector<HTMLElement>("nav[data-bottom-nav]");
     let ro: ResizeObserver | null = null;
     if (nav && "ResizeObserver" in window) {
-      ro = new ResizeObserver(() => recalcBottom());
+      ro = new ResizeObserver(onScroll);
       ro.observe(nav);
     }
     return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      ticking.current = false;
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onResize);
       if (ro) ro.disconnect();

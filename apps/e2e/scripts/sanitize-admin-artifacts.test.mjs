@@ -40,3 +40,48 @@ test("removes auth state, network traces, non-image resources, queries, and cred
   assert.doesNotMatch(trace, /credential|\?token=/);
   assert.match(trace, /REDACTED/);
 });
+
+test("sanitizes traces nested in a sharded run's blob report", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blob-artifacts-"));
+  const trace = new JSZip();
+  trace.file("trace.trace", `${JSON.stringify({ type: "action", url: "https://staging.test/auth/callback?grant=credential" })}\n`);
+  trace.file("trace.network", `${JSON.stringify({ headers: [{ name: "cookie", value: "credential" }] })}\n`);
+  // Like Playwright's own blobs: file entries only, no directory entries.
+  const blob = new JSZip();
+  blob.file("report.jsonl", `${JSON.stringify({ method: "onEnd", params: { url: "https://staging.test/x?token=credential" } })}\n`);
+  blob.file("resources/0123abcd.zip", await trace.generateAsync({ type: "nodebuffer" }), { createFolders: false });
+  const blobPath = path.join(directory, "report-1.zip");
+  await writeFile(blobPath, await blob.generateAsync({ type: "nodebuffer" }));
+
+  await sanitizeAdminArtifacts({ roots: [directory], secretValues: ["credential"] });
+
+  const sanitizedBlob = await JSZip.loadAsync(await readFile(blobPath));
+  // `merge-reports` writes every entry as a file; a directory entry fails it (EISDIR).
+  assert.deepEqual(Object.keys(sanitizedBlob.files).sort(), ["report.jsonl", "resources/0123abcd.zip"]);
+  assert.doesNotMatch(await sanitizedBlob.file("report.jsonl").async("string"), /credential/);
+  const inner = await JSZip.loadAsync(await sanitizedBlob.file("resources/0123abcd.zip").async("nodebuffer"));
+  assert.equal(inner.file("trace.network"), null);
+  assert.doesNotMatch(await inner.file("trace.trace").async("string"), /credential|grant=/);
+});
+
+test("keeps a blob's report.jsonl valid JSON when a URL sits inside escaped JSON", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blob-escaped-"));
+  // What the ZarinPal journey logs: a response body (JSON) inside a message
+  // (JSON) inside the report event, so the URL is followed by `\\\"`.
+  const body = JSON.stringify({ redirectUrl: "https://sandbox.zarinpal.com/pg/StartPay/S0qp1o?ref=credential" });
+  const event = { method: "onStdOut", params: { text: JSON.stringify({ message: "finalize", body }) } };
+  const blob = new JSZip();
+  blob.file("report.jsonl", `${JSON.stringify(event)}\n${JSON.stringify({ method: "onEnd", params: {} })}\n`);
+  const blobPath = path.join(directory, "report-1.zip");
+  await writeFile(blobPath, await blob.generateAsync({ type: "nodebuffer" }));
+
+  await sanitizeAdminArtifacts({ roots: [directory], secretValues: ["credential"] });
+
+  const lines = (await (await JSZip.loadAsync(await readFile(blobPath))).file("report.jsonl").async("string"))
+    .split("\n")
+    .filter(Boolean);
+  const [first] = lines.map((line) => JSON.parse(line));
+  const inner = JSON.parse(JSON.parse(first.params.text).body);
+  assert.equal(inner.redirectUrl, "https://sandbox.zarinpal.com/pg/StartPay/S0qp1o");
+  assert.doesNotMatch(lines.join("\n"), /credential/);
+});

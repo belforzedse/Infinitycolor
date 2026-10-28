@@ -18,26 +18,16 @@ import {
   formatFaRelativeDateTime,
 } from "@/utils/formatFaRelativeDateTime";
 import { getOrderStatusMeta } from "@/utils/statusTranslations";
+import ReserveParcelActions from "@/components/SuperAdmin/Order/ReserveParcelActions";
 import {
   getAdminReserveGroup,
-  type AdminReserveGroup,
+  type AdminReserveGroupDetail,
 } from "@/services/super-admin/orders/reserveGroups";
 import {
   formatRemaining,
   getReserveGroupCustomer,
   getReserveGroupStatusMeta,
 } from "../table";
-
-type MemberOrder = {
-  id: number;
-  status: string | null;
-  date: string | null;
-  amount: number;
-  contractStatus: string | null;
-  itemCount: number;
-};
-
-type GroupDetail = AdminReserveGroup & { orders?: MemberOrder[] };
 
 /**
  * One combined shipment, with its member orders.
@@ -50,7 +40,7 @@ type GroupDetail = AdminReserveGroup & { orders?: MemberOrder[] };
 export default function ReserveGroupDetailPage() {
   const params = useParams();
   const groupKey = typeof params?.groupId === "string" ? params.groupId : null;
-  const [group, setGroup] = useState<GroupDetail | null>(null);
+  const [group, setGroup] = useState<AdminReserveGroupDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,7 +50,7 @@ export default function ReserveGroupDetailPage() {
       setLoading(true);
       setError(null);
       const response = await getAdminReserveGroup(groupKey);
-      setGroup((response.data as GroupDetail) ?? null);
+      setGroup(response.data);
     } catch (err) {
       console.error("Failed to load reserve group:", err);
       setError("خطا در دریافت اطلاعات بسته رزروی");
@@ -114,6 +104,7 @@ export default function ReserveGroupDetailPage() {
           title={customer.label}
           identifier={<CopyableId value={group.groupKey} label="کپی شناسه بسته رزروی" />}
           badge={<StatusBadge label={statusMeta.label} tone={statusMeta.tone} />}
+          primaryAction={<ReserveParcelActions groupKey={group.groupKey} parcel={group.anipo} onChanged={load} />}
           summary={[
             {
               label: "سفارش‌های بسته",

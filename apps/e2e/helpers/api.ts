@@ -297,6 +297,15 @@ export async function getWalletAvailability(
       heldBalance?: number | string;
       availableBalance?: number | string;
       reusableBalance?: number | string;
+      holds?: Array<{
+        attemptId: string;
+        paymentAttemptId: number;
+        orderId: number | null;
+        gateway: string;
+        amountIrr: number;
+        state: string;
+        boundAt: string | null;
+      }>;
     };
   };
   expect(payload.success, `${role} wallet response should be successful`).toBe(true);
@@ -307,6 +316,9 @@ export async function getWalletAvailability(
     heldIrr,
     availableIrr: Number(payload.data?.availableBalance ?? Math.max(0, balanceIrr - heldIrr)),
     reusableIrr: Number(payload.data?.reusableBalance ?? 0),
+    // Live holds behind `heldIrr`. The storefront needs them to say when the
+    // money comes back; the tests use them to assert it actually does.
+    holds: payload.data?.holds ?? [],
   };
 }
 

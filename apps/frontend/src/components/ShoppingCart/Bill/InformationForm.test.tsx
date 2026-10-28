@@ -57,7 +57,10 @@ function AddressProbe({ control }: { control: ReturnType<typeof useForm<FormData
   );
 }
 
-function InformationFormHarness({ hideAddressFields = false }: { hideAddressFields?: boolean } = {}) {
+function InformationFormHarness({
+  hideAddressFields = false,
+  reserveRecipientName,
+}: { hideAddressFields?: boolean; reserveRecipientName?: string | null } = {}) {
   const methods = useForm<FormData>({
     defaultValues: {
       fullName: "",
@@ -81,6 +84,7 @@ function InformationFormHarness({ hideAddressFields = false }: { hideAddressFiel
         control={methods.control}
         setValue={methods.setValue}
         hideAddressFields={hideAddressFields}
+        reserveRecipientName={reserveRecipientName}
       />
       <AddressProbe control={methods.control} />
     </>
@@ -107,6 +111,62 @@ describe("ShoppingCartBillInformationForm", () => {
     expect(screen.queryByTestId("checkout-address-select")).not.toBeInTheDocument();
     expect(document.querySelector('input[name="postalCode"]')).not.toBeInTheDocument();
     expect(document.querySelector('textarea[name="fullAddress"]')).not.toBeInTheDocument();
+  });
+
+  it("shows the reserve shipment's recipient instead of a name the merge would ignore", async () => {
+    const store = createStore();
+    store.set(currentUserAtom, { Phone: "09123456789" });
+
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <InformationFormHarness hideAddressFields reserveRecipientName="حدیث شعبانی" />
+        </Provider>,
+      );
+    });
+
+    expect(document.querySelector('input[name="fullName"]')).not.toBeInTheDocument();
+    expect(screen.getByTestId("reserve-recipient")).toHaveTextContent("حدیث شعبانی");
+  });
+
+  it("keeps a recipient name typed before the account profile loads", async () => {
+    const store = createStore();
+
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <InformationFormHarness />
+        </Provider>,
+      );
+    });
+
+    const nameInput = document.querySelector('input[name="fullName"]') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: "حدیث شعبانی" } });
+
+    await act(async () => {
+      store.set(currentUserAtom, { FirstName: "Shiva", LastName: "Ahmadi", Phone: "09123456789" });
+    });
+
+    expect(nameInput).toHaveValue("حدیث شعبانی");
+  });
+
+  it("fills the recipient saved with the chosen address", async () => {
+    mockedUserService.addresses.getAll.mockResolvedValueOnce([
+      { ...savedAddress(1, "خیابان اول"), FullName: "حدیث شعبانی" },
+    ]);
+    const store = createStore();
+    store.set(currentUserAtom, { FirstName: "Shiva", LastName: "Ahmadi", Phone: "09123456789" });
+    store.set(addressesAtom, []);
+
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <InformationFormHarness />
+        </Provider>,
+      );
+    });
+
+    expect(document.querySelector('input[name="fullName"]')).toHaveValue("حدیث شعبانی");
   });
 
   it("uses a numeric input mode for the checkout phone field", async () => {

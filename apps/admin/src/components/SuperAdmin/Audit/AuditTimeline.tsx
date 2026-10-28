@@ -134,7 +134,7 @@ export default function AuditTimeline({
         <ol className="relative space-y-1 border-r border-slate-200 pr-4">
           {events.map((event) => (
             <li key={event.eventId} className="relative py-2">
-              <span className={`absolute -right-[22px] top-4 grid size-4 place-items-center rounded-full ring-4 ring-white ${event.mode === "human" ? "bg-indigo-500" : "bg-slate-400"}`} aria-hidden>
+              <span className={`absolute -right-[22px] top-4 grid size-4 place-items-center rounded-full ring-4 ring-white ${event.mode === "human" ? "bg-infinity-primary" : "bg-slate-400"}`} aria-hidden>
                 {event.mode === "automatic" ? <Bot className="size-2.5 text-white" /> : null}
               </span>
               <button type="button" onClick={() => setSelected(event)} className="block min-h-11 w-full rounded-lg px-2 text-right outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-infinity-primary">

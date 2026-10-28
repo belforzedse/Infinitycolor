@@ -7,6 +7,12 @@ import {
 } from "./helpers/env";
 
 const isCI = !!process.env.CI;
+// Playwright discards a web server's stdout by default, so a server that dies
+// on start-up fails the run as "Exit code: 254" with no cause (pipelines
+// 1104/1105). CI keeps the output; local runs stay quiet.
+const webServerOutput = isCI
+  ? ({ stdout: "pipe", stderr: "pipe" } as const)
+  : {};
 const webServerCommand = process.env.E2E_WEB_SERVER_COMMAND?.trim();
 const authServerCommand = process.env.E2E_AUTH_SERVER_COMMAND?.trim();
 
@@ -46,9 +52,25 @@ function resolveWebServerApiEnv(): Record<string, string> {
 
 export default defineConfig({
   testDir: "./tests",
-  // Admin CRUD now belongs to the independently runnable admin application.
-  // Its dedicated config owns these files and their root-relative URLs.
-  testIgnore: ["super-admin/**/*.spec.ts"],
+  // Specs another config owns: each starts its own servers or sets its own
+  // build flags, so collecting them here ran them against the wrong stack.
+  // Admin CRUD -> admin config; the analytics wire test -> analytics config
+  // (storefront built against a stub collector); stories -> stories config
+  // (component harness); staging journeys -> staging config (a deployed
+  // environment); the rest -> their adaptive/parity/instant/defects configs.
+  testIgnore: [
+    "super-admin/**/*.spec.ts",
+    "analytics/**/*.spec.ts",
+    "stories/**/*.spec.ts",
+    "runtime/**/*.spec.ts",
+    "staging/**/*.spec.ts",
+    "instant-navigation.spec.ts",
+    "storefront/adaptive-quality.spec.ts",
+    "storefront/static-parity.spec.ts",
+    "storefront/forced-low-static-parity.spec.ts",
+    "storefront/defects2.spec.ts",
+    "storefront/product-color-gallery.spec.ts",
+  ],
   outputDir: "test-results",
   globalSetup: "./scripts/global-setup.ts",
   fullyParallel: true,
@@ -84,6 +106,8 @@ export default defineConfig({
     },
     {
       name: "chromium-mobile",
+      // Tests tagged @api drive no browser; one run on desktop is enough.
+      grepInvert: /@api\b/,
       use: {
         ...devices["Pixel 7"],
       },
@@ -97,6 +121,7 @@ export default defineConfig({
             url: `${centralAuthOrigin().replace(/\/$/, "")}/api/health/ready`,
             name: "central-auth",
             reuseExistingServer: !isCI,
+            ...webServerOutput,
             timeout: Number(
               process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000,
             ),
@@ -111,6 +136,7 @@ export default defineConfig({
             url: storefrontBaseURL(),
             name: "storefront",
             reuseExistingServer: !isCI,
+            ...webServerOutput,
             timeout: Number(
               process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000,
             ),

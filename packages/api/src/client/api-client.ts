@@ -21,6 +21,33 @@ interface ErrorResponse {
   };
 }
 
+/** Keep the failure stack without copying the exception text, request or response. */
+function sanitizedTransportCause(
+  error: unknown,
+  stage: string,
+  name?: string,
+  code?: string,
+): Error {
+  const safe = new Error(`API ${stage} failed`);
+  if (name) safe.name = name;
+  if (code) Object.assign(safe, { code });
+  if (error instanceof Error && typeof error.stack === "string") {
+    const frames = error.stack
+      .split("\n")
+      .filter(
+        (line) =>
+          /^\s+at\s/.test(line) &&
+          /\((?:node:|\/|file:\/\/\/)[^?\n]+:\d+:\d+\)$/.test(line),
+      )
+      .slice(0, 20);
+    safe.stack = [
+      `${safe.name}: ${safe.message}`,
+      ...frames.map((line) => line.slice(0, 500)),
+    ].join("\n");
+  }
+  return safe;
+}
+
 class NotModifiedError extends Error {
   constructor() {
     super("304_NOT_MODIFIED");
@@ -40,10 +67,9 @@ export interface ApiClientConfig {
   };
   errorMessages?: ErrorMessages;
   /** Explicit async provider for an ephemeral Bearer token. There is no storage fallback. */
-  getAuthToken?: (options?: { forceRefresh?: boolean }) =>
-    | Promise<string | null>
-    | string
-    | null;
+  getAuthToken?: (options?: {
+    forceRefresh?: boolean;
+  }) => Promise<string | null> | string | null;
   /** Optional per-attempt headers such as a non-sensitive correlation id. */
   getRequestHeaders?: () => Record<string, string>;
   /** Invalidates the provider's cached token before the single safe 401 retry. */
@@ -122,6 +148,24 @@ export class ApiClient {
           throw error;
         }
 
+        const diagnostics = (
+          error as {
+            name?: string;
+            diagnostics?: {
+              cancelled?: boolean;
+              stage?: string;
+              name?: string;
+            };
+          } | null
+        )?.diagnostics;
+        if (
+          diagnostics?.cancelled ||
+          (diagnostics?.stage === "response_json" &&
+            diagnostics.name === "SyntaxError") ||
+          (error as { name?: string } | null)?.name === "TokenAcquisitionError"
+        )
+          break;
+
         if (attempt >= retries) {
           break;
         }
@@ -134,7 +178,10 @@ export class ApiClient {
             ? (error as { status: number }).status
             : undefined;
 
-        if (status !== undefined && !this.retryConfig.retryableStatusCodes.includes(status)) {
+        if (
+          status !== undefined &&
+          !this.retryConfig.retryableStatusCodes.includes(status)
+        ) {
           break;
         }
 
@@ -150,11 +197,17 @@ export class ApiClient {
     throw lastError;
   }
 
-  async get<T>(endpoint: string, options?: ApiRequestOptions): Promise<ApiResponse<T>> {
+  async get<T>(
+    endpoint: string,
+    options?: ApiRequestOptions,
+  ): Promise<ApiResponse<T>> {
     return this.request<T>("GET", endpoint, undefined, options);
   }
 
-  async getPublic<T>(endpoint: string, options?: ApiRequestOptions): Promise<ApiResponse<T>> {
+  async getPublic<T>(
+    endpoint: string,
+    options?: ApiRequestOptions,
+  ): Promise<ApiResponse<T>> {
     return this.request<T>("GET", endpoint, undefined, {
       ...options,
       skipAuth: true,
@@ -185,7 +238,10 @@ export class ApiClient {
     return this.request<T>("PATCH", endpoint, data, options);
   }
 
-  async delete<T>(endpoint: string, options?: ApiRequestOptions): Promise<ApiResponse<T>> {
+  async delete<T>(
+    endpoint: string,
+    options?: ApiRequestOptions,
+  ): Promise<ApiResponse<T>> {
     return this.request<T>("DELETE", endpoint, undefined, options);
   }
 
@@ -196,11 +252,15 @@ export class ApiClient {
         ? (details as { data?: unknown }).data
         : data.data;
     const errorCode =
-      productData && typeof productData === "object" && "errorCode" in productData
-        ? String((productData as { errorCode?: unknown }).errorCode || "") || undefined
+      productData &&
+      typeof productData === "object" &&
+      "errorCode" in productData
+        ? String((productData as { errorCode?: unknown }).errorCode || "") ||
+          undefined
         : undefined;
     const error: ApiError = {
-      message: data.error?.message || data.message || this.errorMessages.DEFAULT,
+      message:
+        data.error?.message || data.message || this.errorMessages.DEFAULT,
       status,
       errors: data.errors,
     };
@@ -231,6 +291,7 @@ export class ApiClient {
       try {
         return JSON.parse(text);
       } catch {
+        if (response.ok) throw new SyntaxError("Invalid API JSON response");
         return { message: text };
       }
     }
@@ -255,7 +316,9 @@ export class ApiClient {
     }
 
     const baseUrlObj = new URL(this.baseUrl);
-    const endpointPath = endpoint.startsWith("/") ? endpoint.slice(1) : endpoint;
+    const endpointPath = endpoint.startsWith("/")
+      ? endpoint.slice(1)
+      : endpoint;
     const basePath = baseUrlObj.pathname.endsWith("/")
       ? baseUrlObj.pathname
       : `${baseUrlObj.pathname}/`;
@@ -278,14 +341,20 @@ export class ApiClient {
     const urlString = url.toString();
     // Reads may be retried safely. Mutations default to one attempt because a
     // lost response does not prove the server failed to apply the operation.
-    const retries = options?.retries ?? (isGet ? this.retryConfig.maxRetries : 0);
+    const retries =
+      isGet || method.toUpperCase() === "HEAD"
+        ? (options?.retries ?? this.retryConfig.maxRetries)
+        : 0;
 
     const cache = this.apiCache;
     const cacheKey = cache ? cache.generateKey(method, urlString, data) : "";
 
     // In-flight dedupe only for GET: mutating requests must not share one promise by URL/body.
     if (cache && isGet) {
-      const pendingRequest = cache.getPending<{ data: ApiResponse<T>; headers: Headers }>(cacheKey);
+      const pendingRequest = cache.getPending<{
+        data: ApiResponse<T>;
+        headers: Headers;
+      }>(cacheKey);
       if (pendingRequest) {
         return pendingRequest.then((response) => response.data);
       }
@@ -297,7 +366,8 @@ export class ApiClient {
       cache.shouldCache(method, urlString) &&
       options?.cache !== "no-store";
 
-    const cacheConfig = enableCache && cache ? cache.getCacheConfig(urlString) : null;
+    const cacheConfig =
+      enableCache && cache ? cache.getCacheConfig(urlString) : null;
 
     if (enableCache && cache && cacheConfig && isGet) {
       const cached = cache.get<ApiResponse<T>>(cacheKey);
@@ -306,7 +376,14 @@ export class ApiClient {
         const bgRefreshKey = `bg-${cacheKey}`;
         if (!cache.getPending(bgRefreshKey)) {
           const bgPromise = this.retryRequest(
-            () => this.executeRequest<T>(method, urlString, data, options, cached.etag),
+            () =>
+              this.executeRequest<T>(
+                method,
+                urlString,
+                data,
+                options,
+                cached.etag,
+              ),
             retries,
           )
             .then((response) => {
@@ -360,6 +437,10 @@ export class ApiClient {
     options: ApiRequestOptions | undefined,
     etag: string | null,
   ): Promise<{ data: ApiResponse<T>; headers: Headers }> {
+    let failureStage: "request" | "response_json" | "response_status" =
+      "request";
+    let requestId: string | undefined;
+    let httpStatus: number | undefined;
     let headers = await this.buildHeaders(options?.headers, options?.skipAuth);
 
     if (etag && method.toUpperCase() === "GET") {
@@ -375,9 +456,21 @@ export class ApiClient {
     };
 
     const controller = new AbortController();
+    const abortError = () =>
+      Object.assign(new Error("Request interrupted"), { name: "AbortError" });
+    let onInterrupted!: () => void;
+    const interrupted = new Promise<never>((_, reject) => {
+      onInterrupted = () => reject(abortError());
+      controller.signal.addEventListener("abort", onInterrupted, {
+        once: true,
+      });
+    });
+    // Observe interruption even when a custom fetch/body implementation ignores the signal.
+    void interrupted.catch(() => undefined);
     const cleanupExternalAbort = options?.signal
       ? (() => {
           const onAbort = () => controller.abort();
+          if (options.signal!.aborted) onAbort();
           options.signal!.addEventListener("abort", onAbort);
           return () => options.signal!.removeEventListener("abort", onAbort);
         })()
@@ -388,10 +481,15 @@ export class ApiClient {
     );
 
     try {
-      let response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
+      if (controller.signal.aborted) throw abortError();
+      let response = await Promise.race([
+        fetch(url, {
+          ...config,
+          signal: controller.signal,
+        }),
+        interrupted,
+      ]);
+      httpStatus = response.status;
 
       const methodUpper = method.toUpperCase();
       const authRejected =
@@ -416,22 +514,43 @@ export class ApiClient {
             (headers as Record<string, string>)["If-None-Match"] = etag;
           }
           if (new Headers(headers).has("authorization")) {
-            response = await fetch(url, { ...config, headers, signal: controller.signal });
+            response = await Promise.race([
+              fetch(url, {
+                ...config,
+                headers,
+                signal: controller.signal,
+              }),
+              interrupted,
+            ]);
+            httpStatus = response.status;
           }
         }
       }
 
-      clearTimeout(timeoutId);
-      if (cleanupExternalAbort) cleanupExternalAbort();
+      if (controller.signal.aborted) throw abortError();
 
       if (response.status === 304) {
         throw new NotModifiedError();
       }
 
-      const responseData = await this.parseResponseData(response);
+      const candidateRequestId = response.headers?.get("x-request-id");
+      if (
+        candidateRequestId &&
+        /^[a-zA-Z0-9_.:-]{1,100}$/.test(candidateRequestId)
+      )
+        requestId = candidateRequestId;
+      failureStage = "response_json";
+      const responseData = await Promise.race([
+        this.parseResponseData(response),
+        interrupted,
+      ]);
 
       if (!response.ok) {
-        const error = this.handleError(response.status, responseData as ErrorResponse);
+        const error = this.handleError(
+          response.status,
+          responseData as ErrorResponse,
+        );
+        error.diagnostics = { stage: "response_status", requestId, httpStatus };
 
         if (!options?.suppressAuthRedirect) {
           this.onHttpError?.(error, { status: response.status, options });
@@ -445,15 +564,22 @@ export class ApiClient {
         headers: response.headers,
       };
     } catch (error: unknown) {
-      clearTimeout(timeoutId);
-      if (cleanupExternalAbort) cleanupExternalAbort();
-
       if (error instanceof NotModifiedError) {
         throw error;
       }
 
       if (error instanceof Error && error.name === "AbortError") {
-        throw this.handleError(408, { message: this.errorMessages.TIMEOUT });
+        throw {
+          ...this.handleError(408, { message: this.errorMessages.TIMEOUT }),
+          cause: sanitizedTransportCause(error, failureStage, "AbortError"),
+          diagnostics: {
+            stage: failureStage,
+            name: "AbortError",
+            requestId,
+            httpStatus,
+            cancelled: Boolean(options?.signal?.aborted),
+          },
+        } satisfies ApiError;
       }
 
       if (
@@ -465,7 +591,54 @@ export class ApiClient {
         throw error;
       }
 
-      throw this.handleError(500, { message: this.errorMessages.DEFAULT });
+      const safeNames = new Set([
+        "Error",
+        "TypeError",
+        "SyntaxError",
+        "NetworkError",
+        "TimeoutError",
+      ]);
+      const safeCodes = new Set([
+        "ECONNRESET",
+        "ECONNREFUSED",
+        "ETIMEDOUT",
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "UND_ERR_CONNECT_TIMEOUT",
+        "UND_ERR_HEADERS_TIMEOUT",
+        "UND_ERR_BODY_TIMEOUT",
+        "UND_ERR_SOCKET",
+      ]);
+      const fields =
+        error && typeof error === "object"
+          ? (error as {
+              name?: string;
+              code?: string;
+              cause?: { code?: string };
+            })
+          : {};
+      const code = fields.code ?? fields.cause?.code;
+      throw {
+        ...this.handleError(500, { message: this.errorMessages.DEFAULT }),
+        cause: sanitizedTransportCause(
+          error,
+          failureStage,
+          fields.name && safeNames.has(fields.name) ? fields.name : undefined,
+          code && safeCodes.has(code) ? code : undefined,
+        ),
+        diagnostics: {
+          stage: failureStage,
+          requestId,
+          httpStatus,
+          name:
+            fields.name && safeNames.has(fields.name) ? fields.name : undefined,
+          code: code && safeCodes.has(code) ? code : undefined,
+        },
+      } satisfies ApiError;
+    } finally {
+      clearTimeout(timeoutId);
+      cleanupExternalAbort?.();
+      controller.signal.removeEventListener("abort", onInterrupted);
     }
   }
 
@@ -495,7 +668,9 @@ export class ApiClient {
     return headers;
   }
 
-  private async resolveAuthToken(forceRefresh: boolean): Promise<string | null> {
+  private async resolveAuthToken(
+    forceRefresh: boolean,
+  ): Promise<string | null> {
     return (await this.getAuthToken?.({ forceRefresh })) ?? null;
   }
 }

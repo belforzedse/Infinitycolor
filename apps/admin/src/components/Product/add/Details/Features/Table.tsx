@@ -2,13 +2,18 @@ import DeleteIcon from "@/components/Kits/Icons/DeleteIcon";
 import React, { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { apiClient } from "@/services";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
+import ProductEditorFields from "@/components/Product/add/ProductEditorFields";
 import toast from "react-hot-toast";
 import { HexColorPicker, HexColorInput } from "react-colorful";
+import { Pencil } from "lucide-react";
 import {
   extractErrorMessage,
   translateErrorMessage,
 } from "@/lib/errorTranslations";
 import AsyncSearchPicker from "@/components/Kits/Form/AsyncSearchPicker";
+import { renderColorOption } from "./colorOption";
+import ReplaceColorDialog from "./ReplaceColorDialog";
 import { ENDPOINTS } from "@/constants/api";
 import { apiCache } from "@/lib/api-cache";
 import {
@@ -23,6 +28,8 @@ interface Feature {
   id: string;
   value: string;
   colorCode?: string;
+  /** Built into at least one saved variation, as opposed to picked but not generated yet. */
+  persisted?: boolean;
 }
 
 interface ApiFeature {
@@ -108,6 +115,8 @@ interface GenericAttributeOption {
 interface FeaturesTableProps {
   productId: number;
   onVariationsGenerated?: () => void;
+  /** Bumped when variations changed elsewhere (e.g. one variation's colour), to re-read the axes. */
+  axesRefreshKey?: number;
 }
 
 const COLOR_PALETTE = [
@@ -167,49 +176,15 @@ const ATTRIBUTE_ENDPOINTS = {
 
 // DEFAULT_TITLES removed - sizes and models are now optional, no default values should be used
 
-/**
- * Colour row for the search dropdown.
- *
- * Colours imported without a ColorCode all rendered as the same anonymous grey
- * dot, so a list of them read as one option repeated. Mark those as deliberately
- * colourless instead.
- */
-function renderColorOption(option: VariationOption, isSelected: boolean) {
-  return (
-    <>
-      {option.colorCode ? (
-        <span
-          className="h-5 w-5 shrink-0 rounded-full border border-slate-200"
-          style={{ backgroundColor: option.colorCode }}
-        />
-      ) : (
-        <span
-          aria-hidden="true"
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-[10px] text-slate-400"
-        >
-          —
-        </span>
-      )}
-      <span className="min-w-0 truncate">{option.title}</span>
-      {option.colorCode ? (
-        <span className="shrink-0 text-xs text-slate-400" dir="ltr">
-          {option.colorCode.toUpperCase()}
-        </span>
-      ) : (
-        <span className="shrink-0 text-xs text-slate-400">بدون رنگ</span>
-      )}
-      {isSelected && (
-        <span className="text-[11px] text-green-600">افزوده شده</span>
-      )}
-    </>
-  );
-}
-
 export const FeaturesTable = ({
   productId,
   onVariationsGenerated,
+  axesRefreshKey = 0,
 }: FeaturesTableProps) => {
-  const [features, setFeatures] = useState<FeatureGroup>({
+  const { session, client: productClient, canEdit } = useProductEditor();
+  const restored = session?.drafts.get("features") as { data?: FeatureGroup; colorModal?: { isOpen: boolean; name: string; colorCode: string; noColor: boolean } } | undefined;
+  const restoredAtMount = useRef(Boolean(restored?.data));
+  const [features, setFeatures] = useState<FeatureGroup>(restored?.data ?? {
     colors: [],
     sizes: [],
     models: [],
@@ -217,6 +192,7 @@ export const FeaturesTable = ({
   });
 
   const [isGeneratingVariations, setIsGeneratingVariations] = useState(false);
+  const [colorToReplace, setColorToReplace] = useState<Feature | null>(null);
   const [variationsCount, setVariationsCount] = useState(0);
   const [availableGenericAttributes, setAvailableGenericAttributes] = useState<
     GenericAttributeOption[]
@@ -267,7 +243,7 @@ export const FeaturesTable = ({
       return next;
     });
   };
-  const [colorModal, setColorModal] = useState({
+  const [colorModal, setColorModal] = useState(restored?.colorModal ?? {
     isOpen: false,
     name: "",
     colorCode: "#000000",
@@ -279,10 +255,14 @@ export const FeaturesTable = ({
     models: false,
   });
 
+  useEffect(() => {
+    session?.drafts.set("features", { data: features, colorModal, dirty: [...features.colors, ...features.sizes, ...features.models].some((item) => !item.persisted) || Boolean(colorModal.name.trim()) });
+  }, [session, features, colorModal]);
   const createAttributeOption = async (
     type: "colors" | "sizes" | "models",
     payload: { Title: string; ColorCode?: string },
   ) => {
+    if (!canEdit) return null;
     const title = payload.Title?.trim();
     if (!title) {
       toast.error("نام ویژگی نمی‌تواند خالی باشد");
@@ -296,6 +276,7 @@ export const FeaturesTable = ({
         {
           data: payload,
         },
+        { retries: 0 },
       );
       const created = response.data;
 
@@ -499,6 +480,7 @@ export const FeaturesTable = ({
             id: String(colorData.id),
             value: colorData.attributes.Title,
             colorCode: colorData.attributes.ColorCode,
+            persisted: true,
           });
         }
 
@@ -507,6 +489,7 @@ export const FeaturesTable = ({
           existingSizes.set(String(sizeData.id), {
             id: String(sizeData.id),
             value: sizeData.attributes.Title,
+            persisted: true,
           });
         }
 
@@ -515,15 +498,22 @@ export const FeaturesTable = ({
           existingModels.set(String(modelData.id), {
             id: String(modelData.id),
             value: modelData.attributes.Title,
+            persisted: true,
           });
         }
       });
 
+      // Saved values come from the server; picks not generated yet are kept, so a
+      // re-read after a colour change elsewhere does not throw them away.
+      const merge = (saved: Map<string, Feature>, previous: Feature[]) => [
+        ...saved.values(),
+        ...previous.filter((feature) => !feature.persisted && !saved.has(feature.id)),
+      ];
       setFeatures((prev) => ({
         ...prev,
-        colors: Array.from(existingColors.values()),
-        sizes: Array.from(existingSizes.values()),
-        models: Array.from(existingModels.values()),
+        colors: merge(existingColors, prev.colors),
+        sizes: merge(existingSizes, prev.sizes),
+        models: merge(existingModels, prev.models),
       }));
     } catch (error) {
       console.error("Error fetching existing variations:", error);
@@ -534,6 +524,7 @@ export const FeaturesTable = ({
   // Independent, so one failing endpoint no longer blanks the whole editor.
   useEffect(() => {
     void loadGenericAttributeDefinitions();
+    if (restoredAtMount.current) return;
     void loadProductAssignments();
     void loadExistingVariationAxes();
   }, [
@@ -541,6 +532,16 @@ export const FeaturesTable = ({
     loadProductAssignments,
     loadExistingVariationAxes,
   ]);
+
+  // Skips the initial 0: the mount effect above already did the first read.
+  useEffect(() => {
+    if (axesRefreshKey > 0) void loadExistingVariationAxes();
+  }, [axesRefreshKey, loadExistingVariationAxes]);
+
+  const handleColorReplaced = async () => {
+    await loadExistingVariationAxes();
+    onVariationsGenerated?.();
+  };
 
   // Generate combinations and calculate potential variations count
   useEffect(() => {
@@ -607,7 +608,7 @@ export const FeaturesTable = ({
   ) => {
     markAssignmentSaving(group.assignmentId, true);
     try {
-      await apiClient.put(
+      await productClient.put(
         `${ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS}/${group.assignmentId}`,
         { data: { terms: nextTerms.map((term) => Number(term.id)) } },
       );
@@ -682,7 +683,7 @@ export const FeaturesTable = ({
 
     setIsAddingAssignment(true);
     try {
-      const response = await apiClient.post<{ id: number }>(
+      const response = await productClient.post<{ id: number }>(
         ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS,
         {
           data: {
@@ -735,7 +736,7 @@ export const FeaturesTable = ({
   const removeGenericAssignment = async (assignmentId: number) => {
     markAssignmentSaving(assignmentId, true);
     try {
-      await apiClient.delete(
+      await productClient.delete(
         `${ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS}/${assignmentId}`,
       );
       setFeatures((prev) => ({
@@ -801,7 +802,7 @@ export const FeaturesTable = ({
         return;
       }
 
-      const response = await apiClient.post<any>(
+      const response = await productClient.post<any>(
         `/products/${productId}/variation-combinations`,
         {
           axes,
@@ -817,7 +818,12 @@ export const FeaturesTable = ({
       if (!result.created) {
         toast("هیچ تنوع جدیدی برای ایجاد وجود نداشت");
       } else {
-        toast.success(`${result.created} تنوع جدید با موفقیت ایجاد شد`);
+        // New variations start at price 0 and can't be sold until priced -- a
+        // bulk price set just before generating does not reach them.
+        toast.success(
+          `${result.created} تنوع جدید ایجاد شد. قیمت و موجودی آن‌ها را وارد کنید؛ تنوع بدون قیمت فروخته نمی‌شود.`,
+          { duration: 8000 },
+        );
       }
     } catch (error) {
       console.error("Error generating variations:", error);
@@ -864,6 +870,21 @@ export const FeaturesTable = ({
                         <span className="text-sm text-slate-500">
                           {color.value}
                         </span>
+                        {color.persisted && (
+                          // Removing the chip only drops it from the next
+                          // generation; a wrong built colour is fixed by moving
+                          // its variations onto another colour.
+                          <button
+                            type="button"
+                            onClick={() => setColorToReplace(color)}
+                            className="flex items-center gap-1 rounded-md px-1 text-xs text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                            aria-label={`تغییر رنگ ${color.value}`}
+                            title="تغییر این رنگ در تنوع‌های ساخته‌شده، بدون ساخت دوباره"
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                            تغییر رنگ
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => removeFeature("colors", color.id)}
@@ -1127,6 +1148,13 @@ export const FeaturesTable = ({
         </div>
       </div>
 
+      <ReplaceColorDialog
+        productId={productId}
+        color={colorToReplace}
+        onClose={() => setColorToReplace(null)}
+        onReplaced={handleColorReplaced}
+      />
+
       <Transition appear show={colorModal.isOpen} as={Fragment}>
         <Dialog
           as="div"
@@ -1157,6 +1185,7 @@ export const FeaturesTable = ({
                 leaveTo="opacity-0 scale-95"
               >
                 <Dialog.Panel className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+                  <ProductEditorFields>
                   <Dialog.Title className="text-lg font-medium text-neutral-900">
                     افزودن رنگ جدید
                   </Dialog.Title>
@@ -1335,6 +1364,7 @@ export const FeaturesTable = ({
                       ذخیره رنگ
                     </button>
                   </div>
+                  </ProductEditorFields>
                 </Dialog.Panel>
               </Transition.Child>
             </div>

@@ -4,6 +4,13 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { validateProductOwnedRelations } from "../../../utils/catalogOwnership";
+import { productEditorActions, saveProductEditor } from "./product-editor";
+import {
+  afterCatalogCommit,
+  CatalogEditError,
+  sendCatalogEditError,
+} from "../../../utils/catalogEdit";
 import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import {
   buildCacheKey,
@@ -22,12 +29,23 @@ import {
   parseSearchwiseSize,
 } from "../services/searchwise-feed";
 import { generateVariationCombinations } from "../services/variation-combinations";
+import {
+  ColorReplaceError,
+  replaceProductVariationColor,
+} from "../services/variation-color-replace";
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
 import { validateProductSlug } from "../../../utils/productSlug";
+import {
+  catalogProductFilters,
+  isProductPubliclyVisible,
+  isProductPurged,
+  publicProductFilters,
+  wherePublicProduct,
+} from "../../../utils/productVisibility";
 import { generateUnicodeSlug } from "../../../utils/unicodeSlug";
-import { resolveAdminActor } from "../../../utils/adminAuthorization";
+import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import { recordAdminAudit } from "../../../utils/adminAudit";
 import {
   executePublicationCommand,
@@ -39,12 +57,24 @@ import {
   removeScheduledProductPublication,
 } from "../../../queue/product-publication-queue";
 import {
+  BULK_ACTION_CAPABILITY,
+  emptyTrash,
+  parseBulkProductIds,
+  purgeProduct,
+  restoreProduct,
+  runLifecycleBulk,
+  trashProduct,
+  type BulkLifecycleAction,
+  type LifecycleActor,
+  type LifecycleResult,
+} from "../services/product-lifecycle";
+import {
   createProductPreviewDraft,
   readProductPreviewDraft,
   sanitizeProductPreviewOverlay,
   type ProductPreviewOverlay,
 } from "../services/product-preview-draft";
-
+import { validateColorGalleriesInput } from "../services/product-color-galleries";
 const OPERATIONAL_PRODUCT_FIELDS = [
   "Title",
   "Slug",
@@ -54,6 +84,7 @@ const OPERATIONAL_PRODUCT_FIELDS = [
   "ProductType",
   "IsSimpleProduct",
   "Media",
+  "ColorGalleries",
   "product_main_category",
   "product_tags",
   "product_attribute_assignments",
@@ -69,6 +100,7 @@ const OPERATIONAL_PRODUCT_FIELDS = [
 
 const PUBLICATION_CONTROL_FIELDS = new Set([
   "Status",
+  "EditRevision",
   "scheduledPublishAt",
   "scheduledPublishTimezone",
   "scheduledPublishRequireMedia",
@@ -82,6 +114,38 @@ const PUBLICATION_CONTROL_FIELDS = new Set([
   "publicationEffectsCompletedRevision",
   "publicationEffectsLastError",
 ]);
+
+/**
+ * Trash and permanent deletion are commands with their own capabilities, audit
+ * and cache effects (services/product-lifecycle.ts). Their columns are never
+ * writable through the generic create/update path, for any role.
+ */
+const LIFECYCLE_CONTROL_FIELDS = new Set([
+  "removedAt",
+  "removedById",
+  "removedByLabel",
+  "preRemovalStatus",
+  "preRemovalScheduledPublishAt",
+  "purgedAt",
+  "purgedById",
+]);
+
+function rejectLifecycleFields(ctx: any): boolean {
+  const data = ctx.request?.body?.data;
+  if (!data || typeof data !== "object") return false;
+  const found = Object.keys(data).filter((field) => LIFECYCLE_CONTROL_FIELDS.has(field));
+  if (found.length === 0) return false;
+  ctx.status = 400;
+  ctx.body = {
+    error: {
+      status: 400,
+      name: "LifecycleCommandRequired",
+      message: "Trash state must be changed through the product lifecycle routes",
+      details: { code: "LIFECYCLE_COMMAND_REQUIRED", fields: found },
+    },
+  };
+  return true;
+}
 
 function rejectPublicationFields(ctx: any): boolean {
   const data = ctx.request?.body?.data;
@@ -164,14 +228,6 @@ function isAdminUser(user: any): boolean {
   return role ? hasCapability(role, "product.read") : false;
 }
 
-function readProductStatus(product: any): string | undefined {
-  return product?.attributes?.Status || product?.Status;
-}
-
-function readProductRemovedAt(product: any): string | null | undefined {
-  return product?.attributes?.removedAt || product?.removedAt;
-}
-
 function setCacheHeaderIfEnabled(ctx: any, status: CacheStatus) {
   if (!isCacheDebugHeaderEnabled()) return;
   ctx.set("X-Backend-Cache", status);
@@ -232,6 +288,12 @@ async function findAllSearchwiseProducts(strapi: any) {
 const PRODUCT_POPULATE = {
   CoverImage: true,
   Media: true,
+  ColorGalleries: {
+    populate: {
+      color: true,
+      Images: true,
+    },
+  },
   Files: true,
   product_main_category: true,
   product_other_categories: true,
@@ -283,6 +345,12 @@ const PRODUCT_POPULATE = {
 const PRODUCT_SHELL_POPULATE = {
   CoverImage: true,
   Media: true,
+  ColorGalleries: {
+    populate: {
+      color: true,
+      Images: true,
+    },
+  },
   Files: true,
   product_main_category: true,
   product_other_categories: true,
@@ -328,8 +396,8 @@ function getProductPopulateForView(view: unknown) {
 
 function isUnrestrictedAdminUser(user: any): boolean {
   return (
-    normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name)
-  ) === "superadmin";
+    (normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name)) === "superadmin"
+  );
 }
 
 async function loadProductById(
@@ -340,11 +408,8 @@ async function loadProductById(
 ): Promise<any | null> {
   const foundFilters: any = {
     id: productId,
-    removedAt: { $null: true },
+    ...catalogProductFilters(isAdmin),
   };
-  if (!isAdmin) {
-    foundFilters.Status = "Active";
-  }
   const foundProducts = await strapi.entityService.findMany("api::product.product", {
     filters: foundFilters,
     populate,
@@ -468,12 +533,8 @@ async function findProductBySlugInternal(
   const candidates = buildProductSlugCandidates(inboundSlug);
   const filters: any = {
     Slug: { $in: candidates },
-    removedAt: { $null: true },
+    ...catalogProductFilters(isAdmin),
   };
-
-  if (!isAdmin) {
-    filters.Status = "Active";
-  }
 
   let products = await strapi.entityService.findMany("api::product.product", {
     filters,
@@ -489,11 +550,8 @@ async function findProductBySlugInternal(
     );
     try {
       const knex = strapi.db.connection;
-      let rawQuery = knex("products").whereIn("slug", candidates).whereNull("removed_at");
-
-      if (!isAdmin) {
-        rawQuery = rawQuery.where("status", "Active");
-      }
+      let rawQuery = knex("products").whereIn("slug", candidates);
+      rawQuery = isAdmin ? rawQuery.whereNull("removed_at") : wherePublicProduct(rawQuery);
 
       const rawProducts = await rawQuery.limit(1);
       if (rawProducts.length > 0) {
@@ -554,87 +612,340 @@ async function findProductBySlugInternal(
   return product;
 }
 
+type LifecycleHttpActor = {
+  actor: LifecycleActor;
+  /** What this caller holds: a role's capabilities, or only the one a service token was checked for. */
+  capabilities: readonly string[];
+};
+
+function adminActorLabel(user: any): string | null {
+  const info = user?.user_info || {};
+  const fullName = [info.FirstName, info.LastName]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  return fullName || user?.username || user?.phone || user?.email || null;
+}
+
 /**
- * Shared body of the soft-delete / restore handlers. `removedAt` is the only
- * field either one writes.
+ * Authorizes a lifecycle request through the same `requireCapability` every
+ * capability-gated route uses — so a refusal is answered and audited as
+ * `security.access_denied`, and API tokens follow the shared token rules — and
+ * returns who acted, for attribution (removedBy, audit actor, Undo).
+ *
+ * Routes with a capability policy have already run this check; running it
+ * again here is idempotent and is what the bulk route and the core DELETE
+ * (whose capability depends on the request) rely on.
  */
-async function setProductRemovedAt(ctx: any, strapi: any, removedAt: string | null) {
+async function authorizeLifecycle(
+  ctx: any,
+  strapi: any,
+  capability: string,
+): Promise<LifecycleHttpActor | null> {
+  const adminActor = await requireCapability(ctx, strapi, capability as any);
+  if (!adminActor) return null;
+  const user = adminActor.user;
+  // A service token is not a person: never record its token id as a user id.
+  const isService = user?.role?.type === "service";
+  return {
+    capabilities: adminActor.capabilities,
+    actor: {
+      id: isService ? 0 : Number(user.id),
+      name: user.username || user.email || null,
+      label: adminActorLabel(user),
+      role: user.role?.name || null,
+      ip: ctx.request?.ip || ctx.ip || null,
+      userAgent: ctx.request?.headers?.["user-agent"] || null,
+    },
+  };
+}
+
+function sendLifecycleError(ctx: any, strapi: any, error: unknown, label: string) {
+  if (error instanceof CatalogEditError) {
+    sendCatalogEditError(ctx, error);
+    return;
+  }
+  if (error instanceof PublicationCommandError) {
+    ctx.status = error.status;
+    ctx.body = {
+      error: {
+        status: error.status,
+        name: "ProductLifecycleError",
+        message: error.code,
+        details: { code: error.code },
+      },
+    };
+    return;
+  }
+  strapi.log.error(`[product-lifecycle] ${label} failed`, {
+    productId: ctx.params?.id,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  ctx.status = 500;
+  ctx.body = {
+    error: {
+      status: 500,
+      name: "ProductLifecycleError",
+      message: "LIFECYCLE_COMMAND_FAILED",
+      details: { code: "LIFECYCLE_COMMAND_FAILED" },
+    },
+  };
+}
+
+function lifecycleResponse(result: LifecycleResult) {
+  return {
+    id: result.productId,
+    state: result.state,
+    Status: result.status,
+    removedAt: result.removedAt,
+    previousStatus: result.previousStatus ?? null,
+    warnings: result.warnings || [],
+    /** True when the product was already in the requested state; nothing changed. */
+    unchanged: !result.changed,
+  };
+}
+
+async function runSingleLifecycleCommand(
+  ctx: any,
+  strapi: any,
+  label: string,
+  capability: string,
+  command: (productId: number, http: LifecycleHttpActor) => Promise<LifecycleResult>,
+) {
   const productId = Number(ctx.params?.id);
   if (!Number.isSafeInteger(productId) || productId <= 0) {
     ctx.status = 400;
     ctx.body = {
-      error: { code: "INVALID_PRODUCT_ID", message: "A valid product ID is required" },
+      error: {
+        status: 400,
+        name: "ProductLifecycleError",
+        message: "INVALID_PRODUCT_ID",
+        details: { code: "INVALID_PRODUCT_ID" },
+      },
     };
     return;
   }
-
-  const existing = await strapi.db
-    .query("api::product.product")
-    .findOne({ where: { id: productId }, select: ["id", "removedAt"] });
-  if (!existing) {
-    return ctx.notFound("Product not found");
+  const http = await authorizeLifecycle(ctx, strapi, capability);
+  if (!http) return;
+  try {
+    const result = await command(productId, http);
+    ctx.set("Cache-Control", "private, no-store");
+    ctx.body = { data: lifecycleResponse(result) };
+  } catch (error) {
+    sendLifecycleError(ctx, strapi, error, label);
   }
-
-  // Idempotent: repeating the action (a double-click, a retried bulk item) is a
-  // no-op rather than a second audit entry with a fresh timestamp.
-  const alreadyInTargetState = Boolean(existing.removedAt) === Boolean(removedAt);
-  if (alreadyInTargetState) {
-    ctx.body = {
-      data: { id: productId, removedAt: existing.removedAt ?? null, unchanged: true },
-    };
-    return;
-  }
-
-  const product = await strapi.entityService.update("api::product.product", productId, {
-    data: { removedAt },
-  });
-
-  ctx.body = {
-    data: { id: product.id, removedAt: product.removedAt ?? null, unchanged: false },
-  };
 }
 
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
+  ...productEditorActions(strapi),
+  async editor(ctx) {
+    if (ctx.request?.body?.data?.ColorGalleries !== undefined && !(await requireCapability(ctx, strapi, "product.media.manage"))) return;
+    await validateProductOwnedRelations(
+      strapi,
+      Number(ctx.params.id),
+      ctx.request?.body?.data || {},
+    );
+    if (rejectPublicationFields(ctx) || rejectLifecycleFields(ctx)) return;
+    if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
+    if (await rejectInvalidManualSlug(ctx, strapi)) return;
+    const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
+
+    if (colorGalleries !== undefined) {
+      await validateColorGalleriesInput(strapi, colorGalleries, Number(ctx.params.id));
+    }
+
+    return saveProductEditor(ctx, strapi, () => super.update(ctx));
+  },
   async create(ctx) {
+    if (ctx.request?.body?.data?.ColorGalleries !== undefined && !(await requireCapability(ctx, strapi, "product.media.manage"))) return;
     discardLegacyDraftStatusOnCreate(ctx);
     if (rejectPublicationFields(ctx)) return;
+    if (rejectLifecycleFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     if (await rejectInvalidManualSlug(ctx, strapi)) return;
     ctx.request.body = ctx.request.body || {};
     ctx.request.body.data = { ...(ctx.request.body.data || {}), Status: "InActive" };
-    return super.create(ctx);
+    // Keep attachment locks through creation so deletion/replacement cannot
+    // race with the new product's media associations.
+    return strapi.db.transaction(async () => {
+      await validateProductOwnedRelations(strapi, null, ctx.request.body.data);
+      const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
+
+      if (colorGalleries !== undefined) {
+        await validateColorGalleriesInput(strapi, colorGalleries);
+      }
+      return super.create(ctx);
+    });
   },
 
   async update(ctx) {
+    if (ctx.request?.body?.data?.ColorGalleries !== undefined && !(await requireCapability(ctx, strapi, "product.media.manage"))) return;
+    await validateProductOwnedRelations(
+      strapi,
+      Number(ctx.params.id),
+      ctx.request?.body?.data || {},
+    );
     if (rejectPublicationFields(ctx)) return;
+    if (rejectLifecycleFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     if (await rejectInvalidManualSlug(ctx, strapi)) return;
+    const colorGalleries = ctx.request?.body?.data?.ColorGalleries;
+
+    if (colorGalleries !== undefined) {
+      await validateColorGalleriesInput(strapi, colorGalleries, Number(ctx.params.id));
+    }
     return super.update(ctx);
   },
 
   /**
-   * Reversible removal to the recycle bin, and its undo.
-   *
-   * `removedAt` is deliberately absent from OPERATIONAL_PRODUCT_FIELDS, so a
-   * plain `PUT /products/:id` carrying it is rejected for every non-Superadmin by
-   * `enforceOperationalDataFields`. Rather than widening that allowlist — which
-   * would let any role with product.update stamp the field through the generic
-   * update path — removal gets dedicated routes gated on their own capabilities,
-   * the same shape as `publication` and `updateDisplayDate`.
-   *
-   * Authorization lives in the router (`global::require-capability`):
-   * product.softDelete here, product.restore below. Permanent deletion is a
-   * different capability entirely and is not reachable from either.
-   *
-   * Both go through entityService so the product lifecycle hook fires and writes
-   * the admin-audit entry that distinguishes a removal from a restore.
+   * Product lifecycle: Trash, restore/Undo and permanent deletion. Each route
+   * carries its own capability policy (product.softDelete / product.restore /
+   * product.delete); the state rules live in services/product-lifecycle.ts,
+   * never here. `removedAt` and the other lifecycle columns are rejected on the
+   * generic create/update path so no role can bypass these commands.
    */
   async softDelete(ctx) {
-    return setProductRemovedAt(ctx, strapi, new Date().toISOString());
+    return runSingleLifecycleCommand(
+      ctx,
+      strapi,
+      "trash",
+      "product.softDelete",
+      (productId, http) => trashProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    );
   },
 
   async restore(ctx) {
-    return setProductRemovedAt(ctx, strapi, null);
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const undoToken = typeof body.undoToken === "string" ? body.undoToken : null;
+    return runSingleLifecycleCommand(ctx, strapi, "restore", "product.restore", (productId, http) =>
+      restoreProduct(
+        strapi,
+        productId,
+        { origin: "admin", actor: http.actor },
+        {
+          undoToken,
+          // Undo may put a product back on the storefront, so it also needs the
+          // capability that would have published or scheduled it.
+          canPublish: http.capabilities.includes("product.publish"),
+          canSchedule: http.capabilities.includes("product.schedule"),
+        },
+      ),
+    );
+  },
+
+  async permanentDelete(ctx) {
+    return runSingleLifecycleCommand(
+      ctx,
+      strapi,
+      "permanent delete",
+      "product.delete",
+      (productId, http) => purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    );
+  },
+
+  /**
+   * The core DELETE used to hard-delete any product. It now means the same as
+   * permanent deletion: the product must already be in Trash and becomes a
+   * tombstone, so order history and reports keep their product. Trusted
+   * migration requests (the WooCommerce dedup script) keep the old row delete
+   * for importer-made duplicates.
+   */
+  async delete(ctx) {
+    if (isTrustedWordPressMigrationRequest()) {
+      return (super.delete as any)(ctx);
+    }
+    return runSingleLifecycleCommand(
+      ctx,
+      strapi,
+      "permanent delete",
+      "product.delete",
+      (productId, http) => purgeProduct(strapi, productId, { origin: "admin", actor: http.actor }),
+    );
+  },
+
+  async bulkLifecycle(ctx) {
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const action = String(body.action || "") as BulkLifecycleAction;
+    const capability = BULK_ACTION_CAPABILITY[action];
+    const reject = (status: number, code: string) => {
+      ctx.status = status;
+      ctx.body = {
+        error: { status, name: "ProductLifecycleError", message: code, details: { code } },
+      };
+    };
+    if (!capability) return reject(400, "LIFECYCLE_ACTION_INVALID");
+
+    // One route, many actions: the capability required is the requested action's.
+    const http = await authorizeLifecycle(ctx, strapi, capability);
+    if (!http) return;
+
+    let ids: number[];
+    try {
+      ids = parseBulkProductIds(body.ids);
+    } catch (error) {
+      return sendLifecycleError(ctx, strapi, error, "bulk");
+    }
+    if (action === "schedule") {
+      const publishAt = typeof body.publishAt === "string" ? body.publishAt : "";
+      if (!publishAt || !(Date.parse(publishAt) > Date.now())) {
+        return reject(422, "INVALID_PUBLICATION_TIME");
+      }
+    }
+
+    try {
+      const result = await runLifecycleBulk(
+        strapi,
+        action,
+        ids,
+        { origin: "admin", actor: http.actor },
+        {
+          publishAt: body.publishAt,
+          timezone: body.timezone,
+          undoToken: body.undoToken,
+          canPublish: http.capabilities.includes("product.publish"),
+          canSchedule: http.capabilities.includes("product.schedule"),
+        },
+      );
+      ctx.set("Cache-Control", "private, no-store");
+      ctx.body = { data: result };
+    } catch (error) {
+      sendLifecycleError(ctx, strapi, error, "bulk");
+    }
+  },
+
+  async emptyTrash(ctx) {
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const trashedBefore = new Date(String(body.trashedBefore || ""));
+    // The client sends when it loaded the Trash list; allow a little clock skew
+    // but never a cut-off in the future that would sweep unseen products.
+    if (
+      Number.isNaN(trashedBefore.getTime()) ||
+      trashedBefore.getTime() > Date.now() + 5 * 60 * 1000
+    ) {
+      ctx.status = 400;
+      ctx.body = {
+        error: {
+          status: 400,
+          name: "ProductLifecycleError",
+          message: "TRASHED_BEFORE_INVALID",
+          details: { code: "TRASHED_BEFORE_INVALID" },
+        },
+      };
+      return;
+    }
+    const http = await authorizeLifecycle(ctx, strapi, "product.delete");
+    if (!http) return;
+    try {
+      const result = await emptyTrash(
+        strapi,
+        { origin: "admin", actor: http.actor },
+        { trashedBefore },
+      );
+      ctx.set("Cache-Control", "private, no-store");
+      ctx.body = { data: result };
+    } catch (error) {
+      sendLifecycleError(ctx, strapi, error, "empty trash");
+    }
   },
 
   async updateDisplayDate(ctx) {
@@ -820,37 +1131,45 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         actor,
       });
       let queueState = "not-required";
-
-      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) {
-        try {
-          await enqueueScheduledProductPublication({
-            productId,
-            scheduleRevision: result.scheduleRevision,
-            expectedPublishAt: result.scheduledPublishAt,
-            auditContext: result.auditJobContext,
-          });
-          queueState = "queued";
-        } catch (error) {
-          queueState = "pending-reconciliation";
-          strapi.log.error("[product-publication] delayed job enqueue failed", {
-            productId,
-            scheduleRevision: result.scheduleRevision,
-            error: error instanceof Error ? error.message : String(error),
-          });
+      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt)
+        queueState = "pending-reconciliation";
+      await afterCatalogCommit(strapi, async () => {
+        if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) {
+          try {
+            await enqueueScheduledProductPublication({
+              productId,
+              scheduleRevision: result.scheduleRevision,
+              expectedPublishAt: result.scheduledPublishAt,
+              auditContext: result.auditJobContext,
+            });
+            queueState = "queued";
+          } catch (error) {
+            queueState = "pending-reconciliation";
+            strapi.log.error("[product-publication] delayed job enqueue failed", {
+              productId,
+              scheduleRevision: result.scheduleRevision,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
-      }
 
-      if (result.previousScheduleRevision) {
-        await removeScheduledProductPublication(productId, result.previousScheduleRevision);
-      }
-
-      if (result.needsPublicationEffects) {
-        try {
-          await runPublicationEffects(strapi, productId, result.publicationRevision);
-        } catch {
-          queueState = "pending-reconciliation";
+        if (result.previousScheduleRevision) {
+          try {
+            await removeScheduledProductPublication(productId, result.previousScheduleRevision);
+          } catch {
+            queueState = "pending-reconciliation";
+          }
         }
-      }
+
+        if (result.needsPublicationEffects) {
+          try {
+            await runPublicationEffects(strapi, productId, result.publicationRevision);
+          } catch {
+            queueState = "pending-reconciliation";
+          }
+        }
+        if (ctx.body?.data?.id === result.productId) ctx.body.data.queueState = queueState;
+      });
 
       ctx.body = {
         data: {
@@ -908,6 +1227,32 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     }
   },
 
+  async replaceVariationColor(ctx) {
+    const body = ctx.request?.body?.data ?? ctx.request?.body ?? {};
+    const actor = await resolveAdminActor(strapi, ctx.state?.user);
+    try {
+      const result = await replaceProductVariationColor(strapi, {
+        productId: ctx.params?.id,
+        fromColorId: body.fromColorId,
+        toColorId: body.toColorId,
+        newColor: body.newColor,
+        removeEmptyDrafts: body.removeEmptyDrafts === true,
+        dryRun: body.dryRun === true,
+        canDeleteVariations: Boolean(
+          actor && hasCapability(actor.role, "product.variation.delete"),
+        ),
+      });
+      ctx.body = { data: result };
+    } catch (error) {
+      if (!(error instanceof ColorReplaceError)) throw error;
+      const details = { data: { errorCode: error.errorCode, ...error.data } };
+      if (error.status === 403) return ctx.forbidden(error.message, details);
+      if (error.status === 404) return ctx.notFound(error.message, details);
+      if (error.status === 409) return ctx.conflict(error.message, details);
+      return ctx.badRequest(error.message, details);
+    }
+  },
+
   /**
    * Apply public-only filters for non-admin users
    * Ensures drafts/removed products are hidden from non-admins
@@ -915,10 +1260,6 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   applyPublicProductFilters(ctx) {
     const user = ctx.state.user;
     const isAdmin = isAdminUser(user);
-    if (isAdmin) {
-      return false;
-    }
-
     const existingFilters = ctx.query?.filters || {};
     const andConditions: any[] = [];
 
@@ -933,13 +1274,23 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       andConditions.push(existingFilters);
     }
 
-    andConditions.push({ removedAt: { $null: true } });
+    if (isAdmin) {
+      // Staff read drafts, scheduled and trashed products through the core
+      // routes, but a permanently deleted product is a tombstone that no
+      // catalog surface may return.
+      andConditions.push({ purgedAt: { $null: true } });
+      ctx.query = { ...ctx.query, filters: { $and: andConditions } };
+      return false;
+    }
+
     // A fully trusted migration request must see an existing inactive product
     // by external_id so the idempotent importer updates it instead of trying a
     // duplicate create. Trashed products remain excluded.
-    if (!isTrustedWordPressMigrationRequest()) {
-      andConditions.push({ Status: "Active" });
-    }
+    andConditions.push(
+      isTrustedWordPressMigrationRequest()
+        ? { removedAt: { $null: true } }
+        : publicProductFilters(),
+    );
 
     ctx.query = {
       ...ctx.query,
@@ -972,6 +1323,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         hasDiscount: restQuery.hasDiscount,
         excludeDiscount: restQuery.excludeDiscount,
         curated: restQuery.curated,
+        offer: restQuery.offer,
         requireCoverImage: restQuery.requireCoverImage,
         pagination: restQuery.pagination,
       });
@@ -1165,18 +1517,18 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     const response: any = await (super.findOne as any)(ctx, next);
 
     if (!filtersApplied) {
+      // findOne ignores `filters`, so the tombstone rule is enforced on the result.
+      if (isProductPurged(response?.data)) return ctx.notFound("Product not found");
       return response;
     }
 
     const product = response?.data;
-    const status = readProductStatus(product);
-    const removedAt = readProductRemovedAt(product);
-    if (status !== "Active" || removedAt) {
+    if (!isProductPubliclyVisible(product)) {
       return ctx.notFound("Product not found");
     }
 
     const isAdmin = isAdminUser(user);
-    if (!isAdmin && status === "Active" && product?.id) {
+    if (!isAdmin && product?.id) {
       try {
         const productViewService = strapi.service("api::product-view.product-view") as {
           queueProductView: (productId: number) => Promise<void>;
@@ -1318,9 +1670,8 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       }
 
       const productData = payload.data;
-      const status = readProductStatus(productData);
-      const removedAt = readProductRemovedAt(productData);
-      if (!isAdmin && (status !== "Active" || removedAt)) {
+      const isPublic = isProductPubliclyVisible(productData);
+      if (!isAdmin && !isPublic) {
         return ctx.notFound("Product not found");
       }
 
@@ -1328,7 +1679,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         `[Product.findBySlug] Successfully found product: ${productData.id} (${productData.Title || "N/A"})`,
       );
 
-      if (!isAdmin && status === "Active" && productData?.id) {
+      if (!isAdmin && isPublic && productData?.id) {
         try {
           const productViewService = strapi.service("api::product-view.product-view") as {
             queueProductView: (productId: number) => Promise<void>;

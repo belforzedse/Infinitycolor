@@ -32,9 +32,14 @@ const DEPLOYMENT_ID = process.env.NEXT_DEPLOYMENT_ID?.trim() || "";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Allow isolated production checks alongside a running development server.
+  distDir: process.env.NEXT_BUILD_DIR || ".next",
   cacheComponents: true,
   partialPrefetching: true,
   reactCompiler: true,
+  // Native IDs omit some server chunks in the installed Turbopack build.
+  // Let the existing Sentry post-build hook inject matching IDs into all artifacts.
+  turbopack: { debugIds: false },
   cacheHandlers: {
     remote: require.resolve("./cache-handlers/redis-remote.cjs"),
   },
@@ -85,6 +90,7 @@ const nextConfig = {
     "@repo/fonts",
     "@repo/social-posts",
     "@repo/story-rail",
+    "@repo/video-player",
   ],
   reactStrictMode: true,
   poweredByHeader: false,
@@ -103,6 +109,10 @@ const nextConfig = {
       },
       {
         source: "/sw.js",
+        headers: versionProbeHeaders,
+      },
+      {
+        source: "/sw-retire.js",
         headers: versionProbeHeaders,
       },
       {
@@ -134,7 +144,14 @@ const nextConfig = {
   // Allow sitemap and other static generation to run longer during build (default 60s)
   staticPageGenerationTimeout: 180,
   compiler: {
+    async runAfterProductionCompile({ distDir }: { distDir: string }) {
+      const { prepareServerMapReferences } = require("./scripts/prepare-sentry-server-maps.cjs");
+      prepareServerMapReferences(path.join(distDir, "server"));
+    },
     removeConsole: process.env.NODE_ENV === "production",
+    // Remove SDK-internal debug branches with Turbopack too. Structured Logs,
+    // Issues, tracing and Replay do not depend on this debug-only build flag.
+    ...(process.env.NODE_ENV === "production" ? { define: { __SENTRY_DEBUG__: false } } : {}),
   },
   images: {
     unoptimized: false,
@@ -167,6 +184,7 @@ const nextConfig = {
     remotePatterns: getNextImageRemotePatterns(),
   },
   experimental: {
+    serverSourceMaps: true,
     useOffline: true,
     turbopackRustReactCompiler: process.env.NODE_ENV !== "test",
     exposeTestingApiInProductionBuild: process.env.NEXT_INSTANT_TESTS === "true",
@@ -184,6 +202,38 @@ const nextConfig = {
   // invalidation inconsistent and can leave the Redis handler unused.
   cacheMaxMemorySize: 0,
 };
+const sentryRelease = process.env.SENTRY_RELEASE || process.env.GITHUB_SHA;
+// Releases are named by commit SHA; the repo name is how Sentry's GitLab
+// integration lists bel4/infinity.
+const sentryCommits =
+  sentryRelease && /^[0-9a-f]{40}$/.test(sentryRelease)
+    ? {
+        repo: process.env.SENTRY_REPO || "Yazdan / Infinity",
+        commit: sentryRelease,
+        ignoreMissing: true,
+        ignoreEmpty: true,
+      }
+    : undefined;
+
 module.exports = withSentryConfig(nextConfig, {
   silent: !process.env.CI,
+  org: process.env.SENTRY_ORG || "alpagency",
+  project: process.env.SENTRY_PROJECT || "infinitycolor-frontend",
+  sentryUrl: process.env.SENTRY_URL || "https://errors.alpagency.net",
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  sourcemaps: {
+    disable: !process.env.SENTRY_AUTH_TOKEN,
+    // Server maps use the mandatory bounded upload inside the build-secret
+    // step. Keep the SDK's browser upload and public map deletion intact.
+    assets: [path.resolve(__dirname, ".next/static")],
+    deleteSourcemapsAfterUpload: true,
+  },
+  widenClientFileUpload: true,
+  release: {
+    name: sentryRelease,
+    // Attach the release's commits so Sentry can show suspect commits and
+    // resolve issues from "Fixes <SHORT-ID>" commit messages. Failures here are
+    // logged by the plugin and never fail the build.
+    setCommits: sentryCommits,
+  },
 });

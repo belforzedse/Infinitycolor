@@ -17,6 +17,10 @@ const definition = (
 ): AuditEventDefinition => ({ domain, operation, importance, titleFa, titleEn });
 
 export const AUDIT_EVENT_CATALOG = {
+  "products.edit_committed": definition("products", "edit", "تغییرات محصول ذخیره شد", "Product edit committed"),
+  "products.edit_acquired": definition("products", "edit", "ویرایش محصول آغاز شد", "Product editing acquired"),
+  "products.edit_taken_over": definition("products", "edit", "دسترسی ویرایش محصول منتقل شد", "Product editing taken over", "important"),
+  "products.edit_rejected": definition("products", "edit", "ذخیره تغییرات محصول رد شد", "Product edit rejected", "important"),
   "authentication.login_succeeded": definition("authentication", "login", "ورود موفق", "Login succeeded", "important"),
   "authentication.login_failed": definition("authentication", "login", "ورود ناموفق", "Login failed", "important"),
   "authentication.logout": definition("authentication", "logout", "خروج از حساب", "Logged out"),
@@ -60,7 +64,9 @@ export const AUDIT_EVENT_CATALOG = {
   "products.created": definition("catalog", "create", "محصول ایجاد شد", "Product created"),
   "products.updated": definition("catalog", "update", "محصول ویرایش شد", "Product updated"),
   "products.deleted": definition("catalog", "delete", "محصول حذف شد", "Product deleted", "important"),
+  "products.trashed": definition("catalog", "delete", "محصول به سطل زباله منتقل شد", "Product moved to Trash", "important"),
   "products.restored": definition("catalog", "restore", "محصول بازیابی شد", "Product restored", "important"),
+  "products.permanently_deleted": definition("catalog", "purge", "محصول برای همیشه حذف شد", "Product permanently deleted", "critical"),
   "products.status_changed": definition("catalog", "status_change", "وضعیت محصول تغییر کرد", "Product status changed", "important"),
   "products.publication_scheduled": definition("catalog", "schedule", "انتشار محصول زمان‌بندی شد", "Product publication scheduled", "important"),
   "products.publication_rescheduled": definition("catalog", "schedule", "زمان انتشار محصول دوباره تنظیم شد", "Product publication rescheduled", "important"),

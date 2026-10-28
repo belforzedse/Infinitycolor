@@ -2,6 +2,7 @@ import type { Strapi } from "@strapi/strapi";
 
 import { normalizeAuditChanges, sanitizeAuditValue } from "./sanitizer";
 import { resolveUserFullName } from "../utils/userDisplayName";
+import { weekdayGrid } from "../utils/weekdayGrid";
 import {
   AUDIT_ACTOR_TYPES,
   AUDIT_IMPORTANCE,
@@ -309,7 +310,16 @@ export async function getAuditSummary(strapi: Strapi, filters: AuditQuery): Prom
     .select(knex.raw("count(*) filter (where actor_type not in ('human', 'impersonated_human'))::int as automatic"))
     .groupByRaw("date_trunc('day', occurred_at at time zone 'Asia/Tehran')")
     .orderByRaw("date_trunc('day', occurred_at at time zone 'Asia/Tehran') asc");
-  const [counts, series] = await Promise.all([countsQuery, seriesQuery]);
+  // When admins work: human actions only, whatever the mode, so off-hours
+  // changes stand out. `occurred_at` is timestamptz, so one AT TIME ZONE gives
+  // Tehran wall-clock time.
+  const weeklyQuery = base()
+    .whereIn("actor_type", ["human", "impersonated_human"])
+    .select(knex.raw("extract(dow from occurred_at at time zone 'Asia/Tehran')::int as dow"))
+    .select(knex.raw("extract(hour from occurred_at at time zone 'Asia/Tehran')::int as hour"))
+    .select(knex.raw("count(*)::int as count"))
+    .groupByRaw("1, 2");
+  const [counts, series, weekly] = await Promise.all([countsQuery, seriesQuery, weeklyQuery]);
   return {
     total: Number(counts?.total || 0),
     human: Number(counts?.human || 0),
@@ -321,7 +331,20 @@ export async function getAuditSummary(strapi: Strapi, filters: AuditQuery): Prom
       human: Number(row.human || 0),
       automatic: Number(row.automatic || 0),
     })),
+    weekly: weekdayGrid(weekly, tehranYmd(filters.from), tehranYmd(filters.to), "Asia/Tehran"),
   };
+}
+
+/** The Tehran calendar date of an instant (the summary's window bounds). */
+function tehranYmd(value: string | undefined): string {
+  const date = value ? new Date(value) : new Date();
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tehran",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 export async function getAuditFilterOptions(strapi: Strapi, filters: AuditQuery): Promise<Record<string, unknown>> {

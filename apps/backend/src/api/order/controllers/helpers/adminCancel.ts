@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { formatCancellationReasonForSms } from "../../../../services/sms/notifications";
 import { logAdminOrderCancel } from "../../../../utils/adminActivity";
 import { releaseReservedStockAtomic } from "../../../cart/services/lib/stock";
 import { releaseOrderDiscountClaim } from "../../../cart/services/lib/discount-claim";
@@ -23,6 +24,7 @@ import {
   type AnipoCancelSnapshot,
 } from "./notifyAnipoParcelCancelled";
 import { releaseWalletHoldsForOrder } from "../../../local-user-wallet/services/wallet-holds";
+import { assertMellatReservationReleasable } from "../../../payment-gateway/services/mellat-state";
 
 /**
  * Cancel is allowed through fulfilment (including `Shipment`), but
@@ -131,6 +133,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
     let anipoCancelSnapshot: AnipoCancelSnapshot | null = null;
     const result = await strapi.db.transaction(async ({ trx }) => {
       await lockOrderForAdminMutation(trx, orderIdNum);
+      await assertMellatReservationReleasable(strapi, orderIdNum, trx);
       const currentOrder: any = await strapi.db.query("api::order.order").findOne({
         where: { id: orderIdNum },
         populate: {
@@ -247,7 +250,10 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       // operator does not see a shipped label on a cancelled order. Provider
       // «لغو شده» runs after commit via notifyAnipoParcelCancelled.
       anipoCancelSnapshot = captureAnipoCancelSnapshot(currentOrder);
-      const orderUpdateData: Record<string, unknown> = { Status: "Cancelled" };
+      const orderUpdateData: Record<string, unknown> = {
+        Status: "Cancelled",
+        CancellationReason: formatCancellationReasonForSms(reason, "admin_cancelled"),
+      };
       if (reservationReleased) {
         orderUpdateData.ReservationStatus = "Released";
       }
@@ -363,6 +369,11 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   } catch (error: any) {
     strapi.log.error("adminCancelOrder error", error);
     const message = String(error?.message || "");
+    if (message === "MELLAT_PAYMENT_IN_PROGRESS") {
+      return ctx.conflict("پرداخت در حال بررسی است؛ پس از مشخص شدن نتیجه دوباره تلاش کنید.", {
+        data: { errorCode: "MELLAT_PAYMENT_IN_PROGRESS" },
+      });
+    }
     if (error instanceof OrderChangedConcurrentlyError) {
       return ctx.conflict("Order changed concurrently", {
         data: {

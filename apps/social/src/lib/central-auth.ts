@@ -16,7 +16,23 @@ export const centralAuth = createCentralAuthBrowserClient({
   tokenOrigin: new URL(SITE_URL).origin,
 });
 
+let authStateVersion = 0;
+let observingAuthState = false;
+
+/** Invalidate delayed identity work when another tab changes the session. */
+export function readAuthStateVersion(): number {
+  if (!observingAuthState && typeof window !== "undefined") {
+    observingAuthState = true;
+    subscribeToAuthState(() => {
+      authStateVersion += 1;
+      centralAuth.tokenManager.clearForLogout();
+    });
+  }
+  return authStateVersion;
+}
+
 export function initializeCentralAuthBrowser(): void {
+  readAuthStateVersion();
   clearStaleBrowserCredentials();
 }
 
@@ -31,7 +47,10 @@ export function centralLoginUrl(returnPath?: string): string {
   const url = new URL("/auth", centralAuthOrigin);
   if (typeof window !== "undefined") {
     const safePath = returnPath?.startsWith("/") ? returnPath : "/";
-    url.searchParams.set("returnTo", new URL(safePath, window.location.origin).toString());
+    url.searchParams.set(
+      "returnTo",
+      new URL(safePath, window.location.origin).toString(),
+    );
   }
   return url.toString();
 }
@@ -39,7 +58,10 @@ export function centralLoginUrl(returnPath?: string): string {
 export function centralLogoutUrl(): string {
   const url = new URL("/auth/logout", centralAuthOrigin);
   if (typeof window !== "undefined") {
-    url.searchParams.set("returnTo", `${window.location.origin}/auth/logout-callback`);
+    url.searchParams.set(
+      "returnTo",
+      `${window.location.origin}/auth/logout-callback`,
+    );
   }
   return url.toString();
 }

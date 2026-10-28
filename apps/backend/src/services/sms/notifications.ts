@@ -1,5 +1,6 @@
 import { claimSmsIdempotency, releaseSmsIdempotency, buildSmsIdempotencyKey } from "./idempotency";
 import { sendPatternSms } from "./ippanel";
+import { isE2EFixturePhone } from "../../utils/e2eFixtures";
 import { loadSmsConfig } from "./config";
 import { maskPhone } from "./redaction";
 import type {
@@ -37,6 +38,8 @@ const CANCELLATION_REASON_LABELS: Record<string, string> = {
   duplicate_order: "ثبت سفارش تکراری",
   admin_cancelled: "لغو توسط پشتیبانی",
   support_cancelled: "لغو توسط پشتیبانی",
+  operator_cancel: "لغو توسط پشتیبانی",
+  payment_gateway_declined: "پرداخت توسط درگاه تایید نشد",
 };
 
 const DEFAULT_CANCELLATION_REASON = "لغو سفارش توسط پشتیبانی";
@@ -68,14 +71,21 @@ export function formatOrderStatusForSms(status?: string | null): string | undefi
   return trimSmsParam(STATUS_LABELS[status] || status);
 }
 
-export function formatCancellationReasonForSms(reason?: string | null): string {
+export function formatCancellationReasonForSms(
+  reason?: string | null,
+  fallbackReasonCode?: string,
+): string {
+  const fallback = fallbackReasonCode
+    ? CANCELLATION_REASON_LABELS[normalizeReasonKey(fallbackReasonCode)] ?? DEFAULT_CANCELLATION_REASON
+    : DEFAULT_CANCELLATION_REASON;
+
   const clean = trimSmsParam(reason);
-  if (!clean) return DEFAULT_CANCELLATION_REASON;
+  if (!clean) return fallback;
 
   const mapped = CANCELLATION_REASON_LABELS[normalizeReasonKey(clean)];
   if (mapped) return mapped;
 
-  return looksLikeInternalReason(clean) ? DEFAULT_CANCELLATION_REASON : clean;
+  return looksLikeInternalReason(clean) ? fallback : clean;
 }
 
 export function isNotifiableOrderStatus(status?: string | null): boolean {
@@ -143,6 +153,8 @@ async function sendOrderSms(params: {
   order: any;
   variables: SmsPatternParams;
   fingerprint: string;
+  retainClaimOnUnknown?: boolean;
+  strictIdempotency?: boolean;
 }): Promise<SmsSendResult> {
   const { strapi, type, order, variables, fingerprint } = params;
   const phone = extractUserPhone(order);
@@ -187,6 +199,11 @@ async function sendOrderSms(params: {
     return finish({ ok: false, skipped: true, reason: "missing_phone" });
   }
 
+  // Staging E2E shoppers have synthetic numbers; nothing may text them.
+  if (isE2EFixturePhone(phone)) {
+    return finish({ ok: false, skipped: true, reason: "e2e_fixture" });
+  }
+
   const config = loadSmsConfig();
   if (!config.enabled) {
     strapi.log?.debug?.("[sms] skipped order notification because SMS is disabled", {
@@ -197,7 +214,7 @@ async function sendOrderSms(params: {
     return finish({ ok: false, skipped: true, disabled: true, reason: "disabled" });
   }
 
-  const claimed = await claimSmsIdempotency(key);
+  const claimed = await claimSmsIdempotency(key, params.strictIdempotency);
   if (!claimed) {
     strapi.log?.info?.("[sms] skipped duplicate order notification", {
       type,
@@ -215,7 +232,9 @@ async function sendOrderSms(params: {
     config,
   });
 
-  if (!result.ok && !result.disabled) {
+  const unknown = result.reason === "timeout" || result.reason === "request_failed" ||
+    (result.status !== undefined && result.status >= 500);
+  if (!result.ok && !result.disabled && !(params.retainClaimOnUnknown && unknown)) {
     await releaseSmsIdempotency(key);
   }
 
@@ -259,6 +278,10 @@ export async function notifyOrderStatusSms(
     return { ok: false, skipped: true, reason: "status_not_notifiable" };
   }
 
+  if (params.newStatus === "Done" || params.newStatus === "Shipment") {
+    return { ok: false, skipped: true, reason: "scheduled_shipping_notification" };
+  }
+
   const order = await loadOrderForSms(strapi, params.orderId);
   if (!order) return { ok: false, skipped: true, reason: "order_not_found" };
 
@@ -283,26 +306,37 @@ export async function notifyOrderStatusSms(
   });
 }
 
+/** Tracking changes are read by the scheduled sender; they never send an early follow-up. */
 export async function notifyShipmentTrackingSms(
-  strapi: StrapiSmsLike,
-  params: {
-    orderId: number;
-    trackingCode: string;
-  },
+  _strapi: StrapiSmsLike,
+  _params: { orderId: number; trackingCode: string },
 ): Promise<SmsSendResult> {
-  const order = await loadOrderForSms(strapi, params.orderId);
-  if (!order) return { ok: false, skipped: true, reason: "order_not_found" };
+  return { ok: false, skipped: true, reason: "scheduled_shipping_notification" };
+}
 
+export async function notifyScheduledShippingSms(
+  strapi: StrapiSmsLike,
+  orderId: number,
+  dueAt: string,
+): Promise<SmsSendResult> {
+  const order = await loadOrderForSms(strapi, orderId);
+  if (!order || order.Status !== "Shipment") {
+    return { ok: false, skipped: true, reason: "order_not_shipped" };
+  }
   return sendOrderSms({
     strapi,
     type: "shipped",
     order,
     variables: buildOrderNotificationParams({
-      orderId: params.orderId,
-      status: order?.Status || "Shipment",
+      orderId,
+      status: "Shipment",
       amount: order?.contract?.Amount,
-      trackingCode: params.trackingCode,
+      // The approved shipping pattern declares trackingCode. A dash keeps the
+      // parameter present when no barcode exists, without inventing a code.
+      trackingCode: String(order.ShippingBarcode || "").trim() || "—",
     }),
-    fingerprint: `tracking-${params.trackingCode}`,
+    fingerprint: `scheduled-${dueAt}`,
+    retainClaimOnUnknown: true,
+    strictIdempotency: true,
   });
 }

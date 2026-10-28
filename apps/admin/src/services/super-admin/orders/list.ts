@@ -14,9 +14,17 @@ export type AdminOrderTab =
   | "completed"
   | "shipped"
   | "cancelled"
-  | "manual";
+  | "manual"
+  | "anipo_attention";
 
-export type AdminOrdersListInput = {
+export type AdminOrderDeliverySearch = {
+  cityId?: string | number;
+  productCode?: string;
+  postalCode?: string;
+  addressText?: string;
+};
+
+export type AdminOrdersListInput = AdminOrderDeliverySearch & {
   page: number;
   pageSize: number;
   tab: AdminOrderTab;
@@ -34,7 +42,7 @@ export type AdminShippingMethodOption = {
 
 export type AdminOrderStatusCounts = Record<AdminOrderTab, number>;
 
-export type AdminOrderCountsInput = {
+export type AdminOrderCountsInput = AdminOrderDeliverySearch & {
   search?: string;
   shippingMethodCodes?: string[];
   filters?: AdvancedFilterItem[];
@@ -69,6 +77,7 @@ export async function listAdminOrders(
       tab: input.tab,
       sort: input.sort,
       search: input.search?.trim() || undefined,
+      cityId: input.cityId, productCode: input.productCode, postalCode: input.postalCode, addressText: input.addressText,
       shippingMethodCodes: input.shippingMethodCodes ?? [],
       filters: input.filters ?? [],
     },
@@ -88,6 +97,7 @@ export async function getAdminOrderCounts(
     ADMIN_ORDERS_COUNTS_ENDPOINT,
     {
       search: input.search?.trim() || undefined,
+      cityId: input.cityId, productCode: input.productCode, postalCode: input.postalCode, addressText: input.addressText,
       shippingMethodCodes: input.shippingMethodCodes ?? [],
       filters: input.filters ?? [],
     },

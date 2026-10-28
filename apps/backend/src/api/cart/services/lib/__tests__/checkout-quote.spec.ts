@@ -60,7 +60,7 @@ describe("createCheckoutQuote", () => {
       cart: {
         ...cart,
         cart_items: [
-          { ...cart.cart_items[0], product_variation: { id: 9, DiscountPrice: 81_000 } },
+          { ...cart.cart_items[0], product_variation: { id: 9, Price: 100_000, DiscountPrice: 81_000 } },
           cart.cart_items[1],
         ],
       },
@@ -104,6 +104,35 @@ describe("createCheckoutQuote", () => {
       shipping: 20_000,
       total: 209_000,
     });
+  });
+
+  it("refuses to quote a variation that has no price", async () => {
+    await expect(
+      createCheckoutQuote(createStrapi(), 12, {
+        cart: {
+          ...cart,
+          cart_items: [{ ...cart.cart_items[0], product_variation: { id: 9, Price: "0" } }],
+        },
+        shippingId: 4,
+        shippingCost: 20_000,
+        gateway: "wallet",
+      }),
+    ).rejects.toThrow("INVALID_PRICE");
+  });
+
+  it("quotes the base price when a stray zero discount is stored", async () => {
+    const quote = await createCheckoutQuote(createStrapi(), 12, {
+      cart: {
+        ...cart,
+        cart_items: [
+          { ...cart.cart_items[0], product_variation: { id: 9, Price: "1999000", DiscountPrice: "0" } },
+        ],
+      },
+      shippingId: 4,
+      shippingCost: 20_000,
+      gateway: "wallet",
+    });
+    expect(quote.lineItems[0].unitPrice).toBe(1_999_000);
   });
 
   it("changes the quote hash when a coupon is applied or removed", async () => {

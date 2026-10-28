@@ -4,10 +4,11 @@ import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 import { notifyOrderStatusSms } from "../../../../services/sms/notifications";
 import { isOrderHeldByReserve } from "../../../reserve-group/lib/reserve-group";
+import { enqueueAnipoRegistration } from "../../../../queue/anipo-registration";
+import { recordAnipoRegistrationFailure } from "../../services/anipoBarcodeWorkflow";
 
 // Fulfilment order is «تکمیل شده» then «ارسال»: an order is prepared/completed
 // first and handed to the courier second, so `Shipment` is the terminal step.
-// Each hop is a separate admin action -- marking `Done` must not auto-advance.
 const NEXT_STATUS: Record<string, string[]> = {
   Started: ["Done"],
   Done: ["Shipment"],
@@ -24,37 +25,50 @@ async function applyOrderStatusTransition(
   strapi: Strapi,
   orderId: number,
   fromStatus: string,
-  toStatus: string,
+  statuses: string[],
   actor: TransitionActor,
+  queueAnipo: boolean,
 ): Promise<void> {
   await strapi.db.transaction(async ({ trx }) => {
-    const update = await trx.raw(
-      `UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND status = ? RETURNING id`,
-      [toStatus, orderId, fromStatus],
-    );
-    if (!(update.rows || []).length) {
-      throw new Error("ORDER_STATUS_CHANGED_CONCURRENTLY");
+    let previous = fromStatus;
+    for (const toStatus of statuses) {
+      const update = await trx.raw(
+        `UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND status = ? RETURNING id`,
+        [toStatus, orderId, previous],
+      );
+      if (!(update.rows || []).length) throw new Error("ORDER_STATUS_CHANGED_CONCURRENTLY");
+      await strapi.db.query("api::order-log.order-log").create({
+        data: {
+          order: orderId,
+          Action: "Update",
+          Description: "Admin changed order lifecycle status",
+          Changes: { fromStatus: previous, toStatus },
+          performed_by: actor.id,
+        },
+        transacting: trx,
+      } as any);
+      await logAdminOrderFieldUpdate(
+        strapi, orderId, { Status: { from: previous, to: toStatus } },
+        actor.id, actor.ip, actor.userAgent, actor.roleName, trx,
+      );
+      previous = toStatus;
     }
-    await strapi.db.query("api::order-log.order-log").create({
-      data: {
-        order: orderId,
-        Action: "Update",
-        Description: "Admin changed order lifecycle status",
-        Changes: { fromStatus, toStatus },
-        performed_by: actor.id,
-      },
-      transacting: trx,
-    } as any);
-    await logAdminOrderFieldUpdate(
-      strapi,
-      orderId,
-      { Status: { from: fromStatus, to: toStatus } },
-      actor.id,
-      actor.ip,
-      actor.userAgent,
-      actor.roleName,
-      trx,
+    // Persist the customer notification alongside the successful completion.
+    // Later barcode updates must not restart the 48-hour clock.
+    await trx.raw(
+      `UPDATE orders
+       SET shipping_sms_due_at = COALESCE(shipping_sms_due_at, NOW() + INTERVAL '48 hours')
+       WHERE id = ? AND status = 'Shipment' AND shipping_sms_completed_at IS NULL`,
+      [orderId],
     );
+    if (queueAnipo) {
+      await trx.raw(
+        `UPDATE orders SET anipo_barcode_state = 'Pending'
+         WHERE id = ? AND status = 'Shipment' AND anipo_barcode_state IS NULL
+           AND anipo_submitted_at IS NULL AND shipping_barcode IS NULL`,
+        [orderId],
+      );
+    }
   });
 }
 
@@ -118,8 +132,8 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
 
   const order: any = await strapi.db.query("api::order.order").findOne({
     where: { id: orderId },
-    select: ["id", "Status", "ShippingBarcode", "PaymentGateway"],
-    populate: { user: { select: ["id"] } },
+    select: ["id", "Status", "ShippingBarcode", "ShippingMethodCode", "AnipoBarcodeState", "AnipoSubmittedAt", "PaymentGateway"],
+    populate: { user: { select: ["id"] }, shipping: { select: ["Code"] } },
   });
   if (!order) return ctx.notFound("Order not found");
   if (order.Status === nextStatus) {
@@ -128,16 +142,16 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
   // An order inside a live 48h combined-shipping window must not enter the
   // shipping workflow, whatever the admin clicked. Enforced here rather than only
   // by disabling a button, because bulk actions hit this same endpoint.
-  if (nextStatus === "Shipment") {
+  if (nextStatus === "Done" || nextStatus === "Shipment") {
     const { held, group } = await isOrderHeldByReserve(strapi, orderId);
     if (held) {
-      return ctx.conflict("سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل ارسال نیست", {
+      return ctx.conflict("سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل تکمیل و ارسال نیست", {
         data: {
           success: false,
           errorCode: "RESERVE_HOLD_ACTIVE",
           reserveGroupId: group?.groupKey ?? null,
           reserveExpiresAt: group?.expiresAt ?? null,
-          message: "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل ارسال نیست",
+          message: "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل تکمیل و ارسال نیست",
         },
       });
     }
@@ -163,15 +177,40 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
   };
   const customerId = Number(order.user?.id ?? order.user);
 
-  await applyOrderStatusTransition(strapi, orderId, order.Status, nextStatus, actorInfo);
+  const statuses = nextStatus === "Done" ? ["Done", "Shipment"] : [nextStatus];
+  const finalStatus = statuses[statuses.length - 1];
+  const postal = String(order.ShippingMethodCode || order.shipping?.Code || "").toLowerCase() === "post";
+  const queueAnipo = finalStatus === "Shipment" && postal && !order.ShippingBarcode &&
+    !order.AnipoSubmittedAt && (!order.AnipoBarcodeState || order.AnipoBarcodeState === "Pending");
+  await applyOrderStatusTransition(strapi, orderId, order.Status, statuses, actorInfo, queueAnipo);
   await notifyOrderTransitioned(
     strapi,
     orderId,
     customerId,
     order.Status,
-    nextStatus,
+    finalStatus,
     order.ShippingBarcode,
   );
 
-  return { data: { success: true, orderId, status: nextStatus } };
+  if (queueAnipo) {
+    try {
+      await enqueueAnipoRegistration(orderId);
+    } catch (error) {
+      // The persisted Pending/unsubmitted marker is picked up by the existing
+      // Anipo reconciliation scheduler when queue connectivity returns.
+      strapi.log.error("Anipo registration enqueue failed", {
+        orderId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      try {
+        await recordAnipoRegistrationFailure(strapi, orderId, error, false);
+      } catch (recordError) {
+        strapi.log.error("Anipo enqueue failure state update failed", {
+          orderId,
+          error: recordError instanceof Error ? recordError.message : String(recordError),
+        });
+      }
+    }
+  }
+  return { data: { success: true, orderId, status: finalStatus } };
 }

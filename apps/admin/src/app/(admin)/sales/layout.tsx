@@ -2,7 +2,10 @@
 
 import { usePathname } from "next/navigation";
 import { AdminCard, SubNav } from "@/components/admin";
-import ReportDateRangeField from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
+import ReportDateRangeField, {
+  DEFAULT_REPORT_DATE_PRESETS,
+  type DateRangePreset,
+} from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
 import {
   useReportQueryState,
   toDateOnly,
@@ -11,6 +14,10 @@ import {
   LEGACY_SALES_DATA_NOTICE,
   predatesLegacySalesCutoff,
 } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
+import {
+  defaultReportEnd,
+  defaultReportStart,
+} from "@/components/SuperAdmin/reports/shared/reportDates";
 import { getSalesNavForCapabilities } from "@/constants/salesNav";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
@@ -39,6 +46,24 @@ const DATE_SCOPED_ROUTES = [
   "/sales/liquidity",
 ];
 
+/**
+ * The quick presets never reach back past the storefront cutover: like the
+ * default period, a preset that would start earlier starts at the cutoff, so
+ * «۳۰ روز گذشته» shows the data this site has instead of the legacy notice.
+ * A start date picked by hand before the cutoff still gets the notice.
+ */
+const SALES_DATE_PRESETS: DateRangePreset[] = DEFAULT_REPORT_DATE_PRESETS.map((preset) => ({
+  ...preset,
+  getRange: () => {
+    const range = preset.getRange();
+    const cutoff = parseDateOnly(LEGACY_SALES_DATA_CUTOFF);
+    return range.start < cutoff && range.end >= cutoff ? { ...range, start: cutoff } : range;
+  },
+}));
+
+const CUTOFF_START_NOTE =
+  "گزارش از ۲۳ شهریور شروع می‌شود؛ داده‌های پیش از آن در سایت قبلی است.";
+
 export default function SalesLayout({
   children,
 }: {
@@ -52,6 +77,12 @@ export default function SalesLayout({
   const showDateRange = DATE_SCOPED_ROUTES.includes(
     pathname.replace(/\/$/, ""),
   );
+  // The period lives in the URL, and the sub-nav links are bare paths: carry a
+  // chosen period onto the subpages it scopes, or each one resets to the default.
+  const periodQuery =
+    start === defaultReportStart() && end === defaultReportEnd()
+      ? ""
+      : `?${new URLSearchParams({ start, end })}`;
   // Sales data before the cutoff lives on the previous site. Gating here, where
   // the period is owned, means no subpage fetches a partial pre-cutoff range.
   const showLegacyNotice = showDateRange && predatesLegacySalesCutoff(start);
@@ -65,7 +96,11 @@ export default function SalesLayout({
       </div>
 
       <SubNav
-        items={items.map(({ id, label, href }) => ({ id, label, href }))}
+        items={items.map(({ id, label, href }) => ({
+          id,
+          label,
+          href: DATE_SCOPED_ROUTES.includes(href) ? `${href}${periodQuery}` : href,
+        }))}
         className="mt-3"
         ariaLabel="بخش‌های فروش"
       />
@@ -76,6 +111,7 @@ export default function SalesLayout({
             <ReportDateRangeField
               start={parseDateOnly(start)}
               end={parseDateOnly(end)}
+              presets={SALES_DATE_PRESETS}
               onChange={(range) =>
                 setRange({
                   start: toDateOnly(range.start),
@@ -83,6 +119,9 @@ export default function SalesLayout({
                 })
               }
             />
+            {start === LEGACY_SALES_DATA_CUTOFF && (
+              <p className="mt-3 text-xs text-neutral-500">{CUTOFF_START_NOTE}</p>
+            )}
           </div>
         </AdminCard>
       )}

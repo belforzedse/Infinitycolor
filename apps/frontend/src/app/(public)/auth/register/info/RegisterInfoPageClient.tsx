@@ -14,7 +14,6 @@ import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { safeInternalRedirect } from "@/utils/authRedirect";
-import { trackAnalyticsEvent } from "@/lib/analytics";
 
 interface FormData {
   firstName: string;
@@ -77,7 +76,6 @@ export default function RegisterInfoPage() {
       });
 
       if (res.token || res.message) {
-        trackAnalyticsEvent({ category: "auth", action: "account_created" });
         try {
           setUserLoading(true);
           setUserError(null);

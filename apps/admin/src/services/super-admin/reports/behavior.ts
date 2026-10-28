@@ -2,6 +2,7 @@ import { apiClient } from "@/services";
 import { formatQueryParams } from "@/utils/api";
 import {
   BEHAVIOR_VIEWS,
+  type ConversionDetailRequest,
   type BehaviorFilters,
   type BehaviorMetadata,
   type BehaviorQuery,
@@ -134,9 +135,12 @@ function metadataFromEnvelope(
       )
     : [];
   const warnings = Array.from(new Set([...providerWarnings, ...sectionErrors]));
+  const provider = isRecord(meta.provider) ? meta.provider : {};
   return {
     source,
     provider: source.toLowerCase() === "umami" ? "Umami" : source,
+    providerContractVersion:
+      typeof provider.contractVersion === "string" ? provider.contractVersion : undefined,
     timezone: typeof meta.timezone === "string" ? meta.timezone : "Asia/Tehran",
     unit: typeof meta.unit === "string" ? meta.unit : undefined,
     currency: typeof meta.currency === "string" ? meta.currency : undefined,
@@ -164,12 +168,19 @@ function metadataFromEnvelope(
 function queryString(
   query: BehaviorQuery,
   options?: BehaviorRequestOptions,
+  detail?: ConversionDetailRequest,
 ): string {
   const params: Record<string, string | number> = {
     startDate: query.start,
     endDate: query.end,
-    comparison: query.comparison ?? "none",
+    comparison: detail ? "none" : (query.comparison ?? "none"),
   };
+  if (detail) {
+    params.detail = detail.detail;
+    if (detail.detail === "journey") params.step = detail.step;
+    else params.funnel = detail.funnel;
+    if (detail.detail === "breakdown") params.dimension = detail.dimension;
+  }
   for (const key of BEHAVIOR_FILTER_KEYS) {
     const value = query.filters?.[key];
     if (typeof value === "string" && value.trim()) params[key] = value.trim();
@@ -321,6 +332,75 @@ export async function getBehaviorView<T = Record<string, unknown>>(
     error: errorMessage(lastError),
     endpoint: lastEndpoint,
   };
+}
+
+const DETAIL_FUNNELS = new Set(["core", "checkout", "payment"]);
+const DETAIL_DIMENSIONS = new Set(["device", "os", "browser"]);
+
+/**
+ * A lazily loaded conversion drill-down (per-bucket trend, per-segment
+ * breakdown, or the journeys after one funnel step). Same endpoint and
+ * capability as the conversion view; an older API ignores `detail` and answers
+ * with the plain conversion payload, which callers detect by its `kind`.
+ */
+export async function getConversionDetail<T = Record<string, unknown>>(
+  query: BehaviorQuery,
+  detail: ConversionDetailRequest,
+  options?: BehaviorRequestOptions,
+): Promise<BehaviorResponse<T>> {
+  const endpoint = behaviorEndpoint("conversion");
+  const validation = validateBehaviorQuery(query);
+  const detailValid =
+    detail.detail === "journey"
+      ? EVENT_PATTERN.test(detail.step)
+      : DETAIL_FUNNELS.has(detail.funnel) &&
+        (detail.detail !== "breakdown" || DETAIL_DIMENSIONS.has(detail.dimension));
+  if (!validation.ok || !detailValid) {
+    return {
+      state: "unavailable",
+      data: null,
+      metadata: {
+        timezone: "Asia/Tehran",
+        requestedRange: { start: query.start, end: query.end },
+      },
+      error: validation.ok
+        ? "INVALID_CONVERSION_DETAIL"
+        : Object.values(validation.errors).filter(Boolean).join("؛ "),
+      endpoint,
+    };
+  }
+  try {
+    const response = await apiClient.get(
+      `${endpoint}${queryString(query, options, detail)}`,
+      { signal: options?.signal, cache: "no-store" },
+    );
+    const envelope = responseEnvelope(response);
+    const state = stateFromEnvelope(envelope);
+    return {
+      state,
+      data: state === "unavailable" ? null : (envelope.data as T),
+      metadata: metadataFromEnvelope(envelope, { ...query, comparison: "none" }, state),
+      error:
+        typeof envelope.error === "string"
+          ? envelope.error
+          : typeof envelope.message === "string"
+            ? envelope.message
+            : null,
+      endpoint,
+    };
+  } catch (error) {
+    if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    return {
+      state: "unavailable",
+      data: null,
+      metadata: {
+        timezone: "Asia/Tehran",
+        requestedRange: { start: query.start, end: query.end },
+      },
+      error: errorMessage(error),
+      endpoint,
+    };
+  }
 }
 
 export { COMPATIBILITY_ENDPOINTS };

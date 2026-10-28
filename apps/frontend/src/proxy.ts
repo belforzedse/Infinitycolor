@@ -255,6 +255,16 @@ export function getLegacyRedirectUrl(sourceUrl: LegacyRedirectSourceUrl) {
     return redirectIfChanged(sourceUrl, "/blog");
   }
 
+  // The old site's whole-catalog newest listing, including its /page/N paging.
+  if (segments[0] === "offer" && segments[1] === "newest") {
+    const params = new URLSearchParams({ type: "newest" });
+    const page = segments[2] === "page" ? segments[3] : undefined;
+    if (segments.length === 4 && page && /^\d+$/.test(page)) {
+      params.set("page", page);
+    }
+    return redirectIfChanged(sourceUrl, "/offer", params);
+  }
+
   if (decodedPathname === "/offer/oppsi" || decodedPathname === "/محصولات-زده-دار") {
     const params = new URLSearchParams();
     params.set("search", "Oppsi");

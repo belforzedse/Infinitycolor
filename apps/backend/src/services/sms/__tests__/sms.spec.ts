@@ -12,6 +12,8 @@ import {
   formatCancellationReasonForSms,
   formatOrderStatusForSms,
   notifyOrderStatusSms,
+  notifyScheduledShippingSms,
+  notifyShipmentTrackingSms,
 } from "../notifications";
 import { normalizeIranMobile } from "../phone";
 import { maskPhone, maskSecret } from "../redaction";
@@ -308,6 +310,29 @@ describe("sms service", () => {
     expect(formatCancellationReasonForSms("SOME_INTERNAL_CODE")).toBe("لغو سفارش توسط پشتیبانی");
   });
 
+  it("uses a caller-supplied fallback reason code instead of the generic support default", () => {
+    // No reason at all: falls back to the given code's label, not the hardcoded default.
+    expect(formatCancellationReasonForSms(undefined, "payment_gateway_declined")).toBe(
+      "پرداخت توسط درگاه تایید نشد",
+    );
+    // An unmapped internal-looking code: also falls back to the given code, not the default.
+    expect(
+      formatCancellationReasonForSms("provider_terminal_status", "payment_gateway_declined"),
+    ).toBe("پرداخت توسط درگاه تایید نشد");
+    // A mapped code still wins over the fallback.
+    expect(formatCancellationReasonForSms("out_of_stock", "payment_gateway_declined")).toBe(
+      "ناموجود بودن کالا",
+    );
+    // Genuine human-typed free text still passes through unchanged, fallback or not.
+    expect(
+      formatCancellationReasonForSms("مشتری تماس گرفت و لغو کرد", "payment_gateway_declined"),
+    ).toBe("مشتری تماس گرفت و لغو کرد");
+    // An unrecognized fallback code degrades to the original hardcoded default.
+    expect(formatCancellationReasonForSms(undefined, "not_a_real_code")).toBe(
+      "لغو سفارش توسط پشتیبانی",
+    );
+  });
+
   it("builds SMS params without leaking internal status or extra reason fields", () => {
     expect(
       buildOrderNotificationParams({
@@ -388,6 +413,129 @@ describe("sms service", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("never texts a staging E2E fixture shopper, and records why", async () => {
+    process.env.SMS_ENABLED = "true";
+    process.env.E2E_FIXTURES_ENABLED = "true";
+    process.env.IP_PANEL_API_KEY = "secret-key";
+    process.env.IP_PANEL_PATTERN_CODE = "pattern";
+    process.env.IP_PANEL_SENDER = "+983000505";
+    const redis: any = await RedisClient;
+    redis.set.mockResolvedValue("OK");
+    const createOrderLog = jest.fn().mockResolvedValue({ id: 1 });
+    const strapi: any = {
+      log: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+      entityService: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 12,
+          Status: "Started",
+          user: { id: 7, phone: "+989000003004" },
+          contract: { Amount: 1000 },
+        }),
+      },
+      db: { query: jest.fn(() => ({ create: createOrderLog })) },
+    };
+
+    await expect(
+      notifyOrderStatusSms(strapi, { orderId: 12, oldStatus: "Paying", newStatus: "Started" }),
+    ).resolves.toMatchObject({ ok: false, skipped: true, reason: "e2e_fixture" });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(createOrderLog).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        Changes: expect.objectContaining({ outcome: "skipped", reason: "e2e_fixture" }),
+      }),
+    });
+  });
+
+  it("skips fixture recipients at the provider only where fixtures are enabled", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      createResponse(200, { data: { message_outbox_ids: [1] }, meta: { status: true } }),
+    );
+    const config = loadSmsConfig({
+      SMS_ENABLED: "true",
+      IP_PANEL_API_KEY: "secret-key",
+      IP_PANEL_PATTERN_CODE: "pattern",
+      IP_PANEL_SENDER: "+983000505",
+    });
+    const send = () =>
+      sendPatternSms({ type: "order_created", phone: "09000003004", params: { orderId: 1 }, config });
+
+    process.env.E2E_FIXTURES_ENABLED = "true";
+    await expect(send()).resolves.toMatchObject({ ok: false, skipped: true, reason: "e2e_fixture" });
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    // Production never sets the flag: the same number is an ordinary recipient there.
+    delete process.env.E2E_FIXTURES_ENABLED;
+    await expect(send()).resolves.toMatchObject({ ok: true });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["Done", "Shipment"])("defers %s instead of sending immediately", async (newStatus) => {
+    await expect(notifyOrderStatusSms({} as any, {
+      orderId: 11, oldStatus: "Started", newStatus,
+    })).resolves.toMatchObject({ skipped: true, reason: "scheduled_shipping_notification" });
+    await expect(notifyShipmentTrackingSms({} as any, {
+      orderId: 11, trackingCode: "NEW-CODE",
+    })).resolves.toMatchObject({ skipped: true, reason: "scheduled_shipping_notification" });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([["LATEST-CODE", "LATEST-CODE"], [null, "—"]])(
+    "loads the current tracking code (%s) when the scheduled SMS sends",
+    async (barcode, expected) => {
+      process.env.SMS_ENABLED = "true";
+      process.env.IP_PANEL_API_KEY = "secret-key";
+      process.env.IP_PANEL_PATTERN_SHIPPED = "shipping-pattern";
+      process.env.IP_PANEL_SENDER = "+983000505";
+      const redis: any = await RedisClient;
+      redis.set.mockResolvedValue("OK");
+      (global.fetch as jest.Mock).mockResolvedValue(createResponse(200, { meta: { status: true } }));
+      const strapi: any = {
+        entityService: { findOne: jest.fn().mockResolvedValue({
+          id: 11, Status: "Shipment", ShippingBarcode: barcode,
+          user: { id: 6, phone: "09123456789" }, contract: { Amount: 2000 },
+        }) },
+      };
+      await expect(notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"))
+        .resolves.toMatchObject({ ok: true });
+      expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toMatchObject({
+        code: "shipping-pattern", params: { orderId: "11", status: "ارسال شده", trackingCode: expected },
+      });
+      expect(redis.set.mock.calls[0][0]).toContain("scheduled-2026-10-25T10:00:00.000Z");
+    },
+  );
+
+  it("leaves a scheduled notification retryable when the idempotency store is down", async () => {
+    process.env.SMS_ENABLED = "true";
+    const redis: any = await RedisClient;
+    redis.set.mockRejectedValue(new Error("redis unavailable"));
+    const strapi: any = {
+      entityService: { findOne: jest.fn().mockResolvedValue({
+        id: 11, Status: "Shipment", user: { id: 6, phone: "09123456789" },
+      }) },
+    };
+    await expect(notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"))
+      .rejects.toThrow("redis unavailable");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("retains the scheduled idempotency claim after an uncertain submission", async () => {
+    process.env.SMS_ENABLED = "true";
+    process.env.IP_PANEL_API_KEY = "secret-key";
+    process.env.IP_PANEL_PATTERN_SHIPPED = "shipping-pattern";
+    process.env.IP_PANEL_SENDER = "+983000505";
+    const redis: any = await RedisClient;
+    redis.set.mockResolvedValue("OK");
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("connection lost"));
+    const strapi: any = {
+      entityService: { findOne: jest.fn().mockResolvedValue({
+        id: 11, Status: "Shipment", user: { id: 6, phone: "09123456789" },
+      }) },
+    };
+    await expect(notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"))
+      .resolves.toMatchObject({ ok: false, reason: "request_failed" });
+    expect(redis.del).not.toHaveBeenCalled();
+  });
+
   it("persists a customer-visible notification outcome for operational follow-up", async () => {
     process.env.SMS_ENABLED = "false";
     const createOrderLog = jest.fn().mockResolvedValue({ id: 1 });
@@ -407,12 +555,7 @@ describe("sms service", () => {
     };
 
     await expect(
-      notifyOrderStatusSms(strapi, {
-        orderId: 11,
-        oldStatus: "Started",
-        newStatus: "Shipment",
-        trackingCode: "TRACK-11",
-      }),
+      notifyScheduledShippingSms(strapi, 11, "2026-10-25T10:00:00.000Z"),
     ).resolves.toMatchObject({
       ok: false,
       skipped: true,

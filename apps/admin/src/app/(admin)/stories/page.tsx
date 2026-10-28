@@ -18,13 +18,27 @@ function resolveMediaUrl(url?: string): string | undefined {
   return resolveAssetUrl(url) || url.trim().replace(/\s+/g, "");
 }
 
-function formatDate(iso?: string): string {
+function formatDate(iso?: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("fa-IR", {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
+}
+
+function storyMediaLabel(story: Story): string {
+  const types = new Set(story.Items.map((item) => item.MediaType));
+  if (types.size > 1) return "ترکیبی";
+  return types.has("video") ? "ویدیو" : "تصویر";
+}
+
+function storyCoverUrl(story: Story): string | undefined {
+  const firstItem = story.Items[0];
+  const firstImage = story.Items.find((item) => item.MediaType === "image" && item.Media?.url);
+  return resolveMediaUrl(
+    story.Thumbnail?.url ?? firstItem?.Thumbnail?.url ?? firstImage?.Media?.url ?? firstItem?.Media?.url,
+  );
 }
 
 export default function StoriesPage() {
@@ -147,7 +161,7 @@ export default function StoriesPage() {
           <>
           <div className="grid gap-3 md:hidden">
             {filtered.map((story) => {
-              const mediaUrl = resolveMediaUrl(story.Thumbnail?.url ?? story.Media?.url);
+              const mediaUrl = storyCoverUrl(story);
 
               return (
                 <article
@@ -165,7 +179,7 @@ export default function StoriesPage() {
                       />
                     ) : (
                       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100">
-                        {story.MediaType === "video" ? (
+                        {storyMediaLabel(story) === "ویدیو" ? (
                           <Video className="h-5 w-5 text-slate-400" />
                         ) : (
                           <Image className="h-5 w-5 text-slate-400" />
@@ -180,7 +194,7 @@ export default function StoriesPage() {
                             {story.Title}
                           </h2>
                           <p className="mt-1 text-xs text-slate-400">
-                            {story.MediaType === "video" ? "ویدیو" : "تصویر"} | ترتیب {story.SortOrder}
+                            {story.Items.length} آیتم · {storyMediaLabel(story)} · ترتیب {story.SortOrder}
                           </p>
                         </div>
 
@@ -256,15 +270,15 @@ export default function StoriesPage() {
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        {story.Thumbnail?.url || story.Media?.url ? (
+                        {storyCoverUrl(story) ? (
                           <img
-                            src={resolveMediaUrl(story.Thumbnail?.url ?? story.Media?.url)}
+                            src={storyCoverUrl(story)}
                             alt={story.Title}
                             className="h-10 w-10 rounded-lg object-cover"
                           />
                         ) : (
                           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100">
-                            {story.MediaType === "video" ? (
+                            {storyMediaLabel(story) === "ویدیو" ? (
                               <Video className="h-5 w-5 text-slate-400" />
                             ) : (
                               <Image className="h-5 w-5 text-slate-400" />
@@ -275,7 +289,7 @@ export default function StoriesPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-500">
-                      {story.MediaType === "video" ? "ویدیو" : "تصویر"}
+                      {story.Items.length} آیتم · {storyMediaLabel(story)}
                     </td>
                     <td className="px-4 py-3 text-center text-slate-500">{story.SortOrder}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDate(story.StartAt)}</td>

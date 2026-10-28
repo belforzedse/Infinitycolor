@@ -5,9 +5,20 @@ import { currentUserAtom } from "@/lib/atoms/auth";
 import { jotaiStore } from "@/lib/jotaiStore";
 
 jest.mock("@/lib/central-auth", () => ({
+  readAuthStateVersion: jest.fn(() => 0),
   centralAuth: {
     tokenManager: {
       getToken: jest.fn(),
+      getTokenOutcome: jest.fn(async (options: unknown) => {
+        const token = await (
+          jest.requireMock("@/lib/central-auth") as {
+            centralAuth: {
+              tokenManager: { getToken: (options: unknown) => Promise<string | null> };
+            };
+          }
+        ).centralAuth.tokenManager.getToken(options);
+        return token ? { state: "authenticated", token } : { state: "unauthenticated" };
+      }),
       expire: jest.fn(),
       clearForLogout: jest.fn(),
     },
@@ -44,7 +55,7 @@ describe("Authentication flows", () => {
       json: async () => ({}),
     });
 
-    await expect(apiClient.get("/protected")).rejects.toEqual({
+    await expect(apiClient.get("/protected")).rejects.toMatchObject({
       message: ERROR_MESSAGES.DEFAULT,
       status: HTTP_STATUS.UNAUTHORIZED,
       errors: undefined,
@@ -81,7 +92,7 @@ describe("Authentication flows", () => {
       json: async () => ({ error: { message: "Forbidden" } }),
     });
 
-    await expect(apiClient.get("/orders/123/payment-status")).rejects.toEqual({
+    await expect(apiClient.get("/orders/123/payment-status")).rejects.toMatchObject({
       message: "Forbidden",
       status: HTTP_STATUS.FORBIDDEN,
       errors: undefined,

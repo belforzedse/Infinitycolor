@@ -1,4 +1,5 @@
 "use client";
+import { checkoutFailureDiagnostics, type CheckoutOperation } from "@/lib/checkout-error-diagnostics";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
@@ -19,6 +20,8 @@ import { CheckoutProgress } from "../CheckoutProgress";
 import { orderIdAtom, orderNumberAtom, submitOrderStepAtom } from "@/atoms/Order";
 import { useAtom, useAtomValue } from "jotai";
 import * as Sentry from "@sentry/nextjs";
+import { routeExpectedDiagnostic, logDiagnostic } from "@/lib/diagnostic-log";
+import { checkoutDiagnosticDisposition } from "@/lib/expected-checkout-sentry";
 import { SubmitOrderStep } from "@/types/Order";
 import { currentBrowserFamily } from "@/lib/browser-family";
 import { useRouter } from "next/navigation";
@@ -31,11 +34,19 @@ import type {
   ResumableCheckout,
 } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
-import WalletService from "@/services/wallet";
+import WalletService, { type WalletHold } from "@/services/wallet";
+import { holdsAreReconciling } from "@/utils/walletHolds";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
-import { getAnalyticsCorrelationId, trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
+import {
+  checkoutFailureCategoryForCode,
+  getAnalyticsCorrelationId,
+  trackAnalyticsEvent,
+  trackCheckoutFailure,
+  trackFunnelStep,
+  type CheckoutFailureCategory,
+} from "@/lib/analytics";
 import { faNum, normalizeDigits } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { isExpectedCheckoutSentryCode } from "@/lib/expected-checkout-sentry";
@@ -360,6 +371,18 @@ function ShoppingCartBillForm({}: Props) {
     return () => window.removeEventListener("pageshow", onPageShow);
   }, []);
 
+  // The client-side result navigations (router.push) keep the guard set too, but
+  // with cacheComponents Next hides this page in <Activity> instead of unmounting
+  // it, and no pageshow fires on the way back. Activity runs layout-effect
+  // cleanups when it hides the page, so clear the guard there; a full-page
+  // navigation (gateway handoff) never runs it.
+  React.useLayoutEffect(() => {
+    return () => {
+      submitInProgressRef.current = false;
+      setIsSubmitting(false);
+    };
+  }, []);
+
   // Check authentication on mount - redirect to login if not authenticated.
   // Wait for global auth loading to finish so we don't redirect while user is still being fetched
   // (avoids loop when returning from auth with valid token).
@@ -449,6 +472,7 @@ function ShoppingCartBillForm({}: Props) {
   // Spendable now, and what another of this customer's checkouts is holding.
   const [walletAvailableIrr, setWalletAvailableIrr] = useState<number>(0);
   const [walletHeldIrr, setWalletHeldIrr] = useState<number>(0);
+  const [walletHolds, setWalletHolds] = useState<WalletHold[]>([]);
   const [paymentCapabilities, setPaymentCapabilities] = useState<PaymentCapabilities | null>(null);
   // All or nothing: ticking the wallet spends as much of this order as the
   // shopper has, so there is no amount to carry in state.
@@ -464,7 +488,8 @@ function ShoppingCartBillForm({}: Props) {
   // fallback to normal shipping is explained rather than silently applied.
   const [reserveWindowClosed, setReserveWindowClosed] = useState(false);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
-  const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice } = useCart();
+  const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice, isCartReady } =
+    useCart();
   const cartItemsRef = React.useRef(cartItems);
   cartItemsRef.current = cartItems;
   const totalItemsRef = React.useRef(totalItems);
@@ -609,6 +634,7 @@ function ShoppingCartBillForm({}: Props) {
           orderCount: d.orderCount,
           shippingMethodTitle: d.shippingMethodTitle ?? null,
           destination: formatReserveDestination(d.deliveryAddress),
+          recipientName: d.deliveryAddress?.FullName ?? null,
           rootOrderId: d.rootOrderId ?? null,
         });
         if (!sameGroup) setMergeChoice(null);
@@ -681,6 +707,9 @@ function ShoppingCartBillForm({}: Props) {
         lastDiscountPreviewKeyRef.current = null;
         return;
       }
+      // A restored code must be priced against the cart the shopper will pay for, not
+      // the pre-login one CartProvider is still merging (the backend answers empty_cart).
+      if (!isCartReady) return;
       if (lastDiscountPreviewKeyRef.current === discountPreviewKey && discountPreview) {
         return;
       }
@@ -718,7 +747,7 @@ function ShoppingCartBillForm({}: Props) {
       }
     };
     run();
-  }, [discountCode, discountPreview, discountPreviewKey, shippingId, shippingAddressContext]);
+  }, [discountCode, discountPreview, discountPreviewKey, isCartReady, shippingId, shippingAddressContext]);
 
   // Check SnappPay as soon as authenticated checkout data can load, then refresh
   // whenever an input to the *gateway leg* changes -- the cart, discount,
@@ -852,8 +881,11 @@ function ShoppingCartBillForm({}: Props) {
         // worth showing them, since the reusable part is already offered.
         setWalletHeldIrr(Math.max(0, heldIrr - reusableIrr));
         setWalletAvailableIrr(Math.max(0, availableIrr + reusableIrr));
+        setWalletHolds(Array.isArray(res.data.holds) ? res.data.holds : []);
+        return holdsAreReconciling(res.data.holds);
       }
     } catch {}
+    return false;
   }, [canLoadProtectedCheckoutData]);
 
   // Load wallet balance on mount
@@ -861,9 +893,19 @@ function ShoppingCartBillForm({}: Props) {
     if (!canLoadProtectedCheckoutData) {
       setWalletAvailableIrr(0);
       setWalletHeldIrr(0);
+      setWalletHolds([]);
       return;
     }
-    void refreshWalletBalance();
+    // Reading the balance also nudges the backend to re-check the provider for
+    // any hold this customer has, so a shopper who returns to the cart shortly
+    // after abandoning a payment usually watches the credit come back without
+    // touching anything. Two short re-reads cover that window.
+    void (async () => {
+      const stillReconciling = await refreshWalletBalance();
+      if (!stillReconciling) return;
+      setTimeout(() => void refreshWalletBalance(), 3_000);
+      setTimeout(() => void refreshWalletBalance(), 8_000);
+    })();
   }, [canLoadProtectedCheckoutData, refreshWalletBalance]);
 
   // Validate cart has items and total price on mount
@@ -902,17 +944,36 @@ function ShoppingCartBillForm({}: Props) {
     }
   };
 
-  const trackCheckoutError = (errorCode?: string) => {
-    // Analytics stays dimensionless per the storefront telemetry contract, so the
-    // code goes to Sentry instead — without it every failed checkout looks alike
-    // and the generic Persian banner cannot be traced back to a cause.
-    trackAnalyticsEvent({
-      category: "checkout",
-      action: "error",
-    });
-    if (isExpectedCheckoutSentryCode(errorCode)) {
+  const checkoutOperationRef = React.useRef<CheckoutOperation>("stock_check");
+  const trackCheckoutError = (
+    errorCode?: string,
+    category?: CheckoutFailureCategory,
+    response?: { details?: { reason?: string }; telemetryOwner?: string },
+    cause?: unknown,
+  ) => {
+    const diagnostics = checkoutFailureDiagnostics(cause, checkoutOperationRef.current);
+    // Umami gets a stable, low-cardinality category; the raw code goes to Sentry
+    // so the generic Persian banner can still be traced back to a cause.
+    trackCheckoutFailure(category ?? checkoutFailureCategoryForCode(errorCode), gateway);
+    // Codeless failures are client-side validation the shopper can fix; they
+    // are analytics only, never Sentry noise.
+    if (!errorCode) return;
+    const attributes = {
+      area: "checkout",
+      stage: "storefront",
+      gateway: gateway || "none",
+      ...diagnostics.attributes,
+      reasonCode: diagnostics.attributes.reasonCode ?? errorCode,
+    };
+    const disposition = checkoutDiagnosticDisposition(errorCode, response);
+    if (disposition === "log") {
+      logDiagnostic("checkout.failure", attributes);
       return;
     }
+    if (disposition === "expected" && routeExpectedDiagnostic("checkout.failure", attributes))
+      return;
+    // Preserve already-filtered historical business states while Logs rollout is pending.
+    if (isExpectedCheckoutSentryCode(errorCode)) return;
     try {
       Sentry.captureMessage(`checkout.error:${errorCode || "UNSPECIFIED"}`, {
         // Unmapped backend copy is still worth a breadcrumb, but it is not an
@@ -926,7 +987,11 @@ function ShoppingCartBillForm({}: Props) {
           browser: currentBrowserFamily(),
           gateway: gateway || "none",
         },
-        extra: { hasDiscountCode: Boolean(discountCode) },
+        extra: {
+          hasDiscountCode: Boolean(discountCode),
+          ...diagnostics.attributes,
+          ...(cause === undefined ? {} : { cause: diagnostics.cause }),
+        },
       });
     } catch {
       // Reporting must never block the shopper's retry.
@@ -1081,7 +1146,10 @@ function ShoppingCartBillForm({}: Props) {
   );
 
   const reconcileCheckoutStock = React.useCallback(async () => {
-    if (!canLoadProtectedCheckoutData) return;
+    // check-stock deletes and rewrites cart lines. Right after login CartProvider is
+    // still merging the guest cart; running this alongside it evaluated (and raced) the
+    // pre-merge cart. `isCartReady` also turns true when that init fails or times out.
+    if (!canLoadProtectedCheckoutData || !isCartReady) return;
     if (stockReconcileInFlightRef.current) return;
     stockReconcileInFlightRef.current = true;
     try {
@@ -1117,7 +1185,7 @@ function ShoppingCartBillForm({}: Props) {
     } finally {
       stockReconcileInFlightRef.current = false;
     }
-  }, [applyCheckoutStockCorrection, canLoadProtectedCheckoutData]);
+  }, [applyCheckoutStockCorrection, canLoadProtectedCheckoutData, isCartReady]);
 
   // Drop lines held by an earlier unpaid reservation as soon as checkout loads,
   // and again when bfcache restores the page after a gateway back-nav.
@@ -1175,22 +1243,26 @@ function ShoppingCartBillForm({}: Props) {
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
     if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !continuationCandidate) {
+      trackCheckoutError(undefined, "validation");
       failPayment("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
       return;
     }
 
     if (!continuationCandidate && !isMergeMode) {
       if (!selectedAddressId && !inlineAddressFieldsFilled) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
         return;
       }
       if (!data.shippingMethod) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً روش ارسال را انتخاب کنید");
         return;
       }
     }
 
     if (!continuationCandidate && (!data.phoneNumber || data.phoneNumber.trim() === "")) {
+      trackCheckoutError(undefined, "validation");
       failPayment("لطفاً شماره تماس خود را وارد کنید");
       return;
     }
@@ -1202,21 +1274,25 @@ function ShoppingCartBillForm({}: Props) {
       ? ""
       : normalizeDigits(data.phoneNumber || "").replace(/\D/g, "");
     if (!continuationCandidate && cleanPhone.length < 10) {
+      trackCheckoutError(undefined, "validation");
       failPayment("شماره تماس وارد شده معتبر نیست");
       return;
     }
 
     if (!continuationCandidate && !isMergeMode && !selectedAddressId) {
       if (!watchProvince || !watchCity) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً استان و شهر را انتخاب کنید");
         return;
       }
       const postal = normalizeDigits(watchPostalCode || "").replace(/\D/g, "");
       if (postal.length !== 10) {
+        trackCheckoutError(undefined, "validation");
         failPayment("کد پستی باید ۱۰ رقم باشد");
         return;
       }
       if (!watchFullAddress || watchFullAddress.trim().length < 5) {
+        trackCheckoutError(undefined, "validation");
         failPayment("لطفاً آدرس دقیق را وارد کنید");
         return;
       }
@@ -1225,6 +1301,7 @@ function ShoppingCartBillForm({}: Props) {
     // Validate total price is positive unless we are continuing a held unpaid order
     // whose mutable cart was emptied by the reservation-unaware stock check.
     if (totalPrice <= 0 && !continuationCandidate) {
+      trackCheckoutError(undefined, "validation");
       failPayment("مبلغ سفارش باید بیشتر از صفر باشد");
       return;
     }
@@ -1240,11 +1317,13 @@ function ShoppingCartBillForm({}: Props) {
       !walletContribution.coversTotal &&
       (selectableGateways.length === 0 || !selectableGateways.includes(gateway))
     ) {
+      trackCheckoutError(undefined, "gateway_unavailable");
       failPayment("درگاه پرداخت انتخاب شده در دسترس نیست");
       return;
     }
 
     if (!data.acceptTerms) {
+      trackCheckoutError(undefined, "validation");
       failPayment(TERMS_ACCEPTANCE_ERROR);
       return;
     }
@@ -1260,6 +1339,7 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
+    let paymentNavigationStarted = false;
     try {
       submitInProgressRef.current = true;
       setIsSubmitting(true);
@@ -1267,16 +1347,24 @@ function ShoppingCartBillForm({}: Props) {
         category: "checkout",
         action: "place_order_attempt",
         valueToman: totalToman,
-        properties: { gateway: resumeGateway, quantity: totalItems },
+        properties: {
+          // Credit covering the whole total settles from the wallet (see
+          // `submittedGateway` below), whatever bank happens to be selected.
+          gateway:
+            !continuationCandidate && walletContribution.coversTotal ? "wallet" : resumeGateway,
+          quantity: totalItems,
+        },
       });
 
       // Always re-checked: the shopper's previous attempt may itself be what
       // corrected the cart, and nothing is allowed to pay past this guard.
+      checkoutOperationRef.current = "stock_check";
       const stockValid = await CartService.checkCartStock(
         continuationCandidate ? resumeIdentity?.attemptId : undefined,
       );
 
       if (stockValid.errorCode === "RESERVATION_LOOKUP_FAILED") {
+        trackCheckoutError("RESERVATION_LOOKUP_FAILED");
         failPayment(checkoutErrorPresentation("RESERVATION_LOOKUP_FAILED")!.displayError);
         return;
       }
@@ -1286,9 +1374,11 @@ function ShoppingCartBillForm({}: Props) {
         if (isDeadCheckoutHold(stockValid.reservationOutcome)) {
           abandonDeadCheckoutHold(resumeIdentity?.attemptId);
           setLiveCheckoutHold(false);
+          trackCheckoutError(undefined, "reservation_expired");
           failPayment(RESERVATION_EXPIRED_COPY);
           return;
         }
+        trackCheckoutError(undefined, "empty_cart");
         failPayment(EMPTY_CART_ERROR);
         return;
       }
@@ -1300,6 +1390,7 @@ function ShoppingCartBillForm({}: Props) {
 
       if (!stockValid.valid && !canContinuePendingCheckout) {
         const applied = await applyCheckoutStockCorrection(stockValid, { announce: true });
+        trackCheckoutError(undefined, "stock_changed");
         if (applied) return;
         failPayment("موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.");
         return;
@@ -1313,6 +1404,7 @@ function ShoppingCartBillForm({}: Props) {
           writeCheckoutIdentity(resumeIdentity);
         }
         checkoutAttemptId = resumeIdentity.attemptId;
+        checkoutOperationRef.current = "finalize";
         cartResponse = await CartService.finalizeCart({
           gateway: resumeGateway,
           attemptId: resumeIdentity.attemptId,
@@ -1373,6 +1465,13 @@ function ShoppingCartBillForm({}: Props) {
             callbackURL: "/orders/payment-callback",
             addressId: selectedAddressId,
             addressPayload,
+            // Sent with a saved address too: the server gives the order its own
+            // copy when the recipient differs, instead of showing whoever the
+            // saved address was first used for.
+            recipient: {
+              FullName: (data.fullName || "").trim() || undefined,
+              Phone: cleanPhone || undefined,
+            },
             gateway: submittedGateway,
             walletAmountToman: walletContribution.walletToman || undefined,
             supersedeAttemptId: supersedeCandidateId,
@@ -1381,6 +1480,7 @@ function ShoppingCartBillForm({}: Props) {
             reserveShipping: reserveShipping || undefined,
           };
 
+      checkoutOperationRef.current = "quote";
       const quote = await CartService.getCheckoutQuote(finalizeData as never);
 
       // The quote now succeeds even when SnappPay's eligibility check fails, so
@@ -1407,6 +1507,7 @@ function ShoppingCartBillForm({}: Props) {
 
       if (quoteTotal !== shopperVisibleTotal && !quoteWasReviewed) {
         setReviewedServerQuote({ quoteHash: quote.quoteHash, total: quoteTotal });
+        trackCheckoutError(undefined, "quote_changed");
         failPayment(
           `مبلغ نهایی توسط فروشگاه به ${quoteTotal.toLocaleString("fa-IR")} تومان به‌روزرسانی شد. لطفاً مبلغ را بررسی و دوباره ثبت سفارش را انتخاب کنید.`,
         );
@@ -1420,6 +1521,7 @@ function ShoppingCartBillForm({}: Props) {
         gateway: submittedGateway,
       });
       checkoutAttemptId = resolvedAttempt.attemptId;
+      checkoutOperationRef.current = "finalize";
       cartResponse = await CartService.finalizeCart({
         ...finalizeData,
         gateway: resolvedAttempt.gateway || submittedGateway,
@@ -1458,19 +1560,22 @@ function ShoppingCartBillForm({}: Props) {
         const lateAdjusted = lateStock.itemsAdjusted ?? [];
         const lateRemoved = lateStock.itemsRemoved ?? [];
         if (lateAdjusted.length || lateRemoved.length || lateStock.cartIsEmpty) {
-          trackCheckoutError("STOCK_CHANGED");
           const applied = await applyCheckoutStockCorrection(lateStock, { announce: true });
-          if (applied) return;
+          if (applied) {
+            trackCheckoutError("STOCK_CHANGED");
+            return;
+          }
         }
 
         // Map error codes to user-friendly messages
         let displayError = "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.";
 
         if (errorCode) {
-          trackCheckoutError(String(errorCode));
           if (recoverInFlightPayment(String(errorCode), cartResponse, checkoutAttemptId)) {
+            paymentNavigationStarted = true;
             return;
           }
+          trackCheckoutError(String(errorCode), undefined, { details: errorDetails, telemetryOwner: (cartResponse as any).telemetryOwner });
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
@@ -1542,8 +1647,9 @@ function ShoppingCartBillForm({}: Props) {
             // rendered as the generic banner and told the shopper nothing they
             // could act on.
             case "STOCK_RESERVATION_FAILED":
-              displayError =
-                "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید.";
+              displayError = errorDetails?.reason === "insufficient_stock"
+                ? "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید."
+                : "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید.";
               break;
             case "DISCOUNT_USAGE_EXHAUSTED":
               displayError =
@@ -1610,12 +1716,13 @@ function ShoppingCartBillForm({}: Props) {
       setOrderNumber(cartResponse.orderId.toString());
       persistCheckoutOrder(cartResponse.orderId);
 
+      checkoutOperationRef.current = "handoff";
       if (cartResponse.redirectUrl && cartResponse.redirectUrl.trim() !== "") {
         trackAnalyticsEvent({
           category: "checkout",
           action: "payment_redirect",
           valueToman: totalToman,
-          properties: { gateway },
+          properties: { gateway: resumeGateway },
         });
         toast.success("در حال انتقال به درگاه پرداخت...");
         localStorage.setItem("pendingOrderId", cartResponse.orderId.toString());
@@ -1628,18 +1735,13 @@ function ShoppingCartBillForm({}: Props) {
         }
 
         if (gateway === "wallet") {
-          trackAnalyticsEvent({
-            category: "checkout",
-            action: "payment_completed",
-            valueToman: totalToman,
-            properties: { gateway: "wallet" },
-          });
           // Wallet settles immediately; show the same authoritative result surface
           // used by provider callbacks so fulfillment details stay consistent.
           await clearCartSafely();
           clearCheckoutIdentity();
           setSubmitOrderStep(SubmitOrderStep.Success);
           router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
+          paymentNavigationStarted = true;
         } else {
           const redirectMethod =
             cartResponse.redirectMethod ||
@@ -1656,22 +1758,22 @@ function ShoppingCartBillForm({}: Props) {
             formFields: cartResponse.formFields || fallbackFields,
             refId: cartResponse.refId,
           })) {
+            trackCheckoutError("HANDOFF_FAILED", "handoff_failed");
             failPayment("اطلاعات انتقال به درگاه کامل نیست. لطفاً دوباره تلاش کنید.");
+          } else {
+            paymentNavigationStarted = true;
           }
         }
       } else {
-        trackAnalyticsEvent({
-          category: "checkout",
-          action: "payment_completed",
-          valueToman: totalToman,
-          properties: { gateway: "direct" },
-        });
+        // Settled without a gateway (wallet credit). `purchase` is emitted by the
+        // result page once the backend reports the order paid.
         await clearCartSafely();
         if (gateway !== "snappay") {
           clearCheckoutIdentity();
         }
         setSubmitOrderStep(SubmitOrderStep.Success);
         router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
+        paymentNavigationStarted = true;
       }
     } catch (err: any) {
       const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);
@@ -1688,10 +1790,11 @@ function ShoppingCartBillForm({}: Props) {
         const errorMessage = responseData.message || err?.message;
 
         if (errorCode) {
-          trackCheckoutError(String(errorCode));
           if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId())) {
+            paymentNavigationStarted = true;
             return;
           }
+          trackCheckoutError(String(errorCode), undefined, { details: responseData.details, telemetryOwner: responseData.telemetryOwner });
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
@@ -1765,8 +1868,9 @@ function ShoppingCartBillForm({}: Props) {
                 "محاسبه مبلغ نهایی سفارش ممکن نشد. لطفاً روش ارسال و آدرس را بررسی کرده و دوباره تلاش کنید.";
               break;
             case "STOCK_RESERVATION_FAILED":
-              displayError =
-                "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید.";
+              displayError = responseData.details?.reason === "insufficient_stock"
+                ? "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید."
+                : "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید.";
               break;
             case "DISCOUNT_USAGE_EXHAUSTED":
               displayError =
@@ -1797,15 +1901,18 @@ function ShoppingCartBillForm({}: Props) {
           );
         }
       } else {
-        const normalizedError = err?.message ? String(err.message).toLowerCase() : "";
-        trackCheckoutError(normalizedError.includes("network") ? "NETWORK_ERROR" : "UNKNOWN_ERROR");
+        const diagnostics = checkoutFailureDiagnostics(err, checkoutOperationRef.current);
+        trackCheckoutError(diagnostics.errorCode, undefined, undefined, err);
         displayError = getUserFacingErrorMessage(err, "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.");
       }
 
       failPayment(displayError);
     } finally {
-      submitInProgressRef.current = false;
-      setIsSubmitting(false);
+      // Keep the guard until navigation leaves; persisted pageshow already resets it.
+      if (!paymentNavigationStarted) {
+        submitInProgressRef.current = false;
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -1813,34 +1920,47 @@ function ShoppingCartBillForm({}: Props) {
 
   const submitOrderStep = useAtomValue(submitOrderStepAtom);
 
+  // One begin_checkout per checkout page visit, once the signed-in shopper's
+  // cart is known; later cart corrections on this page are not a new checkout.
+  const beginCheckoutTrackedRef = React.useRef(false);
   useEffect(() => {
+    if (beginCheckoutTrackedRef.current) return;
     if (!currentUser || totalItems <= 0 || totalPrice <= 0) return;
+    beginCheckoutTrackedRef.current = true;
     trackFunnelStep("begin_checkout", {
       valueToman: totalToman,
       properties: { quantity: totalItems },
-      onceKey: `begin-checkout:${Math.round(totalPrice)}:${totalItems}`,
     });
   }, [currentUser, totalItems, totalPrice, totalToman]);
 
+  // Shipping info counts once per shipping + address combination per visit.
+  const shippingInfoTrackedRef = React.useRef(new Set<string>());
   useEffect(() => {
     if (!shippingId) return;
+    const key = `${shippingId}:${addressId || "new"}`;
+    if (shippingInfoTrackedRef.current.has(key)) return;
+    shippingInfoTrackedRef.current.add(key);
     trackAnalyticsEvent({
       category: "checkout",
       action: "add_shipping_info",
-      valueToman: shippingCost || 0,
-      onceKey: `shipping-info:${shippingId}:${addressId || "new"}`,
+      valueToman: totalToman,
+      properties: { shipping_method: String(shippingId) },
     });
-  }, [shippingId, shippingCost, addressId]);
+  }, [shippingId, addressId, totalToman]);
 
-  useEffect(() => {
-    if (!gateway) return;
+  // Payment info is the shopper's own gateway choice: the default selection and
+  // availability-driven auto-switches are not an action.
+  const paymentInfoTrackedRef = React.useRef(new Set<string>());
+  const handleGatewayChange = (next: CheckoutGatewayCode) => {
+    setGateway(next);
+    if (!next || paymentInfoTrackedRef.current.has(next)) return;
+    paymentInfoTrackedRef.current.add(next);
     trackAnalyticsEvent({
       category: "checkout",
       action: "add_payment_info",
-      properties: { gateway },
-      onceKey: `payment-info:${gateway}:${shippingId || "none"}`,
+      properties: { gateway: next },
     });
-  }, [gateway, shippingId]);
+  };
 
   const isMergeMode = mergeChoice === "merge";
 
@@ -1912,6 +2032,7 @@ function ShoppingCartBillForm({}: Props) {
           control={control}
           setValue={setValue}
           hideAddressFields={isMergeMode}
+          reserveRecipientName={activeReserve?.recipientName}
         />
 
         <div className="mb-20 flex flex-col gap-6">
@@ -1961,6 +2082,7 @@ function ShoppingCartBillForm({}: Props) {
                     totalToman={totalToman}
                     availableIrr={walletAvailableIrr}
                     heldIrr={walletHeldIrr}
+                    holds={walletHolds}
                     capabilities={paymentCapabilities}
                     enabled={useWalletCredit}
                     onEnabledChange={setUseWalletCredit}
@@ -2015,7 +2137,7 @@ function ShoppingCartBillForm({}: Props) {
           />
           <ShoppingCartBillPaymentGateway
             selected={gateway}
-            onChange={setGateway}
+            onChange={handleGatewayChange}
             availableGateways={availableGateways}
             snappEligible={snappEligible}
             snappTitle={snappTitle}

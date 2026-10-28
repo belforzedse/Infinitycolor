@@ -481,4 +481,47 @@ describe("checkCartStockOp", () => {
     });
     expect(result.cart).toEqual(cart);
   });
+
+  // Every other cart read hides these lines, so the stock check is the only
+  // place a shopper can be told a product left the store while in their cart.
+  it("reads the cart unfiltered, then removes and names lines that left the store", async () => {
+    const line = (id: number, title: string, product: object, variation: object = {}) => ({
+      id,
+      Count: 1,
+      product_variation: {
+        id: id * 10,
+        IsPublished: true,
+        product: { id, Title: title, ...product },
+        product_stock: { Count: 5, reservedCount: 0 },
+        ...variation,
+      },
+    });
+    const cart = {
+      cart_items: [
+        line(1, "پیراهن پیش‌نویس", { Status: "InActive", removedAt: null }),
+        line(2, "شال سطل زباله", { Status: "InActive", removedAt: "2026-09-27T08:00:00.000Z" }),
+        line(3, "ست بی‌مدل", { Status: "Active", removedAt: null }, { IsPublished: false }),
+        line(4, "شلوار موجود", { Status: "Active", removedAt: null }),
+      ],
+    };
+    const { strapi, removeCartItem, getUserCart } = createStrapi(cart, {
+      cart_items: [cart.cart_items[3]],
+    });
+
+    const result = await checkCartStockOp(strapi, 1);
+
+    expect(getUserCart).toHaveBeenNthCalledWith(1, 1, { includeUnavailable: true });
+    expect(removeCartItem.mock.calls).toEqual([
+      [1, 1],
+      [2, 1],
+      [3, 1],
+    ]);
+    expect(result.valid).toBe(false);
+    expect(result.cartIsEmpty).toBe(false);
+    expect(result.itemsRemoved).toEqual([
+      expect.objectContaining({ cartItemId: 1, productTitle: "پیراهن پیش‌نویس", reason: "inactive" }),
+      expect.objectContaining({ cartItemId: 2, productTitle: "شال سطل زباله", reason: "soft_deleted" }),
+      expect.objectContaining({ cartItemId: 3, productTitle: "ست بی‌مدل", reason: "unpublished_variation" }),
+    ]);
+  });
 });

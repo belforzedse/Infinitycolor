@@ -5,6 +5,7 @@ import WalletIcon from "@/components/PLP/Icons/WalletIcon";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import WalletService from "@/services/wallet";
 import { priceFormatter } from "@/utils/price";
+import { heldBalanceTooltip } from "@/utils/walletHolds";
 
 type WalletHeaderBalanceProps = {
   className: string;
@@ -13,10 +14,12 @@ type WalletHeaderBalanceProps = {
 export default function WalletHeaderBalance({ className }: WalletHeaderBalanceProps) {
   const { isAuthenticated, isLoading } = useCurrentUser();
   const [balanceIrr, setBalanceIrr] = useState<number | null>(null);
+  const [heldIrr, setHeldIrr] = useState<number>(0);
 
   useEffect(() => {
     if (isLoading || !isAuthenticated) {
       setBalanceIrr(null);
+      setHeldIrr(0);
       return undefined;
     }
 
@@ -24,8 +27,21 @@ export default function WalletHeaderBalance({ className }: WalletHeaderBalancePr
     WalletService.getMyWallet()
       .then((res) => {
         if (cancelled) return;
-        if (res?.success && res.data) setBalanceIrr(Number(res.data.balance || 0));
-        else setBalanceIrr(0);
+        if (res?.success && res.data) {
+          const balance = Number(res.data.balance || 0);
+          const held = Number(res.data.heldBalance || 0);
+          setHeldIrr(held);
+          // The chip shows spendable credit, so it never offers money the
+          // checkout is going to refuse.
+          setBalanceIrr(
+            res.data.availableBalance != null
+              ? Number(res.data.availableBalance)
+              : Math.max(0, balance - held),
+          );
+        } else {
+          setBalanceIrr(0);
+          setHeldIrr(0);
+        }
       })
       .catch(() => {
         if (!cancelled) setBalanceIrr(null);
@@ -39,6 +55,7 @@ export default function WalletHeaderBalance({ className }: WalletHeaderBalancePr
   const balanceToman = balanceIrr === null ? null : Math.round(balanceIrr / 10);
   const balanceLabel =
     balanceToman === null ? "کیف پول" : `${priceFormatter(balanceToman)} تومان`;
+  const heldTooltip = heldBalanceTooltip(heldIrr);
 
   return (
     <div className="group/wallet relative">
@@ -53,6 +70,9 @@ export default function WalletHeaderBalance({ className }: WalletHeaderBalancePr
           dir="rtl"
         >
           {balanceToman === null ? "در حال دریافت موجودی…" : `${priceFormatter(balanceToman)} تومان`}
+          {heldTooltip ? (
+            <span className="mt-1 block text-[11px] text-white/80">{heldTooltip}</span>
+          ) : null}
         </div>
       ) : null}
     </div>

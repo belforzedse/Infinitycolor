@@ -150,6 +150,9 @@ function rawRouter(sql: string) {
           total_orders_count: "5",
           settled_irr: "8000000",
           paid_orders_count: "4",
+          single_orders_count: "4",
+          mixed_orders_count: "0",
+          mixed_irr: "0",
         },
         {
           gateway: "Mellat",
@@ -157,6 +160,9 @@ function rawRouter(sql: string) {
           total_orders_count: "12",
           settled_irr: "0",
           paid_orders_count: "4",
+          single_orders_count: "4",
+          mixed_orders_count: "0",
+          mixed_irr: "0",
         },
       ],
     };
@@ -641,6 +647,12 @@ describe("product reporting endpoints", () => {
       // 4 distinct paid orders, not the 4 + 0 per-gateway sum (a split payment
       // would sit under two rows).
       expect(ctx.body.data.totals.ordersCount).toBe(4);
+      expect(ctx.body.data.paymentMix).toEqual({
+        singleOrdersCount: 4,
+        singleTotal: 800_000,
+        mixedOrdersCount: 0,
+        mixedTotal: 0,
+      });
       const gatewayCall = (global as any).strapi.db.connection.raw.mock.calls.find(
         ([sql]: [string]) => sql.includes("total_orders_count"),
       );

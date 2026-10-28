@@ -4,6 +4,7 @@ import {
   MAINTENANCE_SCHEDULERS,
   SNAPPAY_PAYMENT_JOBS,
   WALLET_TOPUP_PAYMENT_JOBS,
+  MELLAT_PAYMENT_JOBS,
 } from "./contracts";
 import { defaultMaintenanceJobOptions, type MaintenanceQueues } from "./queues";
 import type { QueueSettings } from "./env";
@@ -12,6 +13,21 @@ export async function registerMaintenanceSchedulers(
   queues: MaintenanceQueues,
   settings: QueueSettings,
 ): Promise<void> {
+  await queues.payments.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.mellatSweep,
+    { every: 60_000 },
+    { name: MELLAT_PAYMENT_JOBS.sweep, data: {}, opts: { ...defaultMaintenanceJobOptions, attempts: 1 } },
+  );
+  await queues.commerce.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.shippingSmsDispatch,
+    { every: 60_000 },
+    {
+      name: COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    },
+  );
+
   await queues.commerce.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.stockReservationExpiry,
     {
@@ -72,6 +88,19 @@ export async function registerMaintenanceSchedulers(
     },
     {
       name: COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    },
+  );
+
+  await queues.commerce.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.productTrashRetention,
+    {
+      pattern: settings.crons.productTrashRetention,
+      tz: settings.timezone,
+    },
+    {
+      name: COMMERCE_MAINTENANCE_JOBS.productTrashRetention,
       data: {},
       opts: defaultMaintenanceJobOptions,
     },

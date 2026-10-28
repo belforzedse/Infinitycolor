@@ -73,10 +73,12 @@ function mockStrapi(rawImpl: (sql: string, bindings: any[]) => Promise<any>) {
   };
 }
 
+// 4 paid orders, 5 row appearances: one wallet + SnappPay split sits under both.
+const MIX = { single_orders_count: "3", mixed_orders_count: "1", mixed_irr: "8000000" };
 const GATEWAY_ROWS = [
-  { gateway: "SnappPay", orders_count: "3", total_orders_count: "4", settled_irr: "30000000", paid_orders_count: "4" },
-  { gateway: "Wallet", orders_count: "2", total_orders_count: "1", settled_irr: "5000000", paid_orders_count: "4" },
-  { gateway: "Mellat", orders_count: "0", total_orders_count: "2", settled_irr: "0", paid_orders_count: "4" },
+  { gateway: "SnappPay", orders_count: "3", total_orders_count: "4", settled_irr: "30000000", paid_orders_count: "4", ...MIX },
+  { gateway: "Wallet", orders_count: "2", total_orders_count: "1", settled_irr: "5000000", paid_orders_count: "4", ...MIX },
+  { gateway: "Mellat", orders_count: "0", total_orders_count: "2", settled_irr: "0", paid_orders_count: "4", ...MIX },
 ];
 
 function router(sql: string) {
@@ -169,6 +171,13 @@ describe("liquidity / gateway-liquidity", () => {
 
     expect(ctx.body.data.currency).toBe("Toman");
     expect(ctx.body.data.paidOrdersCount).toBe(4);
+    // Single + mixed partition both the paid orders and the rows' total.
+    expect(ctx.body.data.paymentMix).toEqual({
+      singleOrdersCount: 3,
+      singleTotal: 2_700_000,
+      mixedOrdersCount: 1,
+      mixedTotal: 800_000,
+    });
     expect(ctx.body.data.rows).toEqual([
       expect.objectContaining({ gatewayId: null, gatewayTitle: "اسنپ‌پی", gateway: "SnappPay", total: 3_000_000, ordersCount: 3, sharePct: 85.71 }),
       expect.objectContaining({ gatewayTitle: "کیف پول", gateway: "Wallet", total: 500_000, ordersCount: 2 }),

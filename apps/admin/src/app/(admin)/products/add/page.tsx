@@ -8,6 +8,7 @@ import toast from "react-hot-toast";
 import { useProductCategory } from "@/hooks/product/useCategory";
 import { productDataAtom, resetProductDataAtom } from "@/atoms/super-admin/products";
 import { useAtomValue, useSetAtom } from "jotai";
+import { ProductEditorSession } from "@/services/super-admin/product/editor-session";
 import { createProduct } from "@/services/super-admin/product/create";
 import { useRouter } from "next/navigation";
 import logger from "@/utils/logger";
@@ -33,6 +34,7 @@ interface ProductApiResponse {
     [key: string]: any;
   };
   error?: any;
+  followupFailed?: boolean;
 }
 
 export default function AddProductsPage() {
@@ -50,6 +52,7 @@ export default function AddProductsPage() {
     minute: defaultScheduleParts.minute,
   });
   const [saving, setSaving] = useState(false);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
 
   // Redirect editors away from product pages
   useEditorRedirect();
@@ -65,8 +68,19 @@ export default function AddProductsPage() {
     fetchAllCategories();
   }, [fetchAllCategories]);
 
+  useEffect(() => {
+    if (productData.product_main_category) {
+      setCategoryError(null);
+    }
+  }, [productData.product_main_category]);
+
   const handleCreateProduct = async (publicationAction?: ProductPublicationAction) => {
     if (saving) return;
+    if (!productData.product_main_category) {
+      setCategoryError("انتخاب دسته‌بندی اصلی الزامی است");
+      toast.error("لطفاً دسته‌بندی اصلی محصول را انتخاب کنید");
+      return;
+    }
     setSaving(true);
     let createdProductId: number | null = null;
     try {
@@ -80,6 +94,11 @@ export default function AddProductsPage() {
         const productId = result.data?.id;
         if (productId) {
           createdProductId = productId;
+          if (result.followupFailed) {
+            toast.error("محصول ساخته شد؛ تکمیل قیمت و موجودی انجام نشد");
+            router.push(`/products/${productId}`);
+            return;
+          }
           if (publicationAction) {
             const publishAt =
               publicationAction === "schedule"
@@ -90,11 +109,16 @@ export default function AddProductsPage() {
               router.push(`/products/${productId}`);
               return;
             }
-            await changeProductPublication(productId, {
-              action: publicationAction,
-              publishAt,
-              timezone: publicationAction === "schedule" ? PRODUCT_PUBLICATION_TIMEZONE : undefined,
-            });
+            const session = new ProductEditorSession(productId, () => undefined);
+            try {
+              await session.open(true);
+              if (session.state.phase !== "editing") throw new Error("Could not start product editing");
+              await changeProductPublication(productId, {
+                action: publicationAction,
+                publishAt,
+                timezone: publicationAction === "schedule" ? PRODUCT_PUBLICATION_TIMEZONE : undefined,
+              }, session.client);
+            } finally { await session.release(); session.dispose(); }
           }
           // Trigger table refresh before redirecting
           setRefresh(true);
@@ -108,14 +132,7 @@ export default function AddProductsPage() {
           router.refresh();
         }
       } else {
-        // Fallback to products list if no data is available
-        // Clear product-related cache entries
-        apiCache.clearByPattern(/\/api\/products/i);
-        // Trigger table refresh before redirecting
-        setRefresh(true);
-        router.push("/products");
-        // Force Next.js to refresh the page data
-        router.refresh();
+        toast.error("محصول ساخته نشد؛ اطلاعات واردشده در این صفحه محفوظ است");
       }
     } catch (error) {
       console.error("Error creating product:", error);
@@ -133,7 +150,7 @@ export default function AddProductsPage() {
     <div className="flex w-full grid-cols-3 flex-col gap-4 pb-28 lg:grid">
       <div className="order-2 flex flex-col gap-4 lg:order-1">
         <IndexPhotoUploader />
-        <SetDetails />
+        <SetDetails categoryError={categoryError} />
         {scheduleOpen ? (
           <section dir="rtl" className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
             <h3 className="text-sm font-semibold text-slate-900">زمان‌بندی انتشار</h3>

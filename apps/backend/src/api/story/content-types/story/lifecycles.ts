@@ -1,126 +1,36 @@
-type StoryMediaType = "image" | "video";
+import { extractRelationId } from "../../lib/story-items";
 
-type UploadFile = {
-  id: number;
-  mime?: string | null;
-  name?: string | null;
-  url?: string | null;
-};
+// No before* hooks: Items normalization belongs to the controller (prepareStoryMutation).
+// entityService materializes component rows before db-layer lifecycles fire, so by then
+// `data.Items` is only `{ id, __pivot }` references — re-validating them rejected every
+// create, and rewriting them would drop the component join rows.
 
-class StoryMediaValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "StoryMediaValidationError";
-  }
-}
-
-function extractRelationId(value: unknown): number | null | undefined {
-  if (value === null) return null;
-  if (value === undefined) return undefined;
-  if (typeof value === "number") return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  }
-  if (Array.isArray(value)) {
-    if (value.length === 0) return null;
-    return extractRelationId(value[0]);
-  }
-  if (typeof value !== "object") return undefined;
-
-  const relation = value as {
-    id?: number | string;
-    connect?: unknown[];
-    set?: unknown[];
-    disconnect?: unknown[];
-  };
-
-  if (relation.id !== undefined) return extractRelationId(relation.id);
-  if (Array.isArray(relation.connect) && relation.connect.length > 0) {
-    return extractRelationId(relation.connect[0]);
-  }
-  if (Array.isArray(relation.set)) {
-    if (relation.set.length === 0) return null;
-    return extractRelationId(relation.set[0]);
-  }
-  if (Array.isArray(relation.disconnect)) return null;
-
-  return undefined;
-}
-
-function assertMediaMatchesType(mediaType?: StoryMediaType, media?: UploadFile | null) {
-  if (!mediaType || !media) return;
-
-  const mime = media.mime ?? "";
-  if (mediaType === "video" && !mime.startsWith("video/")) {
-    throw new StoryMediaValidationError(
-      "نوع رسانه ویدیو است اما فایل انتخاب‌شده ویدیو نیست. یک فایل ویدیو برای رسانه انتخاب کنید و از تصویر جلد برای پیش‌نمایش استفاده کنید. دوباره تلاش کنید.",
-    );
-  }
-
-  if (mediaType === "image" && !mime.startsWith("image/")) {
-    throw new StoryMediaValidationError(
-      "نوع رسانه تصویر است اما فایل انتخاب‌شده تصویر نیست. یک فایل تصویر برای رسانه انتخاب کنید. دوباره تلاش کنید.",
-    );
-  }
-}
-
-async function getUploadFile(id: number): Promise<UploadFile | null> {
-  return (await strapi.entityService.findOne("plugin::upload.file", id, {
-    fields: ["id", "mime", "name", "url"],
-  })) as UploadFile | null;
-}
-
-async function validateStoryMedia(event: any) {
-  const data = event.params?.data ?? {};
-  let mediaType = data.MediaType as StoryMediaType | undefined;
-  let mediaId = extractRelationId(data.Media);
-
-  if (mediaType === undefined || mediaId === undefined) {
-    const storyId = event.params?.where?.id;
-    if (storyId) {
-      const existing = (await strapi.entityService.findOne("api::story.story", storyId, {
-        fields: ["id", "MediaType"],
-        populate: { Media: { fields: ["id", "mime", "name", "url"] } },
-      })) as { MediaType?: StoryMediaType; Media?: UploadFile | null } | null;
-
-      mediaType = mediaType ?? existing?.MediaType;
-      if (mediaId === undefined) {
-        mediaId = existing?.Media?.id ?? null;
-      }
-    }
-  }
-
-  if (!mediaId) return;
-
-  const media = await getUploadFile(mediaId);
-  assertMediaMatchesType(mediaType, media);
-}
-
-/**
- * Queues a story's video for normalization when it is not already web-safe.
- *
- * Uploads are accepted as-is — admins routinely attach phone recordings, and the
- * WooCommerce import brought in a catalogue of HEVC `.mov` files — so the conversion
- * happens server-side afterwards instead of rejecting the upload. Enqueueing is
- * best-effort: a story must still save if Redis is unavailable.
- */
+/** Queue every non-web-safe video item independently. Upload-time normalization may have
+ * already completed; the worker re-checks the file and safely becomes a no-op. */
 async function enqueueVideoNormalization(event: any) {
-  const storyId = event.result?.id ?? event.params?.where?.id;
-  if (!storyId) return;
+  const storyId = Number(event.result?.id ?? event.params?.where?.id);
+  if (!Number.isFinite(storyId) || storyId <= 0) return;
 
   try {
-    const story = await strapi.entityService.findOne("api::story.story", storyId, {
-      populate: { Media: true },
-    });
-    if (!story || story.MediaType !== "video" || !story.Media?.url) return;
+    const story = (await strapi.entityService.findOne("api::story.story", storyId, {
+      populate: { Items: { populate: { Media: true } }, Media: true },
+    })) as any;
+    if (!story) return;
 
-    const mime = String(story.Media.mime ?? "").toLowerCase();
-    // Cheap pre-filter; the job re-probes and may still decide the file is fine.
-    if (mime === "video/mp4" || mime === "video/webm") return;
-
+    const items = Array.isArray(story.Items) && story.Items.length
+      ? story.Items
+      : [{
+          Key: `legacy:${storyId}`,
+          MediaType: story.MediaType,
+          Media: story.Media,
+        }];
     const { enqueueStoryVideoNormalization } = await import("../../../../queue/media");
-    await enqueueStoryVideoNormalization(storyId);
+
+    for (const item of items) {
+      const fileId = extractRelationId(item?.Media);
+      if (item?.MediaType !== "video" || !fileId || !item?.Media?.url) continue;
+      await enqueueStoryVideoNormalization(storyId, String(item.Key), fileId);
+    }
   } catch (error) {
     strapi.log.warn(
       `[story] could not queue video normalization for ${storyId}: ${(error as Error).message}`,
@@ -129,18 +39,9 @@ async function enqueueVideoNormalization(event: any) {
 }
 
 export default {
-  async beforeCreate(event: any) {
-    await validateStoryMedia(event);
-  },
-
-  async beforeUpdate(event: any) {
-    await validateStoryMedia(event);
-  },
-
   async afterCreate(event: any) {
     await enqueueVideoNormalization(event);
   },
-
   async afterUpdate(event: any) {
     await enqueueVideoNormalization(event);
   },

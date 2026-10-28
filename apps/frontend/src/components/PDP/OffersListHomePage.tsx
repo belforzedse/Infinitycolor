@@ -6,6 +6,7 @@ import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
 import { ProductRailSlide, ProductRailTrack } from "@/components/storefront/ProductRailTrack";
 import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
 import { cn } from "@/lib/utils";
+import { getOfferPlpHref } from "@/utils/plpRoutes";
 import ArrowLeftIcon from "./Icons/ArrowLeftIcon";
 import PDPHeroNavigationButtons from "./NavigationButtons";
 
@@ -107,7 +108,7 @@ export default function OffersListHomePage({ icon, title, products, viewAllHref 
 
   function getPlpHref(): string {
     if (title.includes("تخفیف")) return "/plp?hasDiscount=true";
-    if (title.includes("جدید")) return "/plp?sort=LastEditedByAdminAt:desc";
+    if (title.includes("جدید")) return getOfferPlpHref("newest");
     if (title.includes("محبوب")) return "/plp?sort=AverageRating:desc";
     return "/plp";
   }

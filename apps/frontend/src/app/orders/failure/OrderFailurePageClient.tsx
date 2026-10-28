@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useAtom } from "jotai";
 import { orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
-import { trackAnalyticsEvent } from "@/lib/analytics";
 import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 export default function OrderFailure() {
@@ -19,15 +18,6 @@ export default function OrderFailure() {
   const resolvedOrderId = orderId ?? (orderIdParam ? Number(orderIdParam) : null);
   const resolvedOrderNumber = orderNumber ?? (orderIdParam || "");
   const resolvedTransactionId = transactionId ?? transactionIdParam;
-
-  useEffect(() => {
-    if (!resolvedOrderId) return;
-    trackAnalyticsEvent({
-      category: "checkout",
-      action: "order_failure_page_view",
-      onceKey: `order-failure-page:${resolvedOrderId}`,
-    });
-  }, [resolvedOrderId]);
 
   return (
     <StorefrontContainer className="py-10">

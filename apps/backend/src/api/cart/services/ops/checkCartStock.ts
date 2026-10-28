@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { isProductPubliclyVisible, isProductRemoved } from "../../../../utils/productVisibility";
 import { getAvailableStockCount } from "../lib/stock";
 import {
   findLiveCheckoutHoldForUser,
@@ -137,7 +138,9 @@ export const checkCartStockOp = async (
   const namedOutcome = reservationOutcomeOf(holdResolution);
   const reservationOutcome = namedOutcome ?? (hold ? "held" : undefined);
   const resumableCheckout = toResumableCheckout(hold);
-  const cart = await cartService.getUserCart(userId);
+  // Unfiltered: a line whose product left the store is hidden from every other
+  // cart read, so this is the only place it can be removed and named.
+  const cart = await cartService.getUserCart(userId, { includeUnavailable: true });
   if (!cart.cart_items || cart.cart_items.length === 0) {
     return {
       success: true,
@@ -173,14 +176,14 @@ export const checkCartStockOp = async (
     const product = variation?.product;
 
     // Check if product is soft-deleted or inactive
-    if (product?.removedAt || product?.Status !== "Active") {
+    if (!isProductPubliclyVisible(product)) {
       if (await removeOwnedItem(item.id)) {
         removals.push({
           cartItemId: item.id,
           productVariationId: variation?.id,
           productTitle: product?.Title,
           message: "Product is no longer available, item removed from cart",
-          reason: product?.removedAt ? "soft_deleted" : "inactive",
+          reason: isProductRemoved(product) ? "soft_deleted" : "inactive",
         });
       }
       continue;

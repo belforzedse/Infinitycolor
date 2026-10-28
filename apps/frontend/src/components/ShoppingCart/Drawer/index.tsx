@@ -1,4 +1,5 @@
 "use client";
+import AuthRecoveryNotice from "../AuthRecoveryNotice";
 
 import React, { useRef } from "react";
 import { Dialog, Transition } from "@headlessui/react";
@@ -29,7 +30,8 @@ function CartDrawerSkeleton() {
 }
 
 export default function CartDrawer() {
-  const { isDrawerOpen, closeDrawer, cartItems, isCartReady, isLoading } = useCart();
+  const { isDrawerOpen, closeDrawer, cartItems, isCartReady, isLoading, authRecoveryUnavailable } =
+    useCart();
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Bind swipe-to-close on the header only. Attaching this to the whole panel
@@ -91,7 +93,9 @@ export default function CartDrawer() {
                     <CartDrawerHeader onClose={closeDrawer} />
                   </div>
 
-                  {!isCartReady || isLoading ? (
+                  {!isCartReady && authRecoveryUnavailable ? (
+                    <AuthRecoveryNotice />
+                  ) : !isCartReady || isLoading ? (
                     <CartDrawerSkeleton />
                   ) : cartItems.length === 0 ? (
                     <EmptyCartDrawer />

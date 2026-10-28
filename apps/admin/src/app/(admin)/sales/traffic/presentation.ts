@@ -12,12 +12,15 @@ export type BehaviorDimension =
   | "country"
   | "region"
   | "city"
+  | "screen"
   | "tag";
 
 type AnalyticsRow = Record<string, unknown>;
 
 const CHANNEL_LABELS: Record<string, string> = {
-  direct: "ورود مستقیم",
+  // Umami files every visit without a usable referrer here: typed URLs, but
+  // also apps, bookmarks and browsers that strip the referrer.
+  direct: "مستقیم یا بدون منبع مشخص",
   llm: "ابزارهای هوش مصنوعی",
   paidads: "تبلیغات کلیکی",
   organicsearch: "جست‌وجوی رایگان",
@@ -49,13 +52,17 @@ const EVENT_LABELS: Record<string, string> = {
   add_payment_info: "انتخاب روش پرداخت",
   place_order_attempt: "تلاش برای ثبت سفارش",
   payment_redirect: "انتقال به درگاه پرداخت",
-  payment_completed: "تکمیل پرداخت",
+  payment_failed: "پرداخت ناموفق",
+  payment_cancelled: "لغو پرداخت توسط خریدار",
+  payment_unresolved: "نتیجه پرداخت نامشخص ماند",
+  order_paid: "پرداخت تأییدشده در سرور",
+  payment_completed: "تکمیل پرداخت (نسخه قدیم)",
   payment_callback_success: "بازگشت موفق از درگاه",
   payment_callback_failed: "بازگشت ناموفق از درگاه",
   payment_callback_error: "خطا در بازگشت از درگاه",
   order_success_page_view: "مشاهده صفحه خرید موفق",
   order_failure_page_view: "مشاهده صفحه پرداخت ناموفق",
-  purchase: "خرید موفق",
+  purchase: "خرید موفق (تأییدشده)",
   refund: "بازپرداخت",
   refund_irr: "بازپرداخت",
   login: "ورود به حساب",
@@ -102,10 +109,23 @@ const BROWSER_LABELS: Record<string, string> = {
   samsung: "Samsung Internet",
   "samsung internet": "Samsung Internet",
   yandex: "Yandex Browser",
+  yandexbrowser: "Yandex Browser",
+  // Umami 3 browser ids as they appear in production sessions.
+  ios: "Safari (آیفون)",
+  crios: "Chrome (آیفون)",
+  fxios: "Firefox (آیفون)",
+  "ios-webview": "مرورگر داخلی برنامه‌ها (آیفون)",
+  "chromium-webview": "مرورگر داخلی برنامه‌ها (اندروید)",
+  instagram: "مرورگر داخلی اینستاگرام",
+  facebook: "مرورگر داخلی فیسبوک",
+  "edge-chromium": "Microsoft Edge",
+  "edge-ios": "Microsoft Edge (آیفون)",
+  miui: "مرورگر شیائومی",
 };
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
+  "android os": "Android",
   ios: "iOS",
   ipados: "iPadOS",
   linux: "Linux",
@@ -133,6 +153,21 @@ const CITY_LABELS: Record<string, string> = {
   hamadan: "همدان",
   arak: "اراک",
   "bandar abbas": "بندرعباس",
+  gorgan: "گرگان",
+  sari: "ساری",
+  babol: "بابل",
+  amol: "آمل",
+  qazvin: "قزوین",
+  zanjan: "زنجان",
+  ardabil: "اردبیل",
+  sanandaj: "سنندج",
+  kermanshah: "کرمانشاه",
+  "khorramabad": "خرم‌آباد",
+  bojnurd: "بجنورد",
+  semnan: "سمنان",
+  zahedan: "زاهدان",
+  bushehr: "بوشهر",
+  "gonbad-e kavus": "گنبد کاووس",
 };
 
 const IRAN_REGION_LABELS: Record<string, string> = {
@@ -271,7 +306,8 @@ function presentLanguage(value: unknown): string {
 
 function presentReferrer(value: unknown): string {
   const raw = String(value ?? "").trim();
-  if (!raw || ["direct", "(direct)", "none"].includes(normalizedKey(raw))) return "ورود مستقیم";
+  if (!raw || ["direct", "(direct)", "none"].includes(normalizedKey(raw)))
+    return "مستقیم یا بدون منبع مشخص";
   try {
     const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
     return url.hostname.replace(/^www\./i, "");
@@ -317,6 +353,13 @@ export function presentBehaviorValue(
     return IRAN_REGION_LABELS[regionCode] ?? (raw || "استان نامشخص");
   }
   if (dimension === "city") return CITY_LABELS[key] ?? (raw || "شهر نامشخص");
+  if (dimension === "screen") {
+    // Umami records the CSS-pixel viewport as «390x844».
+    const match = /^(\d{2,5})\s*[x×]\s*(\d{2,5})$/i.exec(raw);
+    if (!match) return raw || "اندازه نامشخص";
+    const format = (n: string) => new Intl.NumberFormat("fa-IR", { useGrouping: false }).format(Number(n));
+    return `${format(match[1])} × ${format(match[2])}`;
+  }
   if (dimension === "domain" || dimension === "referrer") return presentReferrer(raw);
   if (dimension === "tag") return presentTag(raw);
   return (
@@ -325,6 +368,70 @@ export function presentBehaviorValue(
     (raw || "نامشخص")
   );
 }
+
+/**
+ * Umami journeys mix page views (a path) and custom events (a name) in one
+ * sequence; present each with its own vocabulary.
+ */
+export function presentJourneyStep(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  return raw.startsWith("/") ? presentPath(raw) : presentBehaviorValue(raw, "event");
+}
+
+/** Funnel window in minutes, as Persian words («۱ ساعت», «۲۴ ساعت», «۳۰ دقیقه»). */
+export function presentWindow(minutes: unknown): string | null {
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const format = (n: number) => new Intl.NumberFormat("fa-IR").format(n);
+  if (value % 1440 === 0 && value > 1440) return `${format(value / 1440)} روز`;
+  if (value % 60 === 0) return `${format(value / 60)} ساعت`;
+  return `${format(value)} دقیقه`;
+}
+
+/** The checkout-side events the conversion tab lists; product browsing lives elsewhere. */
+export const CHECKOUT_EVENT_NAMES: ReadonlySet<string> = new Set([
+  "view_cart",
+  "begin_checkout",
+  "add_shipping_info",
+  "add_payment_info",
+  "apply_coupon",
+  "place_order_attempt",
+  "payment_redirect",
+  "purchase",
+  "payment_failed",
+  "payment_cancelled",
+  "payment_unresolved",
+  "checkout_error",
+  "order_paid",
+  "refund",
+]);
+
+/** Events offered in the filter picker, in funnel order, with Persian labels. */
+export const FILTERABLE_EVENTS: ReadonlyArray<{ value: string; label: string }> = [
+  "view_item_list",
+  "select_item",
+  "view_item",
+  "click_add_to_cart",
+  "add_to_cart",
+  "remove_from_cart",
+  "update_quantity",
+  "view_cart",
+  "begin_checkout",
+  "add_shipping_info",
+  "add_payment_info",
+  "apply_coupon",
+  "place_order_attempt",
+  "payment_redirect",
+  "purchase",
+  "payment_failed",
+  "payment_cancelled",
+  "payment_unresolved",
+  "checkout_error",
+  "site_search",
+  "add_to_wishlist",
+  "share_product",
+  "open_comments",
+].map((value) => ({ value, label: EVENT_LABELS[value] ?? value }));
 
 export function performanceP75(value: unknown): number | null {
   const candidate =
@@ -354,10 +461,19 @@ const SECTION_LABELS: Record<string, string> = {
   firstAttribution: "اولین منبع ورود خریداران",
   lastAttribution: "آخرین منبع پیش از خرید",
   purchaseGoal: "خریدهای ثبت‌شده",
-  checkoutFunnel: "مسیر خرید",
+  coreFunnel: "قیف مسیر کامل خرید",
+  trend: "روند بازدید",
+  buckets: "روند تبدیل",
+  breakdown: "تفکیک قیف",
+  segments: "تفکیک قیف",
+  purchaseTracking: "تطبیق خریدها با سفارش‌ها",
+  discoveryFunnel: "مسیر محصول تا ثبت سفارش",
+  checkoutFunnel: "مسیر ثبت سفارش تا خرید",
+  paymentFunnel: "مسیر درگاه تا خرید",
+  commerce: "فروش فروشگاه",
   journeys: "مسیر حرکت کاربران",
   retention: "بازگشت کاربران",
-  performance: "Core Web Vitals",
+  performance: "سرعت صفحه",
 };
 
 export function presentAnalyticsMessage(value: unknown): string {
@@ -372,6 +488,8 @@ export function presentAnalyticsMessage(value: unknown): string {
   // flatten this into "temporarily unavailable" — a bad range is not an outage,
   // and waiting will not fix it.
   if (/INVALID_DATE_RANGE/i.test(raw)) return "بازه تاریخ انتخاب‌شده معتبر نیست؛ تاریخ شروع و پایان را بررسی کنید.";
+  if (/INVALID_CONVERSION_DETAIL/i.test(raw)) return "این نمای قیف پشتیبانی نمی‌شود.";
+  if (/UMAMI_PARTIAL/i.test(raw)) return "بخشی از داده‌های این نما دریافت نشد؛ ردیف‌های ناقص با «—» مشخص شده‌اند.";
   if (/UMAMI_TIMEOUT|AbortError|timed?\s*out/i.test(raw)) return "دریافت آمار بیش از حد معمول طول کشید. دوباره تلاش کنید.";
   if (/UMAMI_AUTH|unauthorized|forbidden/i.test(raw)) return "دسترسی گزارش‌گیری نیاز به بررسی مدیر سیستم دارد.";
   // Checked before the generic unavailable branch: a missing configuration
@@ -384,3 +502,66 @@ export function presentAnalyticsMessage(value: unknown): string {
     return "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.";
   return raw.length <= 120 ? raw : "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.";
 }
+
+/**
+ * Filters Umami keeps on the session. Only these can narrow an ordered funnel,
+ * a goal or attribution; every other filter belongs to each event row and is
+ * not applied there (the backend reports which, in `stepFilters`).
+ */
+export const SESSION_LEVEL_FILTERS: ReadonlySet<string> = new Set([
+  "os",
+  "browser",
+  "device",
+  "language",
+  "country",
+  "region",
+  "city",
+  "segment",
+  "cohort",
+  "match",
+]);
+
+/** Filters that only narrow the content view's product/category/variant evidence. */
+export const PRODUCT_PROPERTY_FILTERS: ReadonlySet<string> = new Set([
+  "productId",
+  "categoryId",
+  "variantId",
+]);
+
+export type VitalKey = "lcp" | "inp" | "cls" | "fcp" | "ttfb";
+export type VitalRating = "good" | "needs_improvement" | "poor";
+
+/** Google's published Core Web Vitals thresholds, applied to p75. */
+export const VITAL_THRESHOLDS: Record<VitalKey, readonly [number, number]> = {
+  lcp: [2500, 4000],
+  inp: [200, 500],
+  cls: [0.1, 0.25],
+  fcp: [1800, 3000],
+  ttfb: [800, 1800],
+};
+
+export function rateVital(key: VitalKey, value: number | null): VitalRating | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  const [good, poor] = VITAL_THRESHOLDS[key];
+  if (value <= good) return "good";
+  if (value <= poor) return "needs_improvement";
+  return "poor";
+}
+
+export const VITAL_RATING_LABELS: Record<VitalRating, string> = {
+  good: "خوب",
+  needs_improvement: "نیازمند بهبود",
+  poor: "ضعیف",
+};
+
+/** Funnel step names written as what the shopper did. */
+export function presentFunnelStep(event: unknown): string {
+  return presentBehaviorValue(event, "event");
+}
+
+/** Iran's provinces as Umami region codes («IR-23»), for the region filter. */
+export const REGION_OPTIONS: ReadonlyArray<{ value: string; label: string }> = Object.entries(
+  IRAN_REGION_LABELS,
+)
+  .map(([code, label]) => ({ value: `IR-${code}`, label }))
+  .sort((left, right) => left.label.localeCompare(right.label, "fa"));

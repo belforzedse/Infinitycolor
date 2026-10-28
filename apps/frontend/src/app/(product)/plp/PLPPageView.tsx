@@ -15,11 +15,13 @@ import CategoryEditorialSection from "@/components/PLP/CategoryEditorialSection"
 import {
   buildCollectionItems,
   buildPLPPageCopy,
+  getOfferPageTitle,
   getPLPCategoryContext,
   getPLPProducts,
   parsePLPQuery,
+  getPLPMenuGroupContext,
 } from "@/services/product/plp";
-import { getCategoryPlpHrefWithQuery } from "@/utils/plpRoutes";
+import { getCategoryPlpHrefWithQuery, type PLPOffer } from "@/utils/plpRoutes";
 import { formatProductsToCardProps } from "@/services/product/product";
 import { toCategoryFilterOption } from "@/services/product/categories";
 import logger from "@/utils/logger";
@@ -56,6 +58,8 @@ async function getCachedPLPProducts(
 
 interface PLPPageViewProps {
   categorySlug?: string;
+  // A server-ranked listing (/offer?type=…): same page, the backend picks the products.
+  offer?: PLPOffer;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
@@ -71,10 +75,17 @@ function toURLSearchParams(params: { [key: string]: string | string[] | undefine
   return searchParams;
 }
 
-export default async function PLPPageView({ categorySlug, searchParams }: PLPPageViewProps) {
+export default async function PLPPageView({ categorySlug, offer, searchParams }: PLPPageViewProps) {
   const params = await searchParams;
-  const query = parsePLPQuery(params);
+  const query = offer ? { ...parsePLPQuery(params), offer } : parsePLPQuery(params);
+  const menuGroupKey = typeof params.menuGroup === "string" ? params.menuGroup : undefined;
 
+  const menuGroupContext =
+    !categorySlug && menuGroupKey ? await getPLPMenuGroupContext(menuGroupKey) : undefined;
+
+  if (menuGroupKey && !categorySlug && !menuGroupContext) {
+    notFound();
+  }
   if (!categorySlug && query.category) {
     const legacyCategory = await getPLPCategoryContext(query.category);
     if (!legacyCategory) {
@@ -100,7 +111,10 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
     resolvedCategoryContext?.slug && isCanonicalCategoryEditorialView(query),
   );
   const [productResult, editorial] = await Promise.all([
-    getCachedPLPProducts(query, resolvedCategoryContext?.categorySlugs),
+    getCachedPLPProducts(
+      query,
+      menuGroupContext?.categorySlugs ?? resolvedCategoryContext?.categorySlugs,
+    ),
     shouldLoadEditorial && resolvedCategoryContext?.slug
       ? getPublishedCategoryEditorial(resolvedCategoryContext.slug)
       : Promise.resolve(null),
@@ -134,6 +148,10 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
   const collectionName = editorial?.title || pageName;
   const collectionDescription = editorial?.seoDescription || pageDescription;
   const collectionItems = buildCollectionItems(products);
+  const listingTitle =
+    menuGroupContext?.title ??
+    resolvedCategoryContext?.title ??
+    (offer ? getOfferPageTitle(offer) : undefined);
 
   return (
     <PageContainer className="space-y-6 pb-20 pt-6">
@@ -154,12 +172,10 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
         />
       )}
 
-      {!query.search && <PLPHeroBanner initialTitle={resolvedCategoryContext?.title} />}
+      {!query.search && <PLPHeroBanner initialTitle={listingTitle} />}
 
-      {resolvedCategoryContext?.title ? (
-        <h1 className="text-xl font-bold leading-8 text-neutral-900 sm:text-2xl">
-          {resolvedCategoryContext.title}
-        </h1>
+      {listingTitle ? (
+        <h1 className="text-xl font-bold leading-8 text-neutral-900 sm:text-2xl">{listingTitle}</h1>
       ) : null}
 
       <Suspense fallback={<ProductListSkeleton />}>

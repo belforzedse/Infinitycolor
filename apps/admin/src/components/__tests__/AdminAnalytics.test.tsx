@@ -1,4 +1,4 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import React from "react";
 
 let pathname = "/";
@@ -16,11 +16,7 @@ jest.mock("next/script", () => ({
   },
 }));
 
-import AdminAnalytics, {
-  ADMIN_ANALYTICS_CONSENT_EVENT,
-  ADMIN_ANALYTICS_CONSENT_KEY,
-  adminRouteGroup,
-} from "../AdminAnalytics";
+import AdminAnalytics, { adminRouteGroup } from "../AdminAnalytics";
 
 describe("AdminAnalytics", () => {
   beforeEach(() => {
@@ -49,16 +45,16 @@ describe("AdminAnalytics", () => {
     expect(adminRouteGroup(path)).toBe(expected);
   });
 
-  it("is inert without explicit consent", () => {
-    render(<AdminAnalytics />);
+  it("is inert without a configured tracker", () => {
+    delete process.env.NEXT_PUBLIC_ADMIN_UMAMI_WEBSITE_ID;
+    const { container } = render(<AdminAnalytics />);
+    expect(container.querySelector("script")).toBeNull();
     expect(track).not.toHaveBeenCalled();
   });
 
-  it("loads the private tracker and sends a stable group after consent", async () => {
+  it("loads the private tracker and sends a stable group without any consent step", async () => {
     pathname = "/orders/customer-42?token=secret";
-    localStorage.setItem(ADMIN_ANALYTICS_CONSENT_KEY, "granted");
     const { container } = render(<AdminAnalytics />);
-    act(() => window.dispatchEvent(new Event(ADMIN_ANALYTICS_CONSENT_EVENT)));
 
     await waitFor(() => {
       const script = container.querySelector("script");

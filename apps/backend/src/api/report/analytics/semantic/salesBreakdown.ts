@@ -435,13 +435,30 @@ export function categoryBreakdownSql(
       JOIN product_ancestors pa ON pa.product_id = l.product_id
       GROUP BY pa.ancestor_id
     ),
-    -- Sales sitting directly in a category. product_category_membership is a UNION,
-    -- hence already distinct per (product, category): no extra dedup needed.
+    -- (product, category) pairs where the product is filed on the category itself and
+    -- on NONE of its descendants. A product filed on a child already shows in that
+    -- child's row; counting it in the parent's "(مستقیم)" row as well is what made an
+    -- expanded parent never add up. Resolved per product, like product_ancestors.
+    -- category_id <> ancestor_id rather than up > 0, so a cycle can't hide a sale.
+    product_direct_only AS (
+      SELECT m.product_id, m.product_category_id
+      FROM product_category_membership m
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM product_category_membership m2
+        JOIN category_ancestry a ON a.category_id = m2.product_category_id
+        WHERE m2.product_id = m.product_id
+          AND a.ancestor_id = m.product_category_id
+          AND a.category_id <> m.product_category_id
+      )
+    ),
+    -- Sales sitting only directly in a category. product_category_membership is a
+    -- UNION, hence already distinct per (product, category): no extra dedup needed.
     direct AS (
-      SELECT m.product_category_id AS category_id, ${LINE_AGGREGATES}
+      SELECT d.product_category_id AS category_id, ${LINE_AGGREGATES}
       FROM lines l
-      JOIN product_category_membership m ON m.product_id = l.product_id
-      GROUP BY m.product_category_id
+      JOIN product_direct_only d ON d.product_id = l.product_id
+      GROUP BY d.product_category_id
     ),
     uncategorized AS (
       SELECT NULL::int AS category_id, ${LINE_AGGREGATES}
@@ -486,13 +503,15 @@ export function categoryBreakdownSql(
  * ancestors and grouping by ancestor keeps the distinct count correct at every
  * depth.
  *
- * Consequence worth knowing before filing it as a bug: NO column is additive
- * across sibling rows. A product belongs to every category it is filed under —
- * main and additional alike — so one line can legitimately appear under two
- * unrelated categories, and a product whose additional category is also its own
- * ancestor appears in both a child row and the parent's "(مستقیم)" row. Each row
- * is individually correct and de-duplicated; adding rows together is not a
- * meaningful operation for orders, units, gross, discounts, refunds or net.
+ * The "(مستقیم)" row under a parent holds only sales of products filed on the
+ * parent and on none of its descendants, so an expanded parent's rows add up to
+ * the parent EXCEPT where one product is filed under two of its subcategories.
+ * Consequence worth knowing before filing it as a bug: NO column is additive in
+ * general. A product belongs to every category it is filed under — main and
+ * additional alike — so one line can legitimately appear under two sibling or
+ * unrelated categories. Each row is individually correct and de-duplicated;
+ * adding rows together is not a meaningful operation for orders, units, gross,
+ * discounts, refunds or net.
  */
 async function getSalesByCategory(
   knex: Knex,
