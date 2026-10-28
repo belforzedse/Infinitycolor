@@ -28,7 +28,7 @@ export default function DeliverySearchFilters({
       </div>
       {(
         [
-          ["productCode", "کد محصول", 255, "text"],
+          ["productCode", "نام یا کد محصول", 255, "text"],
           ["postalCode", "کد پستی", 30, "numeric"],
           ["addressText", "آدرس مشتری", 200, "text"],
         ] as const
@@ -42,7 +42,7 @@ export default function DeliverySearchFilters({
             onChange={(event) => change(key, event.target.value)}
             maxLength={maxLength}
             inputMode={inputMode}
-            dir={key === "addressText" ? "rtl" : "ltr"}
+            dir={key === "postalCode" ? "ltr" : "auto"}
           />
         </label>
       ))}

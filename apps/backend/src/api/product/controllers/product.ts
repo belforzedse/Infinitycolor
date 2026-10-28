@@ -46,6 +46,7 @@ import {
 } from "../../../utils/productVisibility";
 import { generateUnicodeSlug } from "../../../utils/unicodeSlug";
 import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
+import { publicProductDiscoveryFilters } from "../../../utils/productDiscovery";
 import { recordAdminAudit } from "../../../utils/adminAudit";
 import {
   executePublicationCommand,
@@ -1283,13 +1284,21 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       return false;
     }
 
+    // Exact identity reads (e.g. secondary card photos) are not discovery.
+    const exactId = existingFilters?.id?.$eq;
+    const isIdentityLookup =
+      (typeof exactId === "number" || typeof exactId === "string") &&
+      /^\d+$/.test(String(exactId)) && Number.isSafeInteger(Number(exactId)) && Number(exactId) > 0;
+
     // A fully trusted migration request must see an existing inactive product
     // by external_id so the idempotent importer updates it instead of trying a
     // duplicate create. Trashed products remain excluded.
     andConditions.push(
       isTrustedWordPressMigrationRequest()
         ? { removedAt: { $null: true } }
-        : publicProductFilters(),
+        : String(ctx.query?.view || "") === "card" || isIdentityLookup
+          ? publicProductFilters()
+          : publicProductDiscoveryFilters(ctx.query?.oppsi === "true" || ctx.query?.oppsi === "1"),
     );
 
     ctx.query = {
@@ -1316,6 +1325,8 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       // Delegate to the stock-aware query (in-stock products first, computed
       // at the SQL level), preserving the secondary sort within each group.
       return productService.findProductCards({
+        isAdmin: isAdminUser(ctx.state.user),
+        oppsi: restQuery.oppsi,
         filters: restQuery.filters,
         sort: restQuery.sort,
         availability: restQuery.availability,
