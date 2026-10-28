@@ -179,4 +179,26 @@ describe("product card query helpers", () => {
 
     expect(query.toString()).toContain('"p"."purged_at" is null');
   });
+
+  it("accepts compact color IDs OR exact fallback titles inside the public product filters", () => {
+    const knexPath = require.resolve("knex", {
+      paths: [require.resolve("@strapi/database", { paths: [require.resolve("@strapi/strapi")] })],
+    });
+    const knex = require(knexPath)({ client: "pg" });
+    const query = knex({ p: "products" }).select("p.id");
+    applyProductFilters(knex, query, fakeStrapi, { $and: [
+      { Status: { $eq: "Active" } },
+      { removedAt: { $null: true } },
+      { $or: [
+        { product_variations: { product_variation_color: { id: { $in: "11,12,13" } } } },
+        { product_variations: { product_variation_color: { Title: { $in: ["آبی ناشناخته", "blue"] } } } },
+      ] },
+    ] });
+    const sql = query.toSQL();
+    expect(sql.sql).toContain('"p"."status" = ?');
+    expect(sql.sql).toContain('"p"."removed_at" is null');
+    expect(sql.sql).toContain('"product_variation_color_entity"."id" in (?, ?, ?)');
+    expect(sql.sql).toContain('or (exists');
+    expect(sql.bindings).toEqual(["Active", "11", "12", "13", "آبی ناشناخته", "blue"]);
+  });
 });

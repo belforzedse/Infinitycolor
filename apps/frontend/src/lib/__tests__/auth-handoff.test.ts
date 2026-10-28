@@ -36,4 +36,13 @@ describe("auth handoff recovery", () => {
 
     await expect(updateRouteHint("PUT", fetchImpl)).rejects.toMatchObject({ status: 403 });
   });
+
+  it("distinguishes a transport failure from an HTTP rejection", async () => {
+    const fetchImpl = jest.fn<typeof fetch>().mockRejectedValue(new TypeError("private URL"));
+    await expect(updateRouteHint("DELETE", fetchImpl)).rejects.toMatchObject({
+      name: "AuthHandoffError", status: 503, reasonCode: "network",
+    });
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
 });

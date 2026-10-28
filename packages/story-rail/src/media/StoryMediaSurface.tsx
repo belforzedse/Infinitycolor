@@ -277,12 +277,17 @@ function StoryMedia({
 
   useEffect(() => {
     const sync = () => {
+      const hidden = document.visibilityState !== "visible";
+      if (hidden) {
+        // Invalidate a pending play synchronously: its rejection can precede
+        // the React hold effect that otherwise cancels this attempt.
+        engineRef.current?.cancelPlay("hold");
+        videoRef.current?.pause();
+      }
       dispatch({
         type: "hold",
         hold: "hidden",
-        value:
-          typeof document !== "undefined" &&
-          document.visibilityState !== "visible",
+        value: hidden,
       });
     };
     sync();

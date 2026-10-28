@@ -14,7 +14,7 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("react-hot-toast", () => ({
   __esModule: true,
-  default: { error: jest.fn(), success: jest.fn() },
+  default: Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn() }),
 }));
 
 jest.mock("@sentry/nextjs", () => ({
@@ -2333,4 +2333,70 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(captureCheckoutMessage).not.toHaveBeenCalled();
     });
   });
+
+  describe("payment handoff submit guard", () => {
+    beforeEach(() => {
+      jest.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => undefined);
+      (CartService.getCheckoutQuote as jest.Mock).mockReset().mockResolvedValue({
+        quoteHash: "sha256:handoff", financialSummary: { total: 120_000 },
+      });
+      (CartService.finalizeCart as jest.Mock).mockReset().mockResolvedValue({
+        success: true, orderId: 91, redirectUrl: "https://bank.example/pay",
+        redirectMethod: "POST", formFields: { RefId: "opaque-reference" },
+      });
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it("blocks another finalize during handoff and unlocks on bfcache return", async () => {
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      const view = render(<Provider store={store}><ShoppingCartBillForm /></Provider>);
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+      await waitFor(() => expect(HTMLFormElement.prototype.submit).toHaveBeenCalledTimes(1));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+      act(() => window.dispatchEvent(new Event("pageshow")));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+      fireEvent.submit(view.container.querySelector("form")!);
+      await act(async () => { await Promise.resolve(); });
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+      const restored = new Event("pageshow");
+      Object.defineProperty(restored, "persisted", { value: true });
+      act(() => window.dispatchEvent(restored));
+      expect(screen.getByTestId("checkout-submit")).toBeEnabled();
+    });
+
+    it("unlocks when Next hides checkout in <Activity> after a client-side result navigation", async () => {
+      // cacheComponents hides the page instead of unmounting it, and router.push
+      // fires no pageshow, so only the hide itself can clear the guard.
+      (CartService.finalizeCart as jest.Mock).mockReset().mockResolvedValue({
+        success: true, orderId: 92, redirectUrl: "",
+      });
+      const store = createStore();
+      store.set(currentUserAtom, { id: 1 });
+      store.set(userLoadingAtom, false);
+      const page = (mode: "visible" | "hidden") => (
+        <Provider store={store}>
+          <React.Activity mode={mode}><ShoppingCartBillForm /></React.Activity>
+        </Provider>
+      );
+      const view = render(page("visible"));
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+      fireEvent.click(screen.getByTestId("checkout-submit"));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=92"));
+      expect(screen.getByTestId("checkout-submit")).toBeDisabled();
+
+      view.rerender(page("hidden"));
+      view.rerender(page("visible"));
+      await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeEnabled());
+    });
+  });
+
 });
