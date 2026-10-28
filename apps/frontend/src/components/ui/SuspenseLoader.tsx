@@ -1,7 +1,16 @@
 "use client";
 
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import {
   noteEnhancementLoaded,
   useAdaptiveHydrated,
@@ -9,9 +18,29 @@ import {
 } from "@/lib/adaptive-quality";
 
 type DotLottieComponent = (typeof import("@lottiefiles/dotlottie-react"))["DotLottieReact"];
+type LoaderPlayer = NonNullable<
+  Parameters<NonNullable<ComponentProps<DotLottieComponent>["dotLottieRefCallback"]>>[0]
+>;
 
 const LOADING_MESSAGE_DELAY_MS = 3000;
 const LOADING_ANIMATION_URL = "/animations/infloading.json";
+const LOADING_LAYOUT = { fit: "contain" as const, align: [0.5, 0.5] as [number, number] };
+
+class LoaderAnimationBoundary extends Component<
+  { children: ReactNode; onFailure: (error: Error) => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error) {
+    this.props.onFailure(error);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 
 let loadingAnimationCache: Record<string, unknown> | null = null;
 let loadingAnimationPromise: Promise<Record<string, unknown> | null> | null = null;
@@ -52,12 +81,79 @@ export default function SuspenseLoader({
   const [showMessage, setShowMessage] = useState(false);
   const [animationData, setAnimationData] = useState<Record<string, unknown> | null>(null);
   const [showAnimation, setShowAnimation] = useState(false);
+  const [animationFailed, setAnimationFailed] = useState(false);
+  const [visible, setVisible] = useState(true);
   const [DotLottieReact, setDotLottieReact] = useState<DotLottieComponent | null>(null);
-  const dotLottieRef = useRef<{ stop: () => void } | null>(null);
+  const removePlayerListeners = useRef<(() => void) | null>(null);
+  const readyFrame = useRef<number | null>(null);
   const hydrated = useAdaptiveHydrated();
   const quality = useAdaptiveQuality();
   const shouldEnhance =
-    hydrated && quality.rendering === "enhanced" && quality.motion === "enhanced";
+    hydrated &&
+    visible &&
+    !animationFailed &&
+    quality.rendering === "enhanced" &&
+    quality.motion === "enhanced";
+
+  const cleanupPlayer = useCallback(() => {
+    removePlayerListeners.current?.();
+    removePlayerListeners.current = null;
+    if (readyFrame.current !== null) window.cancelAnimationFrame(readyFrame.current);
+    readyFrame.current = null;
+  }, []);
+  const failAnimation = useCallback(
+    (error: Error) => {
+      cleanupPlayer();
+      setShowAnimation(false);
+      setAnimationFailed(true);
+      try {
+        Sentry.captureException(error, {
+          tags: {
+            area: "loader",
+            recovery_surface: "loader-animation",
+            recovery_outcome: "fallback",
+          },
+        });
+      } catch {
+        /* The decorative fallback must remain independent of reporting. */
+      }
+    },
+    [cleanupPlayer],
+  );
+  const attachPlayer = useCallback(
+    (instance: LoaderPlayer | null) => {
+      cleanupPlayer();
+      if (!instance) return;
+      const loaded = () => {
+        if (readyFrame.current !== null) window.cancelAnimationFrame(readyFrame.current);
+        readyFrame.current = window.requestAnimationFrame(() => {
+          readyFrame.current = null;
+          setShowAnimation(true);
+        });
+      };
+      const failed = () => failAnimation(new Error("Loading animation failed"));
+      instance.addEventListener("load", loaded);
+      instance.addEventListener("loadError", failed);
+      instance.addEventListener("renderError", failed);
+      removePlayerListeners.current = () => {
+        instance.removeEventListener("load", loaded);
+        instance.removeEventListener("loadError", failed);
+        instance.removeEventListener("renderError", failed);
+      };
+      if (instance.isLoaded) loaded();
+    },
+    [cleanupPlayer, failAnimation],
+  );
+
+  useEffect(() => {
+    const sync = () => setVisible(document.visibilityState === "visible");
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      cleanupPlayer();
+    };
+  }, [cleanupPlayer]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -70,9 +166,8 @@ export default function SuspenseLoader({
   }, []);
 
   useEffect(() => {
-    if (!shouldEnhance) {
-      dotLottieRef.current?.stop();
-      dotLottieRef.current = null;
+    if (!shouldEnhance || document.visibilityState !== "visible") {
+      cleanupPlayer();
       setShowAnimation(false);
       setAnimationData(null);
       setDotLottieReact(null);
@@ -97,23 +192,11 @@ export default function SuspenseLoader({
 
     return () => {
       cancelled = true;
-      dotLottieRef.current?.stop();
-      dotLottieRef.current = null;
+      // The wrapper owns destruction through its canvas ref. Calling stop here
+      // competes with that teardown and can re-enter the WASM player.
+      cleanupPlayer();
     };
-  }, [shouldEnhance]);
-
-  useEffect(() => {
-    if (!animationData) return;
-
-    let frameId = 0;
-    frameId = window.requestAnimationFrame(() => {
-      setShowAnimation(true);
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [animationData]);
+  }, [shouldEnhance, cleanupPlayer]);
 
   return (
     <div
@@ -147,16 +230,16 @@ export default function SuspenseLoader({
                 showAnimation ? "scale-100 opacity-100" : "scale-95 opacity-0",
               )}
             >
-              <DotLottieReact
-                data={animationData}
-                loop
-                autoplay
-                dotLottieRefCallback={(instance) => {
-                  dotLottieRef.current = instance;
-                }}
-                layout={{ fit: "contain", align: [0.5, 0.5] }}
-                className="h-full w-full"
-              />
+              <LoaderAnimationBoundary onFailure={failAnimation}>
+                <DotLottieReact
+                  data={animationData}
+                  loop
+                  autoplay
+                  dotLottieRefCallback={attachPlayer}
+                  layout={LOADING_LAYOUT}
+                  className="h-full w-full"
+                />
+              </LoaderAnimationBoundary>
             </div>
           )}
         </div>

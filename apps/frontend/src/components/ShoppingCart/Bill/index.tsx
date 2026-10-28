@@ -371,6 +371,18 @@ function ShoppingCartBillForm({}: Props) {
     return () => window.removeEventListener("pageshow", onPageShow);
   }, []);
 
+  // The client-side result navigations (router.push) keep the guard set too, but
+  // with cacheComponents Next hides this page in <Activity> instead of unmounting
+  // it, and no pageshow fires on the way back. Activity runs layout-effect
+  // cleanups when it hides the page, so clear the guard there; a full-page
+  // navigation (gateway handoff) never runs it.
+  React.useLayoutEffect(() => {
+    return () => {
+      submitInProgressRef.current = false;
+      setIsSubmitting(false);
+    };
+  }, []);
+
   // Check authentication on mount - redirect to login if not authenticated.
   // Wait for global auth loading to finish so we don't redirect while user is still being fetched
   // (avoids loop when returning from auth with valid token).
@@ -949,9 +961,9 @@ function ShoppingCartBillForm({}: Props) {
     const attributes = {
       area: "checkout",
       stage: "storefront",
-      reasonCode: errorCode,
       gateway: gateway || "none",
       ...diagnostics.attributes,
+      reasonCode: diagnostics.attributes.reasonCode ?? errorCode,
     };
     const disposition = checkoutDiagnosticDisposition(errorCode, response);
     if (disposition === "log") {
@@ -1327,6 +1339,7 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
+    let paymentNavigationStarted = false;
     try {
       submitInProgressRef.current = true;
       setIsSubmitting(true);
@@ -1559,6 +1572,7 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           if (recoverInFlightPayment(String(errorCode), cartResponse, checkoutAttemptId)) {
+            paymentNavigationStarted = true;
             return;
           }
           trackCheckoutError(String(errorCode), undefined, { details: errorDetails, telemetryOwner: (cartResponse as any).telemetryOwner });
@@ -1727,6 +1741,7 @@ function ShoppingCartBillForm({}: Props) {
           clearCheckoutIdentity();
           setSubmitOrderStep(SubmitOrderStep.Success);
           router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
+          paymentNavigationStarted = true;
         } else {
           const redirectMethod =
             cartResponse.redirectMethod ||
@@ -1745,6 +1760,8 @@ function ShoppingCartBillForm({}: Props) {
           })) {
             trackCheckoutError("HANDOFF_FAILED", "handoff_failed");
             failPayment("اطلاعات انتقال به درگاه کامل نیست. لطفاً دوباره تلاش کنید.");
+          } else {
+            paymentNavigationStarted = true;
           }
         }
       } else {
@@ -1756,6 +1773,7 @@ function ShoppingCartBillForm({}: Props) {
         }
         setSubmitOrderStep(SubmitOrderStep.Success);
         router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
+        paymentNavigationStarted = true;
       }
     } catch (err: any) {
       const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);
@@ -1773,6 +1791,7 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId())) {
+            paymentNavigationStarted = true;
             return;
           }
           trackCheckoutError(String(errorCode), undefined, { details: responseData.details, telemetryOwner: responseData.telemetryOwner });
@@ -1889,8 +1908,11 @@ function ShoppingCartBillForm({}: Props) {
 
       failPayment(displayError);
     } finally {
-      submitInProgressRef.current = false;
-      setIsSubmitting(false);
+      // Keep the guard until navigation leaves; persisted pageshow already resets it.
+      if (!paymentNavigationStarted) {
+        submitInProgressRef.current = false;
+        setIsSubmitting(false);
+      }
     }
   };
 

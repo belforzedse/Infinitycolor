@@ -10,6 +10,9 @@ ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
 ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
 ENV STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS}
 ENV STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED}
+# Strapi's constructor asks registry.npmjs.org for its latest version; when that
+# request stalls, `strapi build` cannot exit until TCP gives up (15+ minutes).
+ENV STRAPI_DISABLE_UPDATE_NOTIFICATION=true
 ENV NODE_OPTIONS=${NODE_OPTIONS}
 ENV NODE_ENV=production
 ENV REST_CACHE_PROVIDER=memory
@@ -97,6 +100,7 @@ ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
 ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
 ENV NODE_ENV=production \
     STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED} \
+    STRAPI_DISABLE_UPDATE_NOTIFICATION=true \
     STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS} \
     NODE_OPTIONS=${NODE_OPTIONS}
 

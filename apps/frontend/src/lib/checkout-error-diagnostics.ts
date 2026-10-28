@@ -21,6 +21,13 @@ const NAMES = new Set([
   "TimeoutError",
   "TokenAcquisitionError",
 ]);
+const TOKEN_REASONS = new Set([
+  "browser_unavailable",
+  "timeout",
+  "network",
+  "http_failure",
+  "invalid_response",
+]);
 
 export function checkoutFailureDiagnostics(error: unknown, operation: CheckoutOperation) {
   const item =
@@ -69,6 +76,10 @@ export function checkoutFailureDiagnostics(error: unknown, operation: CheckoutOp
   const attributes = {
     operation,
     outcome: reason,
+    reasonCode:
+      item.name === "TokenAcquisitionError" && TOKEN_REASONS.has(item.reasonCode ?? "")
+        ? item.reasonCode
+        : undefined,
     http_status: status,
     cause_code: code && CODES.has(code) ? code : undefined,
     cause_type: name && NAMES.has(name) ? name : undefined,

@@ -15,6 +15,7 @@
     "e2e:adaptive:lowest": "playwright test --config forced-low.playwright.config.ts",
     "e2e:instant": "playwright test --config instant.playwright.config.ts",
     "e2e:cart-recovery": "playwright test --config cart-recovery.playwright.config.ts",
+    "e2e:remediation": "playwright test --config mellat.playwright.config.ts",
     "e2e:analytics": "playwright test --config analytics.playwright.config.ts",
     "e2e:admin": "playwright test --config admin.playwright.config.ts",
     "e2e:admin:smoke": "playwright test --config admin.playwright.config.ts --grep \"@smoke\"",
@@ -29,12 +30,14 @@
     "sanitize:admin-artifacts": "node scripts/sanitize-admin-artifacts.mjs",
     "test:artifact-sanitizer": "node --test scripts/sanitize-admin-artifacts.test.mjs",
     "test:target-guard": "node --test scripts/target-guard.test.mjs",
+    "test:loader-wrapper": "node --test scripts/dotlottie-wrapper.test.mjs",
     "test": "pnpm run e2e",
     "check-types": "tsc --noEmit",
     "e2e:stories": "playwright test --config stories.playwright.config.ts",
     "stories:harness": "node scripts/stories-harness-server.mjs"
   },
   "devDependencies": {
+    "@lottiefiles/dotlottie-react": "0.19.4",
     "@next/playwright": "16.3.2",
     "@playwright/test": "1.60.0",
     "@types/node": "20.17.30",

@@ -12,6 +12,9 @@ overrides:
   '@strapi/plugin-upload>sharp': 0.35.5
 
 patchedDependencies:
+  '@lottiefiles/dotlottie-react@0.19.4':
+    hash: 44d5fed509224e95e181040bf8b4a05b02118cf36a5cce8ea544fcdc976dc2aa
+    path: patches/@lottiefiles__dotlottie-react@0.19.4.patch
   react-instagram-stories@1.1.1:
     hash: c75f10230189a55b9d7a6c3f400bffb45f9382b9097d7f407a36ac63624563f3
     path: patches/react-instagram-stories@1.1.1.patch
@@ -46,7 +49,7 @@ importers:
         version: 2.2.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
       '@lottiefiles/dotlottie-react':
         specifier: ^0.19.4
-        version: 0.19.4(react@19.2.9)
+        version: 0.19.4(patch_hash=44d5fed509224e95e181040bf8b4a05b02118cf36a5cce8ea544fcdc976dc2aa)(react@19.2.9)
       '@repo/api':
         specifier: workspace:*
         version: link:../../packages/api
@@ -549,6 +552,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/story-rail
     devDependencies:
+      '@lottiefiles/dotlottie-react':
+        specifier: 0.19.4
+        version: 0.19.4(patch_hash=44d5fed509224e95e181040bf8b4a05b02118cf36a5cce8ea544fcdc976dc2aa)(react@19.2.9)
       '@next/playwright':
         specifier: 16.3.2
         version: 16.3.2(@playwright/test@1.60.0)
@@ -599,7 +605,7 @@ importers:
         version: 2.2.1(react-dom@19.2.9(react@19.2.9))(react@19.2.9)
       '@lottiefiles/dotlottie-react':
         specifier: ^0.19.4
-        version: 0.19.4(react@19.2.9)
+        version: 0.19.4(patch_hash=44d5fed509224e95e181040bf8b4a05b02118cf36a5cce8ea544fcdc976dc2aa)(react@19.2.9)
       '@repo/api':
         specifier: workspace:*
         version: link:../../packages/api
@@ -17596,7 +17602,7 @@ snapshots:
     dependencies:
       '@lezer/common': 1.5.2
 
-  '@lottiefiles/dotlottie-react@0.19.4(react@19.2.9)':
+  '@lottiefiles/dotlottie-react@0.19.4(patch_hash=44d5fed509224e95e181040bf8b4a05b02118cf36a5cce8ea544fcdc976dc2aa)(react@19.2.9)':
     dependencies:
       '@lottiefiles/dotlottie-web': 0.74.0
       react: 19.2.9

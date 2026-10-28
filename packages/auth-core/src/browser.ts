@@ -13,7 +13,7 @@ import { createTokenManager } from "./token-manager.js";
 export class AuthHandoffError extends Error {
   readonly status: number;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, readonly reasonCode?: string) {
     super(message);
     this.name = "AuthHandoffError";
     this.status = status;
@@ -64,6 +64,11 @@ export async function updateRouteHint(
     if (!response.ok) {
       throw new AuthHandoffError("Route hint update failed", response.status);
     }
+  } catch (error) {
+    if (error instanceof AuthHandoffError) throw error;
+    throw new AuthHandoffError(
+      "Route hint update unavailable", 503, controller.signal.aborted ? "timeout" : "network",
+    );
   } finally {
     clearTimeout(timeout);
   }
