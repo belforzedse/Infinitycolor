@@ -1,8 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { extractProductKeywords, rebuildProductKeywords } from "../services/product-title-keywords";
+import { extractProductKeywords, fetchProductTitles } from "../services/product-title-keywords";
 
 describe("extractProductKeywords", () => {
   it("extracts words and removes duplicates", () => {
@@ -28,45 +25,55 @@ describe("extractProductKeywords", () => {
     expect(extractProductKeywords(["۱۲۳ !!!"])).toEqual([]);
   });
 });
-describe("rebuildProductKeywords", () => {
-  it("writes the dictionary and preserves it when a later rebuild fails", async () => {
-    const temporaryRoot = await mkdtemp(path.join(tmpdir(), "infinity-keywords-test-"));
+describe("fetchProductTitles", () => {
+  it("reads all title batches by id without limiting staff visibility to active products", async () => {
+    const firstBatch = Array.from({ length: 500 }, (_, index) => ({
+      id: index + 1,
+      Title: ` عنوان ${index} `,
+    }));
+    const findMany = jest
+      .fn()
+      .mockResolvedValueOnce(firstBatch)
+      .mockResolvedValueOnce([
+        { id: 900, Title: "شومیز" },
+        { id: 901, Title: null },
+        { id: 902, Title: "  " },
+      ]);
+    const query = jest.fn(() => ({ findMany }));
+    const strapi = { db: { query } } as unknown as Strapi;
 
-    const findMany = jest.fn().mockResolvedValue([
-      { id: 1, Title: "شومیز نخی آبی" },
-      { id: 2, Title: "شومیز لینن سفید" },
-    ]);
+    const titles = await fetchProductTitles(strapi);
 
-    const fakeStrapi = {
-      dirs: {
-        app: { root: temporaryRoot },
+    expect(titles).toEqual([...firstBatch.map(({ Title }) => Title.trim()), "شومیز"]);
+    expect(query).toHaveBeenCalledWith("api::product.product");
+    expect(findMany).toHaveBeenCalledTimes(2);
+    expect(findMany).toHaveBeenNthCalledWith(1, {
+      select: ["id", "Title"],
+      where: {
+        id: { $gt: 0 },
+        removedAt: { $null: true },
+        purgedAt: { $null: true },
       },
-      db: {
-        query: jest.fn(() => ({ findMany })),
+      orderBy: { id: "asc" },
+      limit: 500,
+    });
+    expect(findMany).toHaveBeenNthCalledWith(2, {
+      select: ["id", "Title"],
+      where: {
+        id: { $gt: 500 },
+        removedAt: { $null: true },
+        purgedAt: { $null: true },
       },
-    } as unknown as Strapi;
+      orderBy: { id: "asc" },
+      limit: 500,
+    });
+  });
 
-    try {
-      const filePath = await rebuildProductKeywords(fakeStrapi);
+  it("stops when the next batch is empty", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const strapi = { db: { query: () => ({ findMany }) } } as unknown as Strapi;
 
-      expect(filePath).toBe(path.join(temporaryRoot, ".tmp", "product-title-keywords.json"));
-
-      const savedText = await readFile(filePath, "utf8");
-      const savedData = JSON.parse(savedText);
-
-      expect(savedData).toEqual({
-        version: 1,
-        generatedAt: expect.any(String),
-        keywords: ["شومیز", "نخی", "آبی", "لینن", "سفید"],
-      });
-
-      findMany.mockRejectedValueOnce(new Error("Database unavailable"));
-
-      await expect(rebuildProductKeywords(fakeStrapi)).rejects.toThrow("Database unavailable");
-
-      expect(await readFile(filePath, "utf8")).toBe(savedText);
-    } finally {
-      await rm(temporaryRoot, { recursive: true, force: true });
-    }
+    await expect(fetchProductTitles(strapi)).resolves.toEqual([]);
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 });

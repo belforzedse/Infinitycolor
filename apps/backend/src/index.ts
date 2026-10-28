@@ -19,7 +19,6 @@ import { startExpireStockReservationsJob } from "./jobs/expireStockReservations"
 import { startReconcileCartCleanupJob } from "./jobs/reconcileCartCleanup";
 import { startExpireReserveOrdersJob } from "./jobs/expireReserveOrders";
 import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
-import { startProductKeywordsJob } from "./jobs/productTitleKeywords";
 import { registerAppLifecycles } from "./lifecycles/registerAppLifecycles";
 import { registerSchemaRegressionGuard } from "./bootstrap/schemaRegressionGuard";
 import {
@@ -1362,7 +1361,6 @@ export const RedisClient = process.argv.includes("ts:generate-types")
         console.error("Failed to connect to Redis:", err.message);
         throw err;
       });
-let stopProductKeywordsJob: (() => Promise<void>) | undefined;
 
 export default {
   /**
@@ -1573,13 +1571,6 @@ export default {
     ensureIranLocations(strapi).catch((err) => {
       strapi.log.error("Failed to ensure province/city seed", err);
     });
-    if (
-      shouldStartInProcessBackgroundJobs() ||
-      process.env.PRODUCT_TITLE_KEYWORDS_ENABLED === "true"
-    ) {
-      await stopProductKeywordsJob?.();
-      stopProductKeywordsJob = startProductKeywordsJob(strapi);
-    }
     if (shouldStartInProcessBackgroundJobs()) {
       try {
         startExpireStockReservationsJob(strapi);
@@ -2126,10 +2117,5 @@ export default {
         });
       }
     })();
-  },
-
-  async destroy() {
-    await stopProductKeywordsJob?.();
-    stopProductKeywordsJob = undefined;
   },
 };

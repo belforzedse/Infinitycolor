@@ -39,8 +39,8 @@ describe("product-title-suggestions controller", () => {
     expect(setHeader).toHaveBeenCalledWith("Cache-Control", "private, no-store");
   });
 
-  it("propagates a file reading failure", async () => {
-    const error = new Error("Cannot read keywords file");
+  it("propagates a database failure without returning empty keywords", async () => {
+    const error = new Error("Database unavailable");
     mockedRead.mockRejectedValue(error);
 
     const strapi = {} as Strapi;
@@ -48,6 +48,7 @@ describe("product-title-suggestions controller", () => {
     const ctx = {} as Context;
 
     await expect(controller.index(ctx)).rejects.toThrow(error);
+    expect(ctx.body).toBeUndefined();
   });
 });
 describe("product title suggestions route", () => {

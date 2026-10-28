@@ -1,15 +1,5 @@
-import { afterCatalogCommit, runCatalogSystemMutation } from "../../utils/catalogEdit";
+import { runCatalogSystemMutation } from "../../utils/catalogEdit";
 
-import { refreshProductKeywords } from "./services/product-title-keywords-refresh";
-async function refreshKeywordsAfterCommit() {
-  await afterCatalogCommit(strapi, async () => {
-    try {
-      await refreshProductKeywords(strapi);
-    } catch (error) {
-      strapi.log.error("Product keywords refresh after save failed", error);
-    }
-  });
-}
 export default {
   models: ["api::product.product"],
 
@@ -37,13 +27,5 @@ export default {
         await createHelper();
       }
     }
-    await refreshKeywordsAfterCommit();
-  },
-  async afterUpdate(event) {
-    if (typeof event.params?.data?.Title !== "string") {
-      return;
-    }
-
-    await refreshKeywordsAfterCommit();
   },
 };

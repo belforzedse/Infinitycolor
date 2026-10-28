@@ -1,52 +1,84 @@
 import type { Strapi } from "@strapi/strapi";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { readProductKeywords } from "../services/product-title-keywords";
 
+function makeStrapi(findMany: jest.Mock): Strapi {
+  // No app directory or generated dictionary is needed to serve a cold request.
+  return { db: { query: () => ({ findMany }) } } as unknown as Strapi;
+}
+
 describe("readProductKeywords", () => {
-  let temporaryRoot: string;
-  let filePath: string;
-  let strapi: Strapi;
+  it("extracts current database titles without a generated file", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { id: 1, Title: "شومیز نخی" },
+      { id: 2, Title: "شومیز لینن" },
+    ]);
 
-  beforeEach(async () => {
-    temporaryRoot = await mkdtemp(path.join(tmpdir(), "infinity-read-keywords-"));
-
-    const directory = path.join(temporaryRoot, ".tmp");
-    await mkdir(directory);
-
-    filePath = path.join(directory, "product-title-keywords.json");
-
-    strapi = {
-      dirs: { app: { root: temporaryRoot } },
-    } as unknown as Strapi;
+    await expect(readProductKeywords(makeStrapi(findMany))).resolves.toEqual([
+      "شومیز", "نخی", "لینن",
+    ]);
   });
 
-  afterEach(async () => {
-    await rm(temporaryRoot, { recursive: true, force: true });
-  });
-
-  it("reads keywords from the JSON file", async () => {
-    await writeFile(
-      filePath,
-      JSON.stringify({
-        version: 1,
-        generatedAt: "2026-10-26T00:00:00.000Z",
-        keywords: ["شومیز", "نخی"],
-      }),
-      "utf8",
+  it("coalesces concurrent requests only until the database read completes", async () => {
+    let finishRead!: (titles: Array<{ id: number; Title: string }>) => void;
+    const findMany = jest.fn().mockImplementationOnce(
+      () => new Promise((resolve) => { finishRead = resolve; }),
     );
+    const strapi = makeStrapi(findMany);
+    const first = readProductKeywords(strapi);
+    const second = readProductKeywords(strapi);
 
-    await expect(readProductKeywords(strapi)).resolves.toEqual(["شومیز", "نخی"]);
+    expect(second).toBe(first);
+    expect(findMany).toHaveBeenCalledTimes(1);
+
+    finishRead([{ id: 1, Title: "شومیز" }]);
+    await expect(first).resolves.toEqual(["شومیز"]);
+    await expect(second).resolves.toEqual(["شومیز"]);
+
+    findMany.mockResolvedValueOnce([{ id: 1, Title: "کتان" }]);
+    await expect(readProductKeywords(strapi)).resolves.toEqual(["کتان"]);
+    expect(findMany).toHaveBeenCalledTimes(2);
   });
 
-  it("returns an empty array when the file does not exist", async () => {
+  it("does not reuse completed results between instances or later requests", async () => {
+    const findMany = jest.fn().mockResolvedValue([{ id: 1, Title: "شومیز" }]);
+    const firstInstance = makeStrapi(findMany);
+    const secondInstance = makeStrapi(findMany);
+
+    await expect(readProductKeywords(firstInstance)).resolves.toEqual(["شومیز"]);
+    await expect(readProductKeywords(secondInstance)).resolves.toEqual(["شومیز"]);
+
+    findMany.mockResolvedValue([{ id: 1, Title: "کتان" }]);
+    await expect(readProductKeywords(firstInstance)).resolves.toEqual(["کتان"]);
+    await expect(readProductKeywords(secondInstance)).resolves.toEqual(["کتان"]);
+    expect(findMany).toHaveBeenCalledTimes(4);
+  });
+
+  it("propagates a shared database failure and retries instead of caching an empty success", async () => {
+    let failRead!: (error: Error) => void;
+    const findMany = jest.fn().mockImplementationOnce(
+      () => new Promise((_resolve, reject) => { failRead = reject; }),
+    );
+    const strapi = makeStrapi(findMany);
+    const first = readProductKeywords(strapi);
+    const second = readProductKeywords(strapi);
+    const firstFailure = expect(first).rejects.toThrow("Database unavailable");
+    const secondFailure = expect(second).rejects.toThrow("Database unavailable");
+
+    failRead(new Error("Database unavailable"));
+    await Promise.all([firstFailure, secondFailure]);
+
+    findMany.mockResolvedValueOnce([{ id: 1, Title: "شومیز" }]);
+    await expect(readProductKeywords(strapi)).resolves.toEqual(["شومیز"]);
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a successful empty catalogue", async () => {
+    const findMany = jest.fn().mockResolvedValueOnce([]);
+    const strapi = makeStrapi(findMany);
+
     await expect(readProductKeywords(strapi)).resolves.toEqual([]);
-  });
 
-  it("rejects keywords that contain a non-string value", async () => {
-    await writeFile(filePath, JSON.stringify({ keywords: ["شومیز", 123] }), "utf8");
-
-    await expect(readProductKeywords(strapi)).rejects.toThrow("Invalid product keywords file");
+    findMany.mockResolvedValueOnce([{ id: 1, Title: "شومیز" }]);
+    await expect(readProductKeywords(strapi)).resolves.toEqual(["شومیز"]);
   });
 });
