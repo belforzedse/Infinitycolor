@@ -19,6 +19,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   anipoRecipientSyncOne: "anipoRecipients.syncOne",
   edgeCachePurge: "edgeCache.purge",
   staffOrderAlert: "staffAlerts.orderStarted",
+  shippingSmsDispatch: "shippingSms.dispatch",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -34,6 +35,11 @@ export const SNAPPAY_PAYMENT_JOBS = {
 
 export const WALLET_TOPUP_PAYMENT_JOBS = {
   reconcile: "walletTopups.reconcile",
+} as const;
+
+export const MELLAT_PAYMENT_JOBS = {
+  reconcile: "mellat.reconcile",
+  sweep: "mellat.sweep",
 } as const;
 
 export const MEDIA_JOBS = {
@@ -76,11 +82,13 @@ export const MAINTENANCE_SCHEDULERS = {
   reserveOrderExpiry: "sched:reserveOrders.expire",
   scheduledProductReconcile: "sched:scheduledProducts.reconcile",
   cartCleanupReconcile: "sched:cartCleanup.reconcile",
+  shippingSmsDispatch: "sched:shippingSms.dispatch",
   viewCounterFlush: "sched:viewCounters.flush",
   analyticsDailyRollup: "sched:analyticsDailyRollup.run",
   analyticsOutboxRepair: "sched:analyticsOutboxRepair.run",
   snappaySweep: "sched:snappay.sweep",
   walletTopupReconcile: "sched:walletTopups.reconcile",
+  mellatSweep: "sched:mellat.sweep",
   anipoBarcodeReconcile: "sched:anipoBarcodes.reconcile",
   productTrashRetention: "sched:productTrash.retention",
 } as const;

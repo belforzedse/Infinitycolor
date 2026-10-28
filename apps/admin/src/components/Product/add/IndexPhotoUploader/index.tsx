@@ -8,6 +8,7 @@ import useIndexImageUpload from "../../../../hooks/useIndexImageUpload";
 import MediaLibraryModal from "@/components/MediaLibrary/MediaLibraryModal";
 import { useCan } from "@/hooks/useCan";
 import { useOwnProductMedia } from "@/hooks/product/useOwnProductMedia";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 
 const COVER_TYPES = ["image", "video"] as const;
 
@@ -25,6 +26,8 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
   isEditMode = false,
   disabled = false,
 }) => {
+  const { canEdit } = useProductEditor();
+  disabled = disabled || !canEdit;
   const {
     imagePreview,
     fileInputRef,
@@ -98,7 +101,7 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
 
       <span className="text-xs mt-3 text-neutral-400">
         {disabled
-          ? "در حال دریافت اطلاعات محصول…"
+          ? ""
           : canPickFromLibrary
             ? "تصویر یا ویدیوی اصلی محصول را بارگذاری یا از کتابخانه انتخاب کنید."
             : "اینجا تصویر یا ویدیوی اصلی محصول را بارگذاری کنید."}
@@ -106,7 +109,7 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
 
       {canPickFromLibrary ? (
         <MediaLibraryModal
-          isOpen={libraryOpen}
+          isOpen={libraryOpen && !disabled}
           onClose={() => setLibraryOpen(false)}
           title="انتخاب تصویر شاخص"
           selection="single"
@@ -116,6 +119,7 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
           ownMedia={ownMedia}
           confirmLabel={() => "تنظیم به‌عنوان تصویر شاخص"}
           onConfirm={([picked]) => {
+            if (disabled) return;
             if (picked) selectExistingCover(picked);
             setLibraryOpen(false);
           }}

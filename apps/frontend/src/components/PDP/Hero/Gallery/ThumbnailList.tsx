@@ -32,66 +32,50 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
       img.src = src;
     } catch {}
   }, []);
-
   const scrollToImage = useCallback(
     (index: number) => {
-      if (!scrollContainerRef.current) return;
-
       const container = scrollContainerRef.current;
-      const isMobile = window.innerWidth < 900;
 
-      // Find the actual DOM element for the thumbnail at this index
-      const thumbnailElements = container.querySelectorAll("[data-thumbnail-index]");
-      const targetElement = thumbnailElements[index] as HTMLElement;
+      if (!container || !container.clientWidth || !container.clientHeight) {
+        return;
+      }
 
-      if (targetElement) {
-        // Use scrollIntoView which handles RTL automatically
-        targetElement.scrollIntoView({
-          behavior: quality.motion === "minimal" ? "auto" : "smooth",
-          block: isMobile ? "nearest" : "center",
-          inline: isMobile ? "center" : "nearest",
-        });
-      } else {
-        // Fallback to manual calculation if elements not found
-        const thumbnailWidth = 84;
-        const thumbnailHeight = 105;
-        const gap = 8;
-        const containerWidth = container.clientWidth;
-        const containerHeight = container.clientHeight;
+      const target = container.querySelector<HTMLElement>(`[data-thumbnail-index="${index}"]`);
 
-        if (isMobile) {
-          const itemWidth = thumbnailWidth + gap;
-          const scrollPosition = index * itemWidth;
-          const centerOffset = (containerWidth - thumbnailWidth) / 2;
-          let targetScroll = scrollPosition - centerOffset;
-          const maxScroll = Math.max(0, container.scrollWidth - containerWidth);
-          targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+      if (!target) return;
 
-          const currentScroll = container.scrollLeft;
-          if (Math.abs(currentScroll - targetScroll) > 10) {
-            container.scrollTo({
-              left: targetScroll,
-              behavior: quality.motion === "minimal" ? "auto" : "smooth",
-            });
-          }
-        } else {
-          const scrollPosition = index * (thumbnailHeight + gap);
-          const centerOffset = (containerHeight - thumbnailHeight) / 2;
-          const targetScroll = Math.max(0, scrollPosition - centerOffset);
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
 
-          const currentScroll = container.scrollTop;
-          if (Math.abs(currentScroll - targetScroll) > 10) {
-            container.scrollTo({
-              top: targetScroll,
-              behavior: quality.motion === "minimal" ? "auto" : "smooth",
-            });
-          }
+      let left = 0;
+      let top = 0;
+
+      if (container.scrollWidth > container.clientWidth) {
+        if (targetRect.left < containerRect.left) {
+          left = targetRect.left - containerRect.left;
+        } else if (targetRect.right > containerRect.right) {
+          left = targetRect.right - containerRect.right;
         }
+      }
+
+      if (container.scrollHeight > container.clientHeight) {
+        if (targetRect.top < containerRect.top) {
+          top = targetRect.top - containerRect.top;
+        } else if (targetRect.bottom > containerRect.bottom) {
+          top = targetRect.bottom - containerRect.bottom;
+        }
+      }
+
+      if (left || top) {
+        container.scrollBy({
+          left,
+          top,
+          behavior: quality.motion === "minimal" ? "auto" : "smooth",
+        });
       }
     },
     [quality.motion],
   );
-
   const handleScroll = () => {
     if (scrollContainerRef.current) {
       const {
@@ -143,6 +127,7 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
   return (
     <div
       ref={scrollContainerRef}
+      data-testid="pdp-thumbnails"
       className="relative h-auto w-full overflow-x-auto px-1 py-1 [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain] xl:h-[calc((112px*5/4*4)+(0.5rem*3)+0.5rem)] xl:max-h-[calc(100vh-var(--header-offset,88px)-1rem)] xl:w-[120px] xl:overflow-y-auto xl:overflow-x-hidden"
     >
       <div className="flex min-w-max flex-row-reverse flex-nowrap gap-2 xl:w-full xl:min-w-0 xl:flex-col xl:flex-wrap">

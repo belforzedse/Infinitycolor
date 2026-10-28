@@ -420,6 +420,11 @@
       "type": "boolean",
       "default": false,
       "description": "Hidden operational toggle, not surfaced in any admin UI (edit via Strapi content manager or direct DB write only). When enabled, discounted products are excluded from the public PLP at the exact unfiltered default-sort URL (/plp with sort=LastEditedByAdminAt:desc and no other filters applied)."
+    },
+    "HomepageProductsRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
     }
   }
 }

@@ -41,6 +41,7 @@ SECRETS_REFERENCE.txt
 /out/
 apps/frontend/out/
 apps/frontend/.next/
+apps/frontend/.next-color-gallery-check/
 apps/auth/.next/
 apps/admin/.next/
 apps/auth/out/
@@ -176,3 +177,31 @@ apps/frontend/public/sw-version.js
 /output/
 *.bak
 __pycache__/
+
+# Local development and generated artifacts
+/outputs/
+/artifacts/
+/.tmp-chrome*/
+**/__pycache__/
+*.py[cod]
+**/playwright-report/
+**/test-results/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.venv/
+**/node_modules/
+**/.next/
+!**/.env.example
+!**/env.example
+!**/*.env.example
+
+# Personal agent overrides
+.claude/settings.local.json
+
+# Serialized local environment setup
+/.dev-env-setup.lock/
+
+# Local synthetic demo account (generated; never publish credentials)
+.local-demo-credentials.json
+.local-demo.lock/

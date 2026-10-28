@@ -4,7 +4,10 @@ import type {
   MediaDataItem,
 } from "@/services/super-admin/product/get";
 import type { EditProductData } from "@/types/super-admin/products";
-import type { TagResponseType, TagAttributes } from "@/services/super-admin/product/tag/get";
+import type {
+  TagResponseType,
+  TagAttributes,
+} from "@/services/super-admin/product/tag/get";
 
 interface CategoryAttributes {
   Title: string;
@@ -31,6 +34,7 @@ interface VariationStockData {
   id: number;
   attributes?: {
     Count?: number;
+    StockRevision?: number;
   };
 }
 
@@ -50,18 +54,25 @@ interface VariationData {
   };
 }
 
-const safeNumber = (value: number | string | null | undefined, fallback: number): number => {
+const safeNumber = (
+  value: number | string | null | undefined,
+  fallback: number,
+): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const relationOne = <T>(relation: { data?: T | null } | null | undefined): T | null =>
-  relation?.data ?? null;
+const relationOne = <T>(
+  relation: { data?: T | null } | null | undefined,
+): T | null => relation?.data ?? null;
 
-const relationMany = <T>(relation: { data?: T[] | null } | null | undefined): T[] =>
-  Array.isArray(relation?.data) ? relation.data : [];
+const relationMany = <T>(
+  relation: { data?: T[] | null } | null | undefined,
+): T[] => (Array.isArray(relation?.data) ? relation.data : []);
 
-export function transformToProductData(strapiProduct: ProductDataResponse): EditProductData {
+export function transformToProductData(
+  strapiProduct: ProductDataResponse,
+): EditProductData {
   // Extract CoverImage URL if it exists, otherwise use an empty string
   const coverImageUrl = {
     data: relationOne(strapiProduct.CoverImage),
@@ -69,9 +80,23 @@ export function transformToProductData(strapiProduct: ProductDataResponse): Edit
 
   // Map each media item to its url. If no data, use an empty array.
   const mediaIds = relationMany<MediaDataItem>(strapiProduct.Media);
+  const colorGalleries = strapiProduct.ColorGalleries?.flatMap((gallery) => {
+    const colorId = relationOne(gallery.color)?.id;
 
+    if (!colorId) return [];
+
+    return [
+      {
+        id: gallery.id,
+        color: colorId,
+        Images: relationMany<MediaDataItem>(gallery.Images),
+      },
+    ];
+  });
   // Transform product_main_category to categoryResponseType or null
-  const mainCategory = relationOne(strapiProduct.product_main_category) as StrapiCategory | null;
+  const mainCategory = relationOne(
+    strapiProduct.product_main_category,
+  ) as StrapiCategory | null;
 
   // Convert product_tags to TagResponseType array
   const productTags: TagResponseType[] = relationMany<StrapiTagData>(
@@ -98,11 +123,14 @@ export function transformToProductData(strapiProduct: ProductDataResponse): Edit
   }));
 
   const productVariations = relationMany<VariationData>(
-    strapiProduct.product_variations as unknown as { data?: VariationData[] | null },
+    strapiProduct.product_variations as unknown as {
+      data?: VariationData[] | null;
+    },
   );
   const simpleVariation =
-    productVariations.find((variation) => variation?.attributes?.IsPublished === true) ||
-    productVariations[0];
+    productVariations.find(
+      (variation) => variation?.attributes?.IsPublished === true,
+    ) || productVariations[0];
   const hasOnlyRelationlessVariation =
     productVariations.length === 1 &&
     !simpleVariation?.attributes?.product_variation_color?.data &&
@@ -128,13 +156,16 @@ export function transformToProductData(strapiProduct: ProductDataResponse): Edit
         : "InActive",
     scheduledPublishAt: strapiProduct.scheduledPublishAt ?? null,
     scheduledPublishTimezone: strapiProduct.scheduledPublishTimezone ?? null,
-    scheduledPublishLastAttemptAt: strapiProduct.scheduledPublishLastAttemptAt ?? null,
+    scheduledPublishLastAttemptAt:
+      strapiProduct.scheduledPublishLastAttemptAt ?? null,
     scheduledPublishLastError: strapiProduct.scheduledPublishLastError ?? null,
-    scheduledPublishFailureKind: strapiProduct.scheduledPublishFailureKind ?? null,
+    scheduledPublishFailureKind:
+      strapiProduct.scheduledPublishFailureKind ?? null,
     ProductType: productType,
     IsSimpleProduct: isSimpleProduct,
     SimpleVariationId: simpleVariation?.id,
     SimpleStockId: simpleStock?.id,
+    SimpleStockRevision: simpleStock?.attributes?.StockRevision,
     SimpleSKU: simpleVariationAttributes?.SKU || "",
     SimplePrice: safeNumber(simpleVariationAttributes?.Price, 0),
     SimpleDiscountPrice:
@@ -145,6 +176,7 @@ export function transformToProductData(strapiProduct: ProductDataResponse): Edit
     SimpleIsPublished: simpleVariationAttributes?.IsPublished !== false,
     Weight: strapiProduct.Weight ?? 100,
     Media: mediaIds,
+    ColorGalleries: colorGalleries,
     product_main_category: mainCategory,
     product_tags: productTags,
     Files: files,

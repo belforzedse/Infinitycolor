@@ -1,5 +1,4 @@
-import { buildJourneyFlow, type JourneyRow } from "../journeyFlow";
-
+import { buildJourneyFlow, type JourneyRow } from "../buildJourneyFlow";
 const identityLabel = (raw: unknown) => String(raw ?? "");
 
 const EVENT_LABELS: Record<string, string> = {
@@ -12,7 +11,8 @@ const EVENT_LABELS: Record<string, string> = {
   begin_checkout: "شروع ثبت سفارش",
   purchase: "خرید موفق",
 };
-const eventLabel = (raw: unknown) => EVENT_LABELS[String(raw ?? "")] ?? String(raw ?? "");
+const eventLabel = (raw: unknown) =>
+  EVENT_LABELS[String(raw ?? "")] ?? String(raw ?? "");
 
 function assertInvariants(result: ReturnType<typeof buildJourneyFlow>) {
   for (const link of result.links) {
@@ -27,8 +27,14 @@ function assertInvariants(result: ReturnType<typeof buildJourneyFlow>) {
   const incomingByIndex = new Map<number, number>();
   const outgoingByIndex = new Map<number, number>();
   for (const link of result.links) {
-    outgoingByIndex.set(link.source, (outgoingByIndex.get(link.source) ?? 0) + link.value);
-    incomingByIndex.set(link.target, (incomingByIndex.get(link.target) ?? 0) + link.value);
+    outgoingByIndex.set(
+      link.source,
+      (outgoingByIndex.get(link.source) ?? 0) + link.value,
+    );
+    incomingByIndex.set(
+      link.target,
+      (incomingByIndex.get(link.target) ?? 0) + link.value,
+    );
   }
   result.nodes.forEach((node, index) => {
     const incoming = incomingByIndex.get(index) ?? 0;
@@ -61,11 +67,19 @@ function assertInvariants(result: ReturnType<typeof buildJourneyFlow>) {
 describe("buildJourneyFlow", () => {
   it("returns an empty graph for no rows", () => {
     const result = buildJourneyFlow([], { label: identityLabel });
-    expect(result).toEqual({ nodes: [], links: [], totalPaths: 0, truncatedAtCap: false });
+    expect(result).toEqual({
+      nodes: [],
+      links: [],
+      totalPaths: 0,
+      truncatedAtCap: false,
+    });
   });
 
   it("ignores rows with no first step", () => {
-    const rows: JourneyRow[] = [{ e1: undefined, count: 5 }, { e1: "", count: 3 }];
+    const rows: JourneyRow[] = [
+      { e1: undefined, count: 5 },
+      { e1: "", count: 3 },
+    ];
     const result = buildJourneyFlow(rows, { label: identityLabel });
     expect(result.nodes).toEqual([]);
     expect(result.links).toEqual([]);
@@ -73,7 +87,9 @@ describe("buildJourneyFlow", () => {
   });
 
   it("adds a terminal node for a path shorter than 4 steps", () => {
-    const rows: JourneyRow[] = [{ e1: "view_item", e2: "add_to_cart", count: 10 }];
+    const rows: JourneyRow[] = [
+      { e1: "view_item", e2: "add_to_cart", count: 10 },
+    ];
     const result = buildJourneyFlow(rows, { label: eventLabel });
 
     expect(result.truncatedAtCap).toBe(false);
@@ -91,7 +107,13 @@ describe("buildJourneyFlow", () => {
 
   it("does not add a terminal node when all 4 steps are populated, and flags the cap", () => {
     const rows: JourneyRow[] = [
-      { e1: "view_item", e2: "add_to_cart", e3: "begin_checkout", e4: "purchase", count: 4 },
+      {
+        e1: "view_item",
+        e2: "add_to_cart",
+        e3: "begin_checkout",
+        e4: "purchase",
+        count: 4,
+      },
     ];
     const result = buildJourneyFlow(rows, { label: eventLabel });
 
@@ -118,9 +140,7 @@ describe("buildJourneyFlow", () => {
   });
 
   it("keeps the same label at two different depths as two distinct nodes", () => {
-    const rows: JourneyRow[] = [
-      { e1: "view_item", e2: "view_item", count: 1 },
-    ];
+    const rows: JourneyRow[] = [{ e1: "view_item", e2: "view_item", count: 1 }];
     const result = buildJourneyFlow(rows, { label: eventLabel });
     const viewNodes = result.nodes.filter((n) => n.label === "مشاهده محصول");
     expect(viewNodes).toHaveLength(2);
@@ -133,7 +153,10 @@ describe("buildJourneyFlow", () => {
       e2: `step_${index}`,
       count: 10 - index, // distinct, descending values: 10..1
     }));
-    const result = buildJourneyFlow(rows, { label: identityLabel, topNPerNode: 6 });
+    const result = buildJourneyFlow(rows, {
+      label: identityLabel,
+      topNPerNode: 6,
+    });
 
     const depth1 = result.nodes.filter((n) => n.depth === 1);
     const overflow = depth1.filter((n) => n.isOverflow);
@@ -142,7 +165,9 @@ describe("buildJourneyFlow", () => {
     expect(regular).toHaveLength(6);
 
     // Kept: values 10,9,8,7,6,5 (top 6). Bucketed: 4+3+2+1 = 10.
-    const overflowLink = result.links.find((l) => result.nodes[l.target].isOverflow);
+    const overflowLink = result.links.find(
+      (l) => result.nodes[l.target].isOverflow,
+    );
     expect(overflowLink?.value).toBe(10);
     assertInvariants(result);
   });
@@ -159,11 +184,16 @@ describe("buildJourneyFlow", () => {
         count: 50,
       })),
     ];
-    const result = buildJourneyFlow(rows, { label: identityLabel, topNPerNode: 6 });
+    const result = buildJourneyFlow(rows, {
+      label: identityLabel,
+      topNPerNode: 6,
+    });
 
     const terminalNode = result.nodes.find((n) => n.isTerminal);
     expect(terminalNode).toBeDefined();
-    const terminalLink = result.links.find((l) => result.nodes[l.target].isTerminal);
+    const terminalLink = result.links.find(
+      (l) => result.nodes[l.target].isTerminal,
+    );
     expect(terminalLink?.value).toBe(1);
 
     const overflow = result.nodes.filter((n) => n.isOverflow);
@@ -181,10 +211,17 @@ describe("buildJourneyFlow", () => {
       e3: `leaf_${index}`,
       count: 1,
     }));
-    const result = buildJourneyFlow(rows, { label: identityLabel, topNPerNode: 6 });
+    const result = buildJourneyFlow(rows, {
+      label: identityLabel,
+      topNPerNode: 6,
+    });
     expect(result.nodes.some((n) => n.isOverflow)).toBe(false);
-    const viewItemIndex = result.nodes.findIndex((n) => n.label === "view_item");
-    const outgoingFromViewItem = result.links.filter((l) => l.source === viewItemIndex);
+    const viewItemIndex = result.nodes.findIndex(
+      (n) => n.label === "view_item",
+    );
+    const outgoingFromViewItem = result.links.filter(
+      (l) => l.source === viewItemIndex,
+    );
     expect(outgoingFromViewItem).toHaveLength(7);
   });
 });

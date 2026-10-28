@@ -1,3 +1,8 @@
+jest.mock("../../../../utils/orderDeliverySnapshot", () => ({
+  effectiveOrderDeliveryAddress: jest.fn(async (_strapi, _id, address) => address),
+  effectiveOrderDeliveryAddresses: jest.fn(async (_strapi, sources) => new Map(sources.map((source) => [source.id, source.delivery_address]))),
+}));
+import { effectiveOrderDeliveryAddress } from "../../../../utils/orderDeliverySnapshot";
 import {
   aggregateParcel,
   effectiveParcelState,
@@ -117,6 +122,19 @@ function fixture(members = [member(11, 250, 2, 125), member(12, 300, 3, 100)], o
 }
 
 describe("shared reserve Anipo parcel", () => {
+  it("registers the root order destination after the shopper changes the shared saved address", async () => {
+    const original = group().delivery_address;
+    const f = fixture(undefined, { rootOrder: { id: 11 }, delivery_address: { ...original, FullAddress: "آدرس پروفایل جدید" } });
+    (effectiveOrderDeliveryAddress as jest.Mock).mockResolvedValue(original);
+    try {
+      await submitReserveParcel(f.strapi, "parcel-9");
+      expect(f.provider.createOrUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ receiver_address: original.FullAddress }));
+      expect(effectiveOrderDeliveryAddress).toHaveBeenCalledWith(f.strapi, 11, expect.objectContaining({ FullAddress: "آدرس پروفایل جدید" }));
+    } finally {
+      (effectiveOrderDeliveryAddress as jest.Mock).mockImplementation(async (_strapi, _id, address) => address);
+    }
+  });
+
   beforeEach(() => jest.clearAllMocks());
 
   it("aggregates all paid members, with shipping charged once, and excludes cancelled/returned items", () => {

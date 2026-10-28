@@ -25,6 +25,21 @@ it("keeps token acquisition failures distinct from confirmed logout", () => {
   ).toMatchObject({ errorCode: "AUTH_RECOVERY_UNAVAILABLE" });
 });
 
+it("preserves only allowlisted token acquisition reasons", () => {
+  expect(
+    checkoutFailureDiagnostics(
+      { name: "TokenAcquisitionError", reasonCode: "timeout" },
+      "stock_check",
+    ).attributes,
+  ).toMatchObject({ outcome: "auth_unavailable", reasonCode: "timeout" });
+  expect(
+    checkoutFailureDiagnostics(
+      { name: "TokenAcquisitionError", reasonCode: "private text" },
+      "stock_check",
+    ).attributes.reasonCode,
+  ).toBeUndefined();
+});
+
 it("retains a sanitized original transport cause without private text", () => {
   const cause = Object.assign(new TypeError("API request failed"), { code: "UND_ERR_SOCKET" });
   const result = checkoutFailureDiagnostics(

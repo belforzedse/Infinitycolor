@@ -8,6 +8,10 @@ import type { Strapi } from "@strapi/strapi";
 const PAYMENT_ATTEMPT_MIGRATION_LOCK_KEY = 827453106;
 
 const PAYMENT_ATTEMPT_INDEX_STATEMENTS = [
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_transactions_mellat_reference
+   ON contract_transactions ((CASE
+     WHEN lower(external_source) = 'mellat' AND type = 'Gateway' AND status = 'Success'
+       AND external_id IS NOT NULL AND external_id <> '' THEN external_id ELSE NULL END))`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_attempts_mellat_provider_reference
    ON payment_attempts ((
      CASE
@@ -71,6 +75,9 @@ export async function ensurePaymentAttemptDatabaseInvariants(strapi: Strapi): Pr
           index: name,
           error: String(error?.message || error).slice(0, 300),
         });
+        if (["pilot", "live"].includes(String(process.env.MELLAT_CHECKOUT_MODE || "off").trim().toLowerCase())) {
+          throw new Error(`MELLAT_DATABASE_INVARIANT_MISSING:${name}`);
+        }
       }
     }
   } finally {

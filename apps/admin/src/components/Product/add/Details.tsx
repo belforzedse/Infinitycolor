@@ -7,18 +7,21 @@ import {
   productDataAtom,
 } from "@/atoms/super-admin/products";
 import RichTextEditor from "@/components/RichTextEditor";
+import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 
 interface DetailsProps {
   isEditMode?: boolean;
 }
 
 export default function ProductDetails({ isEditMode = false }: DetailsProps) {
+  const { canEdit } = useProductEditor();
   const [productAtom, setProductAtom] = useAtom(
     isEditMode ? editProductDataAtom : productDataAtom,
   );
   const isSimpleProduct = productAtom.ProductType === "Simple";
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEdit) return;
     const { name, value, checked } = e.target;
     if (name === "name") {
       setProductAtom({ ...(productAtom as any), Title: value });
@@ -52,6 +55,7 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
   };
 
   const setProductType = (ProductType: "Variable" | "Simple") => {
+    if (!canEdit) return;
     setProductAtom({
       ...(productAtom as any),
       ProductType,
@@ -60,6 +64,7 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
   };
 
   const handleDescriptionChange = (content: string) => {
+    if (!canEdit) return;
     setProductAtom({ ...(productAtom as any), Description: content });
   };
 
@@ -202,6 +207,7 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
       <div className="flex flex-col gap-4">
         <label className="text-base text-gray-700">توضیحات محصول</label>
         <RichTextEditor
+          readOnly={!canEdit}
           content={productAtom.Description || ""}
           onChange={handleDescriptionChange}
           placeholder="توضیحات محصول"

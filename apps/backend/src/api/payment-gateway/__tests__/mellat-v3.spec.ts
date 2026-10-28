@@ -1,531 +1,229 @@
-/**
- * Mellat v3 payment gateway tests - REAL IMPLEMENTATION
- * Tests actual service logic with mocked MellatCheckout library
- */
+const mockInitialize = jest.fn();
+const mockPay = jest.fn();
+const mockVerify = jest.fn();
+const mockSettle = jest.fn();
+const mockReverse = jest.fn();
+const mockInquiry = jest.fn();
+const mockPackagePaymentRequest = jest.fn();
 
-import { createStrapiMock } from '../../../__tests__/mocks/factories';
+jest.mock("mellat-checkout", () => jest.fn().mockImplementation((config) => ({
+  config,
+  initialize: mockInitialize,
+  paymentRequest: mockPackagePaymentRequest,
+  client: {
+    bpPayRequest: mockPay,
+    bpVerifyRequest: mockVerify,
+    bpSettleRequest: mockSettle,
+    bpReversalRequest: mockReverse,
+    bpInquiryRequest: mockInquiry,
+  },
+})));
 
-// Mock mellat-checkout library
-const mockMellatPayment = jest.fn();
-const mockMellatVerify = jest.fn();
-const mockMellatSettle = jest.fn();
-const mockMellatReverse = jest.fn();
+import MellatCheckout from "mellat-checkout";
+import createService, { mellatTerminalFingerprint } from "../services/mellat-v3";
 
-jest.mock('mellat-checkout', () => {
-  return jest.fn().mockImplementation(() => ({
-    paymentRequest: mockMellatPayment,
-    verifyPayment: mockMellatVerify,
-    settlePayment: mockMellatSettle,
-    reversalRequest: mockMellatReverse,
-  }));
-});
-
-// Import service AFTER mocking
-let mellatServiceFactory: any;
-
-describe('mellat-checkout SDK surface (regression guard)', () => {
-  it('exposes reversalRequest, not a reversePayment method that was never real', () => {
-    // Bypasses the jest.mock above to inspect the actual installed package.
-    // mellat-v3.ts previously called `mellat.reversePayment(...)`, a method
-    // this SDK has never exported; every real reversal call threw a
-    // TypeError, silently caught into `{success:false}`. Both spec files'
-    // mocks fabricated a `reversePayment` key, which is exactly how that
-    // masked the bug — this test reads the real export list so a future
-    // rename typo (in either direction) fails loudly here instead.
-    const RealMellatCheckout = jest.requireActual('mellat-checkout');
-    const methods = Object.getOwnPropertyNames(RealMellatCheckout.prototype);
-
-    expect(methods).toContain('reversalRequest');
-    expect(methods).not.toContain('reversePayment');
-  });
-});
-
-describe('Mellat v3 Payment Gateway - Real Service', () => {
-  let mockStrapi: any;
-  let service: any;
-
-  beforeAll(async () => {
-    // Dynamic import after mocks are set up
-    mellatServiceFactory = (await import('../services/mellat-v3')).default;
-  });
+describe("Mellat v3 raw SOAP adapter", () => {
+  let service: ReturnType<typeof createService>;
+  let log: Record<string, jest.Mock>;
+  const payment = { orderId: "9223372036854775807", amount: 12345, userId: 12 };
+  const tuple = {
+    orderId: "9223372036854775807",
+    saleOrderId: "9223372036854775807",
+    saleReferenceId: "9007199254740993",
+  };
+  const reply = (mock: jest.Mock, value: unknown) => mock.mockImplementation(
+    (_args, callback) => callback(null, value),
+  );
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    const mock = createStrapiMock();
-    mockStrapi = mock.strapi;
-
-    // Create service instance
-    service = mellatServiceFactory({ strapi: mockStrapi });
+    jest.resetAllMocks();
+    process.env.MELLAT_TERMINAL_ID = "1234567";
+    process.env.MELLAT_USERNAME = "merchant-user";
+    process.env.MELLAT_PASSWORD = "never-log-this-password";
+    process.env.MELLAT_GATEWAY_URL = "https://gateway.test.invalid/pgw";
+    process.env.URL = "https://api.store.test/base?ignored=true";
+    // resetAllMocks resets the mocked constructor too.
+    (MellatCheckout as unknown as jest.Mock).mockImplementation((config) => ({
+      config,
+      initialize: mockInitialize,
+      paymentRequest: mockPackagePaymentRequest,
+      client: {
+        bpPayRequest: mockPay, bpVerifyRequest: mockVerify, bpSettleRequest: mockSettle,
+        bpReversalRequest: mockReverse, bpInquiryRequest: mockInquiry,
+      },
+    }));
+    mockInitialize.mockResolvedValue(undefined);
+    reply(mockPay, { return: "0,aBcDEF123" });
+    for (const mock of [mockVerify, mockSettle, mockReverse, mockInquiry]) reply(mock, { return: "0" });
+    log = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    service = createService({ strapi: { log } as any });
   });
 
-  describe('createMellatClient - REAL client creation', () => {
-    it('should throw error when MELLAT_TERMINAL_ID is missing', () => {
-      const originalTerminalId = process.env.MELLAT_TERMINAL_ID;
-      delete process.env.MELLAT_TERMINAL_ID;
+  it("initializes the package, calls raw SOAP once, and preserves long IDs and RefId case", async () => {
+    const result = await service.requestPayment({ ...payment, includePayerId: true });
 
-      expect(() => service.createMellatClient()).toThrow(
-        'Mellat gateway credentials not configured'
-      );
-
-      // Restore
-      process.env.MELLAT_TERMINAL_ID = originalTerminalId;
-    });
-
-    it('should throw error when MELLAT_USERNAME is missing', () => {
-      const originalUsername = process.env.MELLAT_USERNAME;
-      delete process.env.MELLAT_USERNAME;
-
-      expect(() => service.createMellatClient()).toThrow(
-        'Mellat gateway credentials not configured'
-      );
-
-      // Restore
-      process.env.MELLAT_USERNAME = originalUsername;
-    });
-
-    it('should throw error when MELLAT_PASSWORD is missing', () => {
-      const originalPassword = process.env.MELLAT_PASSWORD;
-      delete process.env.MELLAT_PASSWORD;
-
-      expect(() => service.createMellatClient()).toThrow(
-        'Mellat gateway credentials not configured'
-      );
-
-      // Restore
-      process.env.MELLAT_PASSWORD = originalPassword;
-    });
-
-    it('should create Mellat client with environment configuration', () => {
-      // ✅ Call REAL method
-      const client = service.createMellatClient();
-
-      expect(client).toBeDefined();
-      expect(mockStrapi.log.info).toHaveBeenCalledWith(
-        '[Mellat] Creating client with URL:',
-        expect.objectContaining({
-          apiUrl: expect.stringContaining('wsdl'),
-        })
-      );
-    });
-
-    it('should append ?wsdl to URL if missing - REAL URL formatting', () => {
-      process.env.MELLAT_GATEWAY_URL = 'https://test.example.com/pgw';
-
-      const client = service.createMellatClient();
-
-      expect(mockStrapi.log.info).toHaveBeenCalledWith(
-        '[Mellat] Creating client with URL:',
-        expect.objectContaining({
-          apiUrl: 'https://test.example.com/pgw?wsdl',
-        })
-      );
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
+    expect(mockPay).toHaveBeenCalledTimes(1);
+    expect(mockPackagePaymentRequest).not.toHaveBeenCalled();
+    expect(mockPay).toHaveBeenCalledWith(expect.objectContaining({
+      terminalId: "1234567", userName: "merchant-user", userPassword: "never-log-this-password",
+      orderId: "9223372036854775807", amount: 123450, payerId: "12",
+      callBackUrl: "https://api.store.test/api/orders/payment-callback",
+      localDate: expect.stringMatching(/^\d{8}$/), localTime: expect.stringMatching(/^\d{6}$/),
+    }), expect.any(Function), { timeout: 15000 });
+    expect(result).toMatchObject({
+      success: true, ambiguous: false, resCode: 0, rawResCode: "0", refId: "aBcDEF123",
+      requestedAmountIrr: 123450, saleOrderId: "9223372036854775807",
+      terminalFingerprint: mellatTerminalFingerprint(),
+      redirectUrl: "https://bpm.shaparak.ir/pgwchannel/startpay.mellat",
+      requestId: expect.stringMatching(/^REQ-\d+-[a-z0-9]+$/),
     });
   });
 
-  describe('formatCallbackUrl - REAL URL formatting', () => {
-    it('should return absolute URL when provided', () => {
-      const absoluteUrl = 'https://custom.example.com/callback';
+  it("sends an already-IRR amount without converting it again and defaults payerId to zero", async () => {
+    await service.requestPayment({ ...payment, amountInRial: true });
+    expect(mockPay.mock.calls[0][0]).toMatchObject({ amount: 12345, payerId: "0" });
+  });
 
-      // ✅ Call REAL method
-      const result = service.formatCallbackUrl(absoluteUrl);
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER])(
+    "rejects invalid or overflowing toman amount %s before creating a client", async (amount) => {
+      const result = await service.requestPayment({ ...payment, amount });
+      expect(result).toMatchObject({ success: false, ambiguous: false, errorCode: "MELLAT_INVALID_AMOUNT" });
+      expect(MellatCheckout).not.toHaveBeenCalled();
+      expect(mockPay).not.toHaveBeenCalled();
+    },
+  );
 
-      expect(result).toBe(absoluteUrl);
+  it.each(["0", "-1", "1e9", " 1", "9223372036854775808", 9007199254740992])(
+    "rejects invalid order ID %s before SOAP", async (orderId) => {
+      expect(await service.requestPayment({ ...payment, orderId })).toMatchObject({
+        success: false, ambiguous: false, errorCode: "MELLAT_INVALID_ID",
+      });
+      expect(mockPay).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "https://evil.test/callback", "//evil.test/path", "javascript:alert(1)",
+    "https://api.store.test/api/wallet/payment-callback", "/api/wallet/payment-callback",
+  ])("ignores callbackURL override %s", async (callbackURL) => {
+    await service.requestPayment({ ...payment, callbackURL });
+    expect(mockPay.mock.calls[0][0].callBackUrl).toBe("https://api.store.test/api/orders/payment-callback");
+  });
+
+  it("allows the internal wallet purpose while still deriving its URL from server configuration", async () => {
+    await service.requestPayment({ ...payment, callbackPurpose: "wallet", callbackURL: "https://evil.test" });
+    expect(mockPay.mock.calls[0][0].callBackUrl).toBe("https://api.store.test/api/wallet/payment-callback");
+  });
+
+  it("fails closed for an invalid server callback base", async () => {
+    process.env.URL = "https://user:password@api.store.test";
+    expect(await service.requestPayment(payment)).toMatchObject({
+      success: false, ambiguous: false, errorCode: "MELLAT_CALLBACK_INVALID",
     });
+    expect(mockPay).not.toHaveBeenCalled();
+  });
 
-    it('should generate production callback from environment', () => {
-      process.env.URL = 'https://api.infinitycolor.co/';
-
-      const result = service.formatCallbackUrl();
-
-      expect(result).toBe('https://api.infinitycolor.co/api/orders/payment-callback');
-    });
-
-    it('should handle URLs with trailing slashes', () => {
-      process.env.URL = 'https://api.example.com/';
-
-      const result = service.formatCallbackUrl();
-
-      expect(result).toBe('https://api.example.com/api/orders/payment-callback');
+  it("preserves a definite numeric provider rejection", async () => {
+    reply(mockPay, { return: "62" });
+    expect(await service.requestPayment(payment)).toMatchObject({
+      success: false, ambiguous: false, resCode: 62, rawResCode: "62", error: "Gateway error: 62",
     });
   });
 
-  describe('generateRequestId - REAL ID generation', () => {
-    it('should generate unique request IDs', () => {
-      // ✅ Call REAL method multiple times
-      const id1 = service.generateRequestId();
-      const id2 = service.generateRequestId();
-
-      expect(id1).toMatch(/^REQ-\d+-[a-z0-9]+$/);
-      expect(id2).toMatch(/^REQ-\d+-[a-z0-9]+$/);
-      expect(id1).not.toBe(id2);
+  it("preserves a comma-prefixed rejection code but rejects its malformed fields", async () => {
+    reply(mockPay, { return: "62,DoNotTreatAsRefId" });
+    const result = await service.requestPayment(payment);
+    expect(result).toMatchObject({
+      success: false, ambiguous: true, resCode: 62, rawResCode: "62", errorCode: "MELLAT_MALFORMED_RESPONSE",
     });
+    expect(result.refId).toBeUndefined();
+  });
 
-    it('should use custom prefix', () => {
-      const id = service.generateRequestId('VERIFY');
-
-      expect(id).toMatch(/^VERIFY-\d+-[a-z0-9]+$/);
+  it.each([
+    undefined, { RefId: "arbitrary" }, { return: 0 }, { return: "0" }, { return: "0," },
+    { return: "0, " }, { return: "0,ref,extra" }, { return: "garbage,ref" },
+    { return: "0,ref", extra: "unexpected" },
+  ])("never accepts malformed payment response %j", async (response) => {
+    reply(mockPay, response);
+    expect(await service.requestPayment(payment)).toMatchObject({
+      success: false, ambiguous: true, errorCode: "MELLAT_MALFORMED_RESPONSE",
     });
   });
 
-  describe('logMellatErrorCode - REAL error logging', () => {
-    it('should log known error codes with Persian descriptions', () => {
-      const requestId = 'TEST-123';
-
-      // ✅ Test known error codes
-      service.logMellatErrorCode(requestId, 11); // Invalid card
-      expect(mockStrapi.log.error).toHaveBeenCalledWith(
-        expect.stringContaining('[TEST-123] Mellat Error Code 11:'),
-      );
-      expect(mockStrapi.log.error).toHaveBeenCalledWith(
-        expect.stringContaining('شماره کارت نامعتبر است'),
-      );
-
-      service.logMellatErrorCode(requestId, 17); // User cancelled
-      expect(mockStrapi.log.error).toHaveBeenCalledWith(
-        expect.stringContaining('کاربر از انجام تراکنش منصرف شده است'),
-      );
+  it("does not retry initiation on transport error or expose SOAP payloads", async () => {
+    const error = Object.assign(new Error("SOAP body userPassword=never-log-this-password"), {
+      code: "ECONNRESET", errno: -104, body: "sensitive SOAP",
     });
-
-    it('should handle unknown error codes', () => {
-      service.logMellatErrorCode('REQ-999', 9999);
-
-      expect(mockStrapi.log.error).toHaveBeenCalledWith(
-        expect.stringContaining('Unknown error code: 9999'),
-      );
-    });
+    mockPay.mockImplementation((_args, callback) => callback(error));
+    const result = await service.requestPayment(payment);
+    expect(mockPay).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ success: false, ambiguous: true, errorCode: "ECONNRESET", errorErrno: -104 });
+    const exposed = JSON.stringify({ result, logs: Object.values(log).map((fn) => fn.mock.calls) });
+    expect(exposed).not.toContain("never-log-this-password");
+    expect(exposed).not.toContain("merchant-user");
+    expect(exposed).not.toContain("sensitive SOAP");
   });
 
-  describe('requestPayment - REAL payment request with retry logic', () => {
-    it('should request payment successfully on first try', async () => {
-      // Mock successful payment request
-      mockMellatPayment.mockResolvedValue({
-        RefId: '1234567890',
-      });
-
-      const params = {
-        orderId: 100,
-        amount: 150000, // Toman
-        userId: 1,
-        callbackURL: 'https://example.com/callback',
-        contractId: 50,
-      };
-
-      // ✅ Call REAL method
-      const result = await service.requestPayment(params);
-
-      expect(result.success).toBe(true);
-      expect(result.refId).toBe('1234567890');
-      expect(result.redirectUrl).toContain('bpm.shaparak.ir');
-      expect(mockMellatPayment).toHaveBeenCalledTimes(1);
-      expect(mockMellatPayment).toHaveBeenCalledWith({
-        amount: 1500000, // ✅ Verify Toman → Rial conversion (× 10)
-        orderId: 100,
-        callbackUrl: 'https://example.com/callback', // lowercase b
-      });
-    });
-
-    it('should retry on failure and succeed - REAL retry logic', async () => {
-      // Mock: fail first, succeed second
-      mockMellatPayment
-        .mockRejectedValueOnce(new Error('Network timeout'))
-        .mockResolvedValueOnce({ RefId: '9876543210' });
-
-      const params = {
-        orderId: 200,
-        amount: 250000,
-        userId: 2,
-        callbackURL: 'https://example.com/callback',
-      };
-
-      // ✅ Call REAL method with retry logic
-      const result = await service.requestPayment(params);
-
-      expect(result.success).toBe(true);
-      expect(result.refId).toBe('9876543210');
-      // ✅ Verify retry happened (called twice)
-      expect(mockMellatPayment).toHaveBeenCalledTimes(2);
-      expect(mockStrapi.log.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Mellat payment request attempt 1 failed'),
-        expect.any(Object)
-      );
-    });
-
-    it('should fail after max retries - REAL error handling', async () => {
-      // Mock: fail all attempts
-      mockMellatPayment
-        .mockRejectedValueOnce(new Error('Timeout 1'))
-        .mockRejectedValueOnce(new Error('Timeout 2'))
-        .mockRejectedValueOnce(new Error('Timeout 3'));
-
-      const params = {
-        orderId: 300,
-        amount: 100000,
-        userId: 3,
-        callbackURL: 'https://example.com/callback',
-      };
-
-      const result = await service.requestPayment(params);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Timeout');
-      // ✅ Verify retried 2 times (total 3 attempts: 1 + 2 retries)
-      expect(mockMellatPayment).toHaveBeenCalledTimes(3);
-      expect(mockStrapi.log.error).toHaveBeenCalled();
-    });
-
-    it('should handle Mellat error response codes', async () => {
-      // Mock Mellat returning error code 17 (user cancelled)
-      mockMellatPayment.mockResolvedValue({
-        ResCode: 17,
-      });
-
-      const params = {
-        orderId: 400,
-        amount: 200000,
-        userId: 4,
-        callbackURL: 'https://example.com/callback',
-      };
-
-      const result = await service.requestPayment(params);
-
-      expect(result.success).toBe(false);
-      expect(result.resCode).toBe(17);
-      expect(mockStrapi.log.error).toHaveBeenCalledWith(
-        expect.stringContaining('Mellat Error Code 17:'),
-      );
-    });
-
-    it('should convert amount from Toman to Rial correctly', async () => {
-      mockMellatPayment.mockResolvedValue({ RefId: 'test-ref' });
-
-      const params = {
-        orderId: 500,
-        amount: 350000, // 350k Toman
-        userId: 5,
-        callbackURL: 'https://example.com/callback',
-      };
-
-      await service.requestPayment(params);
-
-      // ✅ Verify REAL conversion: 350,000 Toman → 3,500,000 Rial
-      expect(mockMellatPayment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          amount: 3500000,
-        })
-      );
-    });
+  it("stops before SOAP if initialization fails", async () => {
+    mockInitialize.mockRejectedValue(new Error("sensitive WSDL fault"));
+    expect(await service.requestPayment(payment)).toMatchObject({ success: false, ambiguous: true });
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
+    expect(mockPay).not.toHaveBeenCalled();
   });
 
-  describe('verifyTransaction - REAL verification', () => {
-    it('should verify transaction successfully', async () => {
-      mockMellatVerify.mockResolvedValue({
-        ResCode: 0, // Success
-      });
-
-      const params = {
-        orderId: '100',
-        saleOrderId: '100',
-        saleReferenceId: '123456789',
-      };
-
-      // ✅ Call REAL method
-      const result = await service.verifyTransaction(params);
-
-      expect(result.success).toBe(true);
-      expect(mockMellatVerify).toHaveBeenCalledWith({
-        orderId: 100,
-        saleOrderId: 100,
-        saleReferenceId: 123456789,
-      });
+  it("configures a 15-second WSDL timeout and snapshots credentials per client", () => {
+    const first = service.createMellatClient();
+    process.env.MELLAT_USERNAME = "second-user";
+    const second = service.createMellatClient();
+    expect(first.config).toMatchObject({
+      username: "merchant-user", timeout: 15000, apiUrl: "https://gateway.test.invalid/pgw?wsdl",
     });
-
-    it('should handle verification failure - REAL error handling', async () => {
-      mockMellatVerify.mockResolvedValue({
-        ResCode: 42, // Sale transaction not found
-      });
-
-      const params = {
-        orderId: '200',
-        saleOrderId: '200',
-        saleReferenceId: '987654321',
-      };
-
-      const result = await service.verifyTransaction(params);
-
-      expect(result.success).toBe(false);
-      expect(result.resCode).toBe(42);
-      expect(mockStrapi.log.error).toHaveBeenCalledWith(
-        expect.stringContaining('Mellat Error Code 42:'),
-      );
-    });
-
-    it('should handle verify exceptions', async () => {
-      mockMellatVerify.mockRejectedValue(new Error('SOAP connection failed'));
-
-      const params = {
-        orderId: '300',
-        saleOrderId: '300',
-        saleReferenceId: '111111111',
-      };
-
-      const result = await service.verifyTransaction(params);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('SOAP connection failed');
-    });
+    expect(second.config.username).toBe("second-user");
   });
 
-  describe('settleTransaction - REAL settlement', () => {
-    it('should settle verified transaction', async () => {
-      mockMellatSettle.mockResolvedValue({
-        ResCode: 0,
-      });
-
-      const params = {
-        orderId: '100',
-        saleOrderId: '100',
-        saleReferenceId: '555555555',
-      };
-
-      // ✅ Call REAL method
-      const result = await service.settleTransaction(params);
-
-      expect(result.success).toBe(true);
-      expect(mockMellatSettle).toHaveBeenCalledWith({
-        orderId: 100,
-        saleOrderId: 100,
-        saleReferenceId: 555555555,
-      });
+  it("rejects missing credentials before initialization", async () => {
+    delete process.env.MELLAT_PASSWORD;
+    expect(await service.requestPayment(payment)).toMatchObject({
+      success: false, ambiguous: false, errorCode: "MELLAT_CONFIG_INVALID",
     });
-
-    it('should handle settlement errors', async () => {
-      mockMellatSettle.mockResolvedValue({
-        ResCode: 45, // Already settled
-      });
-
-      const params = {
-        orderId: '200',
-        saleOrderId: '200',
-        saleReferenceId: '666666666',
-      };
-
-      const result = await service.settleTransaction(params);
-
-      expect(result.success).toBe(false);
-      expect(result.resCode).toBe(45);
-    });
+    expect(mockInitialize).not.toHaveBeenCalled();
   });
 
-  describe('reverseTransaction - REAL reversal', () => {
-    it('should reverse transaction successfully', async () => {
-      mockMellatReverse.mockResolvedValue({
-        ResCode: 0,
-      });
-
-      const params = {
-        orderId: '100',
-        saleOrderId: '100',
-        saleReferenceId: '777777777',
-      };
-
-      // ✅ Call REAL method
-      const result = await service.reverseTransaction(params);
-
-      expect(result.success).toBe(true);
-      expect(mockMellatReverse).toHaveBeenCalledWith({
-        orderId: 100,
-        saleOrderId: 100,
-        saleReferenceId: 777777777,
-      });
+  it.each([
+    ["verifyTransaction", mockVerify, "0", true], ["verifyTransaction", mockVerify, "43", true],
+    ["verifyTransaction", mockVerify, "45", false],
+    ["settleTransaction", mockSettle, "0", true], ["settleTransaction", mockSettle, "45", true],
+    ["settleTransaction", mockSettle, "46", false],
+    ["reverseTransaction", mockReverse, "0", true], ["reverseTransaction", mockReverse, "48", true],
+    ["reverseTransaction", mockReverse, "45", false],
+    ["inquiryTransaction", mockInquiry, "42", true], ["inquiryTransaction", mockInquiry, "46", true],
+  ])("%s strictly preserves provider code %s", async (method, mock, code, success) => {
+    reply(mock as jest.Mock, { return: code });
+    const result = await service[method as string]({ ...tuple, requestedAmountIrr: 100000 });
+    expect(result).toMatchObject({
+      success, ambiguous: false, resCode: Number(code), rawResCode: code,
+      saleOrderId: tuple.saleOrderId, requestedAmountIrr: 100000,
+      terminalFingerprint: mellatTerminalFingerprint(),
     });
-
-    it('should handle reversal errors', async () => {
-      mockMellatReverse.mockResolvedValue({
-        ResCode: 45, // Already settled (cannot reverse)
-      });
-
-      const params = {
-        orderId: '200',
-        saleOrderId: '200',
-        saleReferenceId: '888888888',
-      };
-
-      const result = await service.reverseTransaction(params);
-
-      expect(result.success).toBe(false);
-      expect(result.resCode).toBe(45);
-    });
+    expect(mock).toHaveBeenCalledWith(expect.objectContaining(tuple), expect.any(Function), { timeout: 15000 });
+    expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
-  describe('Integration scenarios', () => {
-    it('should handle full successful payment flow', async () => {
-      // Request → Verify → Settle
-      mockMellatPayment.mockResolvedValue({ RefId: 'ABC123' });
-      mockMellatVerify.mockResolvedValue({ ResCode: 0 });
-      mockMellatSettle.mockResolvedValue({ ResCode: 0 });
-
-      // ✅ Request payment
-      const paymentResult = await service.requestPayment({
-        orderId: 999,
-        amount: 500000,
-        userId: 10,
-        callbackURL: 'https://example.com/callback',
+  it.each(["verifyTransaction", "settleTransaction", "reverseTransaction", "inquiryTransaction"])(
+    "%s rejects malformed provider success", async (method) => {
+      for (const mock of [mockVerify, mockSettle, mockReverse, mockInquiry]) reply(mock, { return: "0,unexpected" });
+      expect(await service[method]({ ...tuple })).toMatchObject({
+        success: false, ambiguous: true, resCode: 0, errorCode: "MELLAT_MALFORMED_RESPONSE",
       });
+    },
+  );
 
-      expect(paymentResult.success).toBe(true);
-      expect(paymentResult.refId).toBe('ABC123');
-
-      // ✅ Verify payment
-      const verifyResult = await service.verifyTransaction({
-        orderId: '999',
-        saleOrderId: '999',
-        saleReferenceId: 'ABC123',
-      });
-
-      expect(verifyResult.success).toBe(true);
-
-      // ✅ Settle payment
-      const settleResult = await service.settleTransaction({
-        orderId: '999',
-        saleOrderId: '999',
-        saleReferenceId: 'ABC123',
-      });
-
-      expect(settleResult.success).toBe(true);
+  it("validates the complete transaction tuple before sending anything", async () => {
+    expect(await service.settleTransaction({ ...tuple, saleReferenceId: "not-a-long" })).toMatchObject({
+      success: false, ambiguous: false, errorCode: "MELLAT_INVALID_ID",
     });
-
-    it('should handle payment failure and reversal flow', async () => {
-      mockMellatPayment.mockResolvedValue({ RefId: 'DEF456' });
-      mockMellatVerify.mockResolvedValue({ ResCode: 12 }); // Insufficient balance
-      mockMellatReverse.mockResolvedValue({ ResCode: 0 });
-
-      const paymentResult = await service.requestPayment({
-        orderId: 888,
-        amount: 1000000,
-        userId: 20,
-        callbackURL: 'https://example.com/callback',
-      });
-
-      expect(paymentResult.success).toBe(true);
-
-      // ✅ Verification fails
-      const verifyResult = await service.verifyTransaction({
-        orderId: '888',
-        saleOrderId: '888',
-        saleReferenceId: 'DEF456',
-      });
-
-      expect(verifyResult.success).toBe(false);
-      expect(verifyResult.resCode).toBe(12);
-
-      // ✅ Reverse the transaction
-      const reverseResult = await service.reverseTransaction({
-        orderId: '888',
-        saleOrderId: '888',
-        saleReferenceId: 'DEF456',
-      });
-
-      expect(reverseResult.success).toBe(true);
-    });
+    expect(mockInitialize).not.toHaveBeenCalled();
+    expect(mockSettle).not.toHaveBeenCalled();
   });
 });

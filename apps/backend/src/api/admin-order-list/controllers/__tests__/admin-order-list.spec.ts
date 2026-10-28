@@ -1,3 +1,5 @@
+jest.mock("../../../../utils/orderDeliverySnapshot", () => ({ loadOrderSnapshotRecipientNames: jest.fn(async () => new Map()) }));
+import { loadOrderSnapshotRecipientNames } from "../../../../utils/orderDeliverySnapshot";
 jest.mock("@strapi/utils", () => ({
   sanitize: { contentAPI: { output: jest.fn(async (rows) => rows) } },
 }));
@@ -39,6 +41,18 @@ function installStrapi(rows: any[] = [], transactionRows: any[] = []) {
 }
 
 describe("bounded admin orders list", () => {
+  it("keeps the captured recipient after a customer changes a saved address, in one batch", async () => {
+    const { findMany } = installStrapi([
+      { id: 10, delivery_address: { FullName: "گیرنده ویرایش شده" } },
+      { id: 11, delivery_address: { FullName: "گیرنده قدیمی" } },
+    ]);
+    (loadOrderSnapshotRecipientNames as jest.Mock).mockResolvedValueOnce(new Map([[10, "گیرنده سفارش"]]));
+    const context = createContext(); await controller.query(context);
+    expect(context.body.data.map((row: any) => row.attributes.recipientName)).toEqual(["گیرنده سفارش", "گیرنده قدیمی"]);
+    expect(loadOrderSnapshotRecipientNames).toHaveBeenLastCalledWith((global as any).strapi, [10, 11]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the order-read capability policy on every orders-list route", () => {
     const orderRead = {
       name: "global::require-capability",

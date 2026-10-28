@@ -95,8 +95,13 @@ export function resolveReturnTarget(
 
   try {
     const target = new URL(value);
+    // Local development uses HTTP; still require an explicitly trusted origin,
+    // including its port. Every non-loopback destination must use HTTPS.
+    const trustedLocalHttp =
+      target.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
     if (
-      target.protocol !== "https:" ||
+      (target.protocol !== "https:" && !trustedLocalHttp) ||
       target.username ||
       target.password ||
       !allowed.has(target.origin)

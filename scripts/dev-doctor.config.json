@@ -1,0 +1,164 @@
+{
+  "name": "infinity",
+  "nodeMajor": 20,
+  "nodeMinimum": "20.19.0",
+  "env": {
+    "apps/admin/.env.local": {
+      "required": [],
+      "localUrls": [
+        "ADMIN_URL",
+        "NEXT_PUBLIC_ADMIN_URL",
+        "NEXT_PUBLIC_STOREFRONT_URL",
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_API_BASE_URL",
+        "NEXT_PUBLIC_IMAGE_BASE_URL",
+        "NEXT_PUBLIC_AUTH_ORIGIN",
+        "NEXT_PUBLIC_AUTH_URL",
+        "AUTH_SERVER_ORIGIN",
+        "E2E_API_PROXY_TARGET"
+      ],
+      "exact": {},
+      "empty": [],
+      "secrets": []
+    },
+    "apps/auth/.env.local": {
+      "required": [],
+      "localUrls": [
+        "BETTER_AUTH_URL",
+        "AUTH_DATABASE_URL",
+        "AUTH_TRUSTED_STOREFRONT_ORIGINS",
+        "AUTH_TRUSTED_ADMIN_ORIGINS",
+        "AUTH_DEFAULT_STOREFRONT_ORIGIN",
+        "STRAPI_INTERNAL_URL",
+        "AUTH_JWT_ISSUER",
+        "AUTH_JWT_AUDIENCE",
+        "AUTH_MIGRATION_DATABASE_URL"
+      ],
+      "exact": {},
+      "empty": [],
+      "secrets": []
+    },
+    "apps/backend/.env": {
+      "required": [
+        "APP_KEYS",
+        "API_TOKEN_SALT",
+        "ADMIN_JWT_SECRET",
+        "TRANSFER_TOKEN_SALT",
+        "JWT_SECRET",
+        "DATABASE_CLIENT",
+        "DATABASE_HOST",
+        "DATABASE_PORT",
+        "DATABASE_NAME",
+        "DATABASE_USERNAME",
+        "DATABASE_PASSWORD"
+      ],
+      "localUrls": [
+        "REDIS_URL",
+        "QUEUE_REDIS_URL",
+        "ZARINPAL_CALLBACK_URL",
+        "NEXTJS_REVALIDATION_URL",
+        "BETTER_AUTH_JWKS_URL",
+        "BETTER_AUTH_JWT_ISSUER",
+        "BETTER_AUTH_JWT_AUDIENCE"
+      ],
+      "exact": {
+        "DISABLE_BACKGROUND_JOBS": "true",
+        "SMS_ENABLED": "false",
+        "BETTER_AUTH_BRIDGE_ENABLED": "true",
+        "LEGACY_AUTH_JWT_ISSUANCE_ENABLED": "false"
+      },
+      "database": "infinity_local",
+      "empty": [
+        "IP_PANEL_API_KEY"
+      ],
+      "secrets": [
+        "API_TOKEN_SALT",
+        "ADMIN_JWT_SECRET",
+        "TRANSFER_TOKEN_SALT",
+        "JWT_SECRET"
+      ]
+    },
+    "apps/frontend/.env.local": {
+      "required": [],
+      "localUrls": [
+        "NEXT_PUBLIC_API_BASE_URL",
+        "NEXT_PUBLIC_IMAGE_BASE_URL",
+        "STRAPI_INTERNAL_URL",
+        "NEXT_PUBLIC_ALLOWED_REDIRECT_ORIGINS",
+        "NEXT_PUBLIC_AUTH_ORIGIN",
+        "AUTH_SERVER_ORIGIN",
+        "NEXT_PUBLIC_SITE_URL"
+      ],
+      "exact": {},
+      "empty": [],
+      "secrets": []
+    },
+    "apps/social/.env.local": {
+      "required": [],
+      "localUrls": [
+        "NEXT_PUBLIC_API_BASE_URL",
+        "NEXT_PUBLIC_IMAGE_BASE_URL",
+        "NEXT_PUBLIC_SITE_URL",
+        "NEXT_PUBLIC_AUTH_ORIGIN",
+        "AUTH_SERVER_ORIGIN"
+      ],
+      "exact": {},
+      "empty": [],
+      "secrets": []
+    }
+  },
+  "tools": [
+    {
+      "command": "git",
+      "args": [
+        "--version"
+      ],
+      "label": "Git"
+    },
+    {
+      "command": "corepack",
+      "args": [
+        "--version"
+      ],
+      "label": "Corepack"
+    },
+    {
+      "command": "docker",
+      "args": [
+        "compose",
+        "version"
+      ],
+      "label": "Docker Compose",
+      "minimum": "2.0.0"
+    }
+  ],
+  "ports": [
+    {
+      "label": "PostgreSQL",
+      "port": 5432
+    },
+    {
+      "label": "Redis",
+      "port": 6379
+    },
+    {
+      "label": "API",
+      "port": 1337
+    },
+    {
+      "label": "Web",
+      "port": 2888
+    }
+  ],
+  "packageManager": "pnpm@10.28.2",
+  "health": [
+    {
+      "label": "Backend dependency health",
+      "url": "http://localhost:1337/api/_health",
+      "expect": {
+        "checks.db": "ok",
+        "checks.redis": "ok"
+      }
+    }
+  ]
+}

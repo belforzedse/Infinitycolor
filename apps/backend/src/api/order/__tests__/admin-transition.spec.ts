@@ -77,7 +77,7 @@ describe("adminTransitionOrderHandler", () => {
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
-    expect(raw).toHaveBeenCalledTimes(3);
+    expect(raw).toHaveBeenCalledTimes(4);
     expect(raw).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE orders SET status = ?"),
       ["Done", 44, "Started"],
@@ -100,6 +100,10 @@ describe("adminTransitionOrderHandler", () => {
       null,
       "Store manager",
       expect.objectContaining({ raw: expect.any(Function) }),
+    );
+    expect(raw).toHaveBeenCalledWith(
+      expect.stringContaining("shipping_sms_due_at = COALESCE(shipping_sms_due_at, NOW() + INTERVAL '48 hours')"),
+      [44],
     );
     expect(mockedNotify).toHaveBeenCalledTimes(1);
     expect(mockedNotify).toHaveBeenCalledWith(strapi, {
@@ -236,7 +240,7 @@ describe("adminTransitionOrderHandler", () => {
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
-    expect(raw).toHaveBeenCalledTimes(2);
+    expect(raw).toHaveBeenCalledTimes(3);
     expect(raw).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE orders SET status = ?"),
       ["Done", 44, "Started"],

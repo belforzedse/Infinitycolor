@@ -1,5 +1,5 @@
 # syntax=docker.arvancloud.ir/docker/dockerfile:1.7
-FROM docker.arvancloud.ir/library/node:20-alpine AS dependencies
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS dependencies
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -10,6 +10,9 @@ ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
 ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
 ENV STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS}
 ENV STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED}
+# Strapi's constructor asks registry.npmjs.org for its latest version; when that
+# request stalls, `strapi build` cannot exit until TCP gives up (15+ minutes).
+ENV STRAPI_DISABLE_UPDATE_NOTIFICATION=true
 ENV NODE_OPTIONS=${NODE_OPTIONS}
 ENV NODE_ENV=production
 # Build must not use Redis rest-cache (no broker in builder); production runtime sets redis via deploy env.
@@ -94,7 +97,7 @@ RUN mkdir -p /runtime \
     && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /runtime/public/uploads/ \
     && echo "backend runtime assembly complete"
 
-FROM docker.arvancloud.ir/library/node:20-alpine AS runner
+FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS runner
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -105,6 +108,7 @@ ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
 ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
 ENV NODE_ENV=production \
     STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED} \
+    STRAPI_DISABLE_UPDATE_NOTIFICATION=true \
     STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS} \
     NODE_OPTIONS=${NODE_OPTIONS}
 

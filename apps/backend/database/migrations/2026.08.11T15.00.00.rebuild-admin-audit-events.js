@@ -129,6 +129,14 @@ async function ensureUniqueConstraint(knex, columnName, constraintName) {
  * Keep in sync with apps/backend/src/audit/catalog.ts.
  */
 const CATALOG_TITLE_TO_EVENT_KEY = {
+  "تغییرات محصول ذخیره شد": "products.edit_committed",
+  "Product edit committed": "products.edit_committed",
+  "ویرایش محصول آغاز شد": "products.edit_acquired",
+  "Product editing acquired": "products.edit_acquired",
+  "دسترسی ویرایش محصول منتقل شد": "products.edit_taken_over",
+  "Product editing taken over": "products.edit_taken_over",
+  "ذخیره تغییرات محصول رد شد": "products.edit_rejected",
+  "Product edit rejected": "products.edit_rejected",
   "ورود موفق": "authentication.login_succeeded",
   "Login succeeded": "authentication.login_succeeded",
   "ورود ناموفق": "authentication.login_failed",
@@ -262,6 +270,10 @@ const EXACT_TITLE_RULES = [
  * Kept in sync by src/audit/__tests__/storage-backfill-guard.spec.ts.
  */
 const CATALOG_KEY_TO_DOMAIN_OPERATION = {
+  "products.edit_committed": ["products", "edit"],
+  "products.edit_acquired": ["products", "edit"],
+  "products.edit_taken_over": ["products", "edit"],
+  "products.edit_rejected": ["products", "edit"],
   "authentication.login_succeeded": ["authentication", "login"],
   "authentication.login_failed": ["authentication", "login"],
   "authentication.logout": ["authentication", "logout"],

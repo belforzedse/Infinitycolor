@@ -211,6 +211,9 @@ export default (_config: any, { strapi }: { strapi: Strapi }) => {
       return;
     }
 
+    // Ownership credentials and staff snapshots must never become public cache entries.
+    if (String(ctx.response.headers["cache-control"] || "").includes("no-store")) return;
+
     // Generate ETag from response body
     const responseBody = ctx.body;
     const etag = generateETag(responseBody);

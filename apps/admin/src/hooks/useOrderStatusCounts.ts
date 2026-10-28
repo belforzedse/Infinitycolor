@@ -7,12 +7,14 @@ import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedF
 import {
   getAdminOrderCounts,
   type AdminOrderStatusCounts,
+  type AdminOrderDeliverySearch,
 } from "@/services/super-admin/orders/list";
 
 type Options = {
   filters: AdvancedFilterItem[];
   search: string;
   shippingMethodCodes: string[];
+  deliverySearch?: AdminOrderDeliverySearch;
 };
 
 type State = {
@@ -26,13 +28,15 @@ export function useOrderStatusCounts({
   filters,
   search,
   shippingMethodCodes,
+  deliverySearch = {},
 }: Options) {
   const [revision, setRevision] = useState(0);
   const tableRefresh = useAtomValue(refreshTable);
   const [state, setState] = useState<State>({});
   const filtersKey = JSON.stringify(filters);
   const shippingMethodCodesKey = JSON.stringify(shippingMethodCodes);
-  const requestKey = `${search}\u0000${filtersKey}\u0000${shippingMethodCodesKey}\u0000${revision}\u0000${tableRefresh}`;
+  const deliverySearchKey = JSON.stringify(deliverySearch);
+  const requestKey = `${search}\u0000${filtersKey}\u0000${shippingMethodCodesKey}\u0000${revision}\u0000${tableRefresh}\u0000${deliverySearchKey}`;
 
   // Row-level Anipo actions already refresh the table through this atom.
   // Keep the NeedsAttention badge count in step with the updated rows.
@@ -40,6 +44,7 @@ export function useOrderStatusCounts({
     const controller = new AbortController();
 
     void getAdminOrderCounts({
+      ...JSON.parse(deliverySearchKey),
       filters: JSON.parse(filtersKey) as AdvancedFilterItem[],
       search,
       shippingMethodCodes: JSON.parse(shippingMethodCodesKey) as string[],
@@ -62,7 +67,7 @@ export function useOrderStatusCounts({
       });
 
     return () => controller.abort();
-  }, [filtersKey, requestKey, search, shippingMethodCodesKey]);
+  }, [deliverySearchKey, filtersKey, requestKey, search, shippingMethodCodesKey]);
 
   const refresh = useCallback(() => setRevision((current) => current + 1), []);
   return {

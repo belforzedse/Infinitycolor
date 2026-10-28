@@ -858,3 +858,24 @@ describe("canonical product publication service", () => {
   });
 });
 
+// Domain-query doubles do not model the lease tables. The coordination layer
+// is exercised against PostgreSQL in product-edit-coordination.int.spec.ts.
+jest.mock("../../../../utils/catalogEdit", () => {
+  let active = false;
+  let effects: Array<() => Promise<unknown>> = [];
+  const run = async (...args: any[]) => {
+    active = true;
+    try { return await args[args.length - 1](); }
+    finally {
+      active = false;
+      const pending = effects; effects = [];
+      for (const effect of pending) await effect();
+    }
+  };
+  return {
+    catalogMutationContext: () => active ? {} : undefined,
+    coordinateCatalogCommand: run,
+    runCatalogSystemMutation: run,
+    afterCatalogCommit: async (_strapi: any, effect: () => Promise<unknown>) => { if (active) effects.push(effect); else await effect(); },
+  };
+});

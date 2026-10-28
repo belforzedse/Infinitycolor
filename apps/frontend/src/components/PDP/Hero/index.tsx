@@ -1,12 +1,16 @@
-import type {
-  ProductDetail} from "@/services/product/product";
+"use client";
+
+import { useState } from "react";
+import type { ProductDetail } from "@/services/product/product";
 import {
   formatGalleryAssets,
+  formatAllGalleryAssets,
   getDefaultProductVariation,
   hasStockForVariation,
   getProductColors,
   getProductSizes,
   getProductModels,
+  getInitialPdpSelection,
 } from "@/services/product/product";
 import PDPHeroGallery from "./Gallery";
 import PDPHeroInfo from "./Info";
@@ -18,9 +22,6 @@ type PDPHeroProps = {
 };
 
 export default function PDPHero({ productData, productId }: PDPHeroProps) {
-  // Format gallery assets from product data - return empty array if no product data
-  const assets = productData ? formatGalleryAssets(productData) : [];
-
   // Get product colors from helper function - only if productData exists
   let colors: { id: string; title: string; colorCode: string | null | undefined }[] = [];
 
@@ -70,6 +71,25 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
     }
   }
 
+  // Use the same initial selection as Info, including single-color products.
+  // Keep this state scoped to the product without remounting the cart controls.
+  const identity = `${productData?.id ?? productId}:${productData ? "ready" : "pending"}`;
+  const initialColor = getInitialPdpSelection(productData, colors, sizes, models).colorId;
+  const [gallerySelection, setGallerySelection] = useState({
+    identity,
+    colorId: initialColor,
+    hasPickedColor: false,
+    clickRevision: 0,
+  });
+  const hasPickedColor = gallerySelection.identity === identity && gallerySelection.hasPickedColor;
+  const selectedColor =
+    gallerySelection.identity === identity ? gallerySelection.colorId : initialColor;
+  const galleryClickRevision =
+    gallerySelection.identity === identity ? gallerySelection.clickRevision : 0;
+  const assets = productData ? formatAllGalleryAssets(productData) : [];
+  const initialImageId = productData
+    ? formatGalleryAssets(productData, hasPickedColor ? selectedColor : undefined)[0]?.id
+    : undefined;
   // Get default variation for pricing - return 0 if no product data
   let price = 0;
   let discountPrice: number | undefined = undefined;
@@ -90,7 +110,9 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
           typeof discountPriceStr === "string" ? parseInt(discountPriceStr, 10) : discountPriceStr;
 
         // Calculate discount percentage
-        discount = hasStockForVariation(defaultVariation, 1) ? Math.round(((price - discountPrice) / price) * 100) : 0;
+        discount = hasStockForVariation(defaultVariation, 1)
+          ? Math.round(((price - discountPrice) / price) * 100)
+          : 0;
       }
     }
   }
@@ -115,8 +137,11 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
         <Main category={product.category} title={product.title} discount={product.discount} />
       </div>
 
-      <PDPHeroGallery assets={assets} />
-
+      <PDPHeroGallery
+        key={`${identity}:${selectedColor}:${initialImageId ?? "empty"}:${galleryClickRevision}`}
+        assets={assets}
+        initialImageId={initialImageId}
+      />
       <PDPHeroInfo
         colors={colors}
         product={product}
@@ -124,6 +149,14 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
         models={models}
         productData={productData}
         productId={productId}
+        onSelectedColorChange={(colorId) =>
+          setGallerySelection((previous) => ({
+            identity,
+            colorId,
+            hasPickedColor: true,
+            clickRevision: previous.identity === identity ? previous.clickRevision + 1 : 1,
+          }))
+        }
       />
     </div>
   );

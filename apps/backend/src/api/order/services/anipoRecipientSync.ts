@@ -1,3 +1,4 @@
+import { effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
 import type { Strapi } from "@strapi/strapi";
 import { buildAnipoOrderRecipient } from "../controllers/helpers/anipoOrder";
 import {
@@ -18,7 +19,7 @@ type AnipoService = {
 };
 
 async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
-  return strapi.db.query("api::order.order").findOne({
+  const order = await strapi.db.query("api::order.order").findOne({
     where: { id: orderId },
     populate: {
       user: { populate: { user_info: true } },
@@ -31,6 +32,8 @@ async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
       order_items: { populate: { product_variation: { populate: { product: true } } } },
     },
   });
+  if (!order) return null;
+  return { ...order, delivery_address: await effectiveOrderDeliveryAddress(strapi, Number(order.id), order.delivery_address) };
 }
 
 function isActiveRegistration(order: any): boolean {

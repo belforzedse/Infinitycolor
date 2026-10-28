@@ -61,7 +61,7 @@ describe("variation prices in the admin table", () => {
 
   it("shows the new price only on rows that saved, and names the rows that did not", async () => {
     mockPut.mockImplementation(async (url: string) => {
-      if (url === "/product-variations/12") {
+      if (url === "/products/5/editor/variations/12") {
         throw { status: 400, message: "قیمت تخفیف باید کمتر از قیمت اصلی باشد" };
       }
       return { data: {} };
@@ -76,7 +76,7 @@ describe("variation prices in the admin table", () => {
 
     await waitFor(() =>
       expect(mockToastError).toHaveBeenCalledWith(
-        expect.stringContaining("M: قیمت تخفیف باید کمتر از قیمت اصلی باشد"),
+        expect.stringContaining("M: ذخیره انجام نشد"),
         expect.anything(),
       ),
     );

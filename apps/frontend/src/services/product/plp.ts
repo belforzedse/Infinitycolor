@@ -23,6 +23,11 @@ import {
   CatalogTransportError,
   type CatalogRequestShape,
 } from "@/lib/catalog-transport";
+import {
+  buildStorefrontMenuTaxonomy,
+  isSyntheticStorefrontMenuCategory,
+} from "@/utils/storefrontMenuTaxonomy";
+import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
 
 export interface PLPProduct {
   id: number;
@@ -194,6 +199,13 @@ const appendIndexedInFilter = (params: URLSearchParams, prefix: string, values: 
   });
 };
 
+/** Preserve encoded values; Strapi accepts literal bracket/operator syntax in keys. */
+export function serializePLPProductsQuery(params: URLSearchParams): string {
+  return params.toString().replace(/(^|&)([^=]+)=/g, (_match, separator: string, key: string) =>
+    `${separator}${key.replace(/%5B/gi, "[").replace(/%5D/gi, "]").replace(/%24/gi, "$")}=`,
+  );
+}
+
 export interface PLPFilterCatalogs {
   sizeTitles?: string[];
   colors?: CatalogColor[];
@@ -273,11 +285,35 @@ export function buildPLPProductsQuery(
   if (query.color && query.color.length > 0) {
     const colorTitles = expandColorKeysToTitles(query.color, catalogs.colors ?? []);
     if (colorTitles.length > 0) {
-      appendIndexedInFilter(
-        queryParams,
-        `filters[$and][${nextAnd()}][product_variations][product_variation_color][Title]`,
-        colorTitles,
-      );
+      const colorsByTitle = new Map((catalogs.colors ?? []).map((color) => [color.title, color]));
+      const ids = new Set<number>();
+      const fallbackTitles: string[] = [];
+      for (const title of colorTitles) {
+        const colorIds = colorsByTitle.get(title)?.ids;
+        if (colorIds?.length && colorIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+          colorIds.forEach((id) => ids.add(id));
+        } else {
+          fallbackTitles.push(title);
+        }
+      }
+      const prefix = `filters[$and][${nextAnd()}]`;
+      if (ids.size) {
+        // The stock-aware card query already accepts comma-separated IN values.
+        // One numeric list avoids repeating a deep relation path for every shade.
+        const idPrefix = fallbackTitles.length ? `${prefix}[$or][0]` : prefix;
+        queryParams.append(
+          `${idPrefix}[product_variations][product_variation_color][id][$in]`,
+          [...ids].join(","),
+        );
+      }
+      if (fallbackTitles.length) {
+        const titlePrefix = ids.size ? `${prefix}[$or][1]` : prefix;
+        appendIndexedInFilter(
+          queryParams,
+          `${titlePrefix}[product_variations][product_variation_color][Title]`,
+          fallbackTitles,
+        );
+      }
     }
   }
   if (query.sort) {
@@ -355,6 +391,52 @@ export async function getPLPCategoryContext(
     title: categoryData.attributes.Title || resolvedSlug,
     allCategories,
     categorySlugs: descendantSlugs.length > 0 ? descendantSlugs : [resolvedSlug],
+  };
+}
+
+export async function getPLPMenuGroupContext(groupKey: string) {
+  const allCategories = await getProductCategoriesForRender({
+    revalidate: 3600,
+  });
+
+  const menuCategories = withHeaderExtraCategories(allCategories);
+
+  const taxonomy = buildStorefrontMenuTaxonomy(menuCategories);
+
+  const group = taxonomy.find((item) => item.type === "group" && item.key === groupKey);
+
+  if (!group || group.type !== "group") {
+    return null;
+  }
+
+  const categorySlugs = new Set<string>();
+
+  const collectCategory = (category: (typeof menuCategories)[number]) => {
+    if (isSyntheticStorefrontMenuCategory(category)) {
+      for (const child of category.children ?? []) {
+        collectCategory(child);
+      }
+      return;
+    }
+
+    const descendants = getCategoryAndDescendantSlugs(allCategories, category.slug);
+
+    if (descendants.length > 0) {
+      descendants.forEach((slug) => categorySlugs.add(slug));
+    } else if (category.slug) {
+      categorySlugs.add(category.slug);
+    }
+  };
+
+  group.categories.forEach(collectCategory);
+
+  if (categorySlugs.size === 0) {
+    return null;
+  }
+
+  return {
+    title: group.label,
+    categorySlugs: [...categorySlugs],
   };
 }
 
@@ -479,7 +561,7 @@ export async function getPLPProducts(
   }
   const queryParams = buildPLPProductsQuery(query, categorySlugs, pageSize, catalogs);
 
-  const url = `${baseUrl}?${queryParams.toString()}`;
+  const url = `${baseUrl}?${serializePLPProductsQuery(queryParams)}`;
   let response: Response | undefined;
   let data: { data?: unknown[]; meta?: { pagination?: { total?: number; pageCount?: number } } };
   let failureStage: CatalogFailureStage = "request";

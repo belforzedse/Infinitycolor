@@ -86,16 +86,12 @@ const SizeGuideEditor: React.FC<SizeGuideEditorProps> = ({
 
   const handleSave = () => {
     // Validate data
-    if (data.some((row) => !row.size)) {
+    if (data.length === 0 || data.some((row) => !String(row.size ?? "").trim())) {
       alert("لطفاً تمام مقادیر سایز را پر کنید");
       return;
     }
     if (localColumns.length === 0) {
       alert("لطفاً حداقل یک ستون اندازه‌گیری اضافه کنید");
-      return;
-    }
-    if (data.some((row) => localColumns.some((col) => !row[col.key]))) {
-      alert("لطفاً تمام مقادیر اندازه‌گیری را پر کنید");
       return;
     }
     onSave(data);
@@ -106,12 +102,12 @@ const SizeGuideEditor: React.FC<SizeGuideEditorProps> = ({
   };
 
   const handleColumnTitleChange = (columnKey: string, newTitle: string) => {
-    // Keep the exact title as typed by the user
-    onColumnTitleEdit(columnKey, newTitle);
+    const title = newTitle.trim() || "---";
+    onColumnTitleEdit(columnKey, title);
 
     // Update local columns state
     const nextCols = localColumns.map((col) =>
-      col.key === columnKey ? { ...col, title: newTitle } : col,
+      col.key === columnKey ? { ...col, title } : col,
     );
     syncColumns(nextCols);
 
@@ -200,12 +196,13 @@ const SizeGuideEditor: React.FC<SizeGuideEditorProps> = ({
                         autoFocus
                       />
                     ) : (
-                      <span
+                      <button
+                        type="button"
                         onClick={() => handleColumnTitleClick(column.key)}
                         className="hover:text-primary cursor-pointer"
                       >
-                        {column.title}
-                      </span>
+                        {column.title.trim() || "---"}
+                      </button>
                     )}
                     <button
                       onClick={() => removeColumn(column.key)}

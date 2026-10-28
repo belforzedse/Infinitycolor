@@ -12,6 +12,7 @@ import {
   getPLPProducts,
   PLPProductsError,
   parsePLPQuery,
+  serializePLPProductsQuery,
   type PLPQuery,
 } from "../plp";
 import { getOfferPlpHref, parsePLPOffer } from "@/utils/plpRoutes";
@@ -23,6 +24,83 @@ const paramsObject = (params: URLSearchParams) =>
   }, {});
 
 describe("PLP query helpers", () => {
+  it("preserves all matching color IDs and exact-title fallbacks in one OR group", () => {
+    const params = buildPLPProductsQuery(
+      { page: 1, available: false, color: ["blue"] },
+      [],
+      30,
+      { colors: [
+        { title: "آبی", colorCode: null, ids: [11, 12] },
+        { title: "آبی روشن", colorCode: null, ids: [13] },
+        { title: "آبی ناشناخته", colorCode: null },
+        { title: "سرمه‌ای", colorCode: null, ids: [99] },
+      ] },
+    );
+    expect(params.get("filters[$and][3][$or][0][product_variations][product_variation_color][id][$in]"))
+      .toBe("11,12,13");
+    expect(params.get("filters[$and][3][$or][1][product_variations][product_variation_color][Title][$in][0]"))
+      .toBe("آبی ناشناخته");
+    expect(params.get("filters[$and][3][$or][1][product_variations][product_variation_color][Title][$in][1]"))
+      .toBe("blue");
+    expect(params.toString()).not.toContain("99");
+  });
+
+  it("keeps invalid or unavailable IDs on the exact-title fallback", () => {
+    const params = buildPLPProductsQuery(
+      { page: 1, available: false, color: ["blue"] }, [], 30,
+      { colors: [{ title: "آبی", colorCode: null, ids: [1, -2] }] },
+    );
+    expect(params.get("filters[$and][3][product_variations][product_variation_color][Title][$in][0]"))
+      .toBe("آبی");
+    expect(params.toString()).not.toContain("%5Bid%5D");
+  });
+
+  it("compacts only key grammar, preserving encoded search and title values", () => {
+    const params = buildPLPProductsQuery({
+      page: 2, available: true, search: "آبی & filters[$or]=حمله + #?", color: ["آبی [روشن]"],
+    });
+    const serialized = serializePLPProductsQuery(params);
+    expect([...new URLSearchParams(serialized)]).toEqual([...params]);
+    expect(serialized).toContain("filters[$and]");
+    expect(serialized).toContain("%26");
+    expect(serialized).toContain("%5B%24or%5D");
+  });
+
+  it("keeps 99 expanded shades well below the HTTP request budget with trace headers", async () => {
+    const colors = Array.from({ length: 99 }, (_, index) => ({
+      title: `${["آبی", "قرمز", "سبز", "سرمه‌ای"][index % 4]} روشن شماره ${index}`,
+      colorCode: null,
+      ids: [10_000 + index],
+    }));
+    const query = { page: 1, available: false, color: ["blue", "red", "green", "navy"], sort: "AverageRating:desc" };
+    const oldParams = buildPLPProductsQuery(query, [], 30, {
+      colors: colors.map(({ title, colorCode }) => ({ title, colorCode })),
+    });
+    const params = buildPLPProductsQuery(query, [], 30, { colors });
+    const oldTarget = `/api/products?${oldParams}`;
+    const target = `/api/products?${serializePLPProductsQuery(params)}`;
+    expect(oldTarget.length).toBeGreaterThan(16_384);
+    expect(target.length + 1024).toBeLessThan(8_192);
+
+    // Use Node's real HTTP parser, including tracing overhead, rather than a mocked 431.
+    const { createServer, get } = await import("node:http");
+    const server = createServer((_request, response) => response.end("ok"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const status = (path: string) => new Promise<number | undefined>((resolve, reject) => {
+      get({ hostname: "127.0.0.1", port, path, headers: { baggage: "x".repeat(1024) } }, (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode));
+      }).on("error", reject);
+    });
+    try {
+      expect(await status(oldTarget)).toBe(431);
+      expect(await status(target)).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it("normalizes invalid page values to page 1", () => {
     expect(parsePLPQuery({ page: "-2" }).page).toBe(1);
     expect(parsePLPQuery({ page: "abc" }).page).toBe(1);

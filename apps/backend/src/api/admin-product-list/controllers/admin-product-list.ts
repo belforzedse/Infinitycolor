@@ -22,6 +22,7 @@ import {
 
 const PRODUCT_SELECT = [
   "id",
+  "EditRevision",
   "removedAt",
   "removedById",
   "removedByLabel",
@@ -49,7 +50,7 @@ const PRODUCT_POPULATE = {
   product_variations: {
     select: ["id", "IsPublished", "SKU", "Price", "DiscountPrice"],
     populate: {
-      product_stock: { select: ["id", "Count"] },
+      product_stock: { select: ["id", "Count", "reservedCount", "StockRevision"] },
     },
   },
   CoverImage: {
@@ -68,6 +69,7 @@ function projectProduct(
   return {
     id: product.id,
     attributes: {
+      EditRevision: Number(product.EditRevision || 0),
       lifecycleState: productLifecycleState(product),
       removedAt: product.removedAt ?? null,
       removedById: product.removedById ?? null,
@@ -124,6 +126,8 @@ function projectProduct(
                     id: variation.product_stock.id,
                     attributes: {
                       Count: Number(variation.product_stock.Count) || 0,
+                      StockRevision: Number(variation.product_stock.StockRevision || 0),
+                      reservedCount: Number(variation.product_stock.reservedCount || 0),
                     },
                   }
                 : null,

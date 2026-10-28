@@ -1,7 +1,14 @@
 import type { categoryResponseType } from "@/services/super-admin/product/category/getAll";
-import type { CoverImageField, MediaDataItem } from "@/services/super-admin/product/get";
+import type {
+  CoverImageField,
+  MediaDataItem,
+} from "@/services/super-admin/product/get";
 import type { TagResponseType } from "@/services/super-admin/product/tag/get";
-
+export interface ProductColorGallery {
+  id?: number;
+  color: number;
+  Images: MediaDataItem[];
+}
 export interface ProductData {
   Title: string;
   Slug?: string;
@@ -17,6 +24,7 @@ export interface ProductData {
   SimpleIsPublished?: boolean;
   Weight?: number;
   Media: string[];
+  ColorGalleries?: ProductColorGallery[];
   product_main_category: categoryResponseType | null;
   product_tags: TagResponseType[];
   Files: string[];
@@ -37,6 +45,7 @@ export interface EditProductData {
   IsSimpleProduct: boolean;
   SimpleVariationId?: number;
   SimpleStockId?: number;
+  SimpleStockRevision?: number;
   SimpleSKU?: string;
   SimplePrice?: number;
   SimpleDiscountPrice?: number | null;
@@ -44,6 +53,7 @@ export interface EditProductData {
   SimpleIsPublished?: boolean;
   Weight?: number;
   Media: MediaDataItem[];
+  ColorGalleries?: ProductColorGallery[];
   product_main_category: categoryResponseType | null;
   product_tags: TagResponseType[];
   Files: MediaDataItem[];

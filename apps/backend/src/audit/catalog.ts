@@ -17,6 +17,10 @@ const definition = (
 ): AuditEventDefinition => ({ domain, operation, importance, titleFa, titleEn });
 
 export const AUDIT_EVENT_CATALOG = {
+  "products.edit_committed": definition("products", "edit", "تغییرات محصول ذخیره شد", "Product edit committed"),
+  "products.edit_acquired": definition("products", "edit", "ویرایش محصول آغاز شد", "Product editing acquired"),
+  "products.edit_taken_over": definition("products", "edit", "دسترسی ویرایش محصول منتقل شد", "Product editing taken over", "important"),
+  "products.edit_rejected": definition("products", "edit", "ذخیره تغییرات محصول رد شد", "Product edit rejected", "important"),
   "authentication.login_succeeded": definition("authentication", "login", "ورود موفق", "Login succeeded", "important"),
   "authentication.login_failed": definition("authentication", "login", "ورود ناموفق", "Login failed", "important"),
   "authentication.logout": definition("authentication", "logout", "خروج از حساب", "Logged out"),

@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { rejectCatalogInverseRelations } from "../../../utils/catalogOwnership";
 import { writeAuditEvent } from "../../../audit/writer";
 import { getAuditContext } from "../../../utils/audit-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
@@ -16,12 +17,14 @@ export default factories.createCoreController(
   "api::product-category.product-category",
   ({ strapi }) => ({
     async create(ctx) {
+      rejectCatalogInverseRelations("api::product-category.product-category", ctx.request?.body?.data || {});
       remapLegacyCategoryParentField(ctx?.request?.body?.data);
       if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_CATEGORY_FIELDS))) return;
       return super.create(ctx);
     },
 
     async update(ctx) {
+      rejectCatalogInverseRelations("api::product-category.product-category", ctx.request?.body?.data || {});
       remapLegacyCategoryParentField(ctx?.request?.body?.data);
       if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_CATEGORY_FIELDS))) return;
       return super.update(ctx);

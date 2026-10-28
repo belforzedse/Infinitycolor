@@ -6,6 +6,7 @@ import {
   loadProductVariationsWithSignatures,
 } from "../../product/services/variation-combinations";
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
+import { afterCatalogCommit } from "../../../utils/catalogEdit";
 import { clearProductOriginCaches } from "../../../utils/productOriginCache";
 import { deleteVariationWithStock } from "../services/variation-removal";
 
@@ -148,12 +149,14 @@ export default factories.createCoreController(
   "api::product-variation.product-variation",
   ({ strapi }) => ({
     async create(ctx) {
+      if ("product_stock" in (ctx.request?.body?.data || {})) return ctx.badRequest("Use the product stock operation");
       if (!(await enforceOperationalDataFields(ctx, strapi, CREATE_FIELDS))) return;
       if (!(await canonicalizeAdminSignature(ctx, strapi, true))) return;
       return super.create(ctx);
     },
 
     async update(ctx) {
+      if ("product_stock" in (ctx.request?.body?.data || {})) return ctx.badRequest("Use the product stock operation");
       if (!(await enforceOperationalDataFields(ctx, strapi, UPDATE_FIELDS))) return;
       const outcome = await canonicalizeAdminSignature(ctx, strapi, false);
       if (!outcome) return;
@@ -162,10 +165,10 @@ export default factories.createCoreController(
       // Variation writes otherwise only refresh the homepage, so a corrected
       // colour stayed wrong on the PDP and listings until every cache expired.
       if (outcome.colorChanged && outcome.productSlug) {
-        await clearProductOriginCaches(strapi, outcome.productSlug, {
+        await afterCatalogCommit(strapi, () => clearProductOriginCaches(strapi, outcome.productSlug!, {
           availabilityCrossed: true,
           logPrefix: "variation-color",
-        });
+        }));
       }
       return response;
     },

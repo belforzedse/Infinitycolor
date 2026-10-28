@@ -9,7 +9,8 @@ unit layer (`jest.config.js`), which stubs the `strapi` global.
 ## Run
 
 ```bash
-# Requires a running Docker daemon (Testcontainers pulls postgres:16-alpine).
+# Requires a running Docker daemon (local default: postgres:16-alpine).
+# CI sets INTEGRATION_PG_IMAGE=.../postgres:17-alpine to match staging.
 pnpm --filter @repo/backend test:integration
 ```
 

@@ -451,7 +451,15 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
 
   const renderCategoryGroup = (item: Extract<MobileNavItem, { type: "category-group" }>) => {
     const isExpanded = expandedGroupKey === item.key;
+    const groupKey = item.key.replace(/^category-group-/, "");
 
+    const viewAllLabels: Record<string, string> = {
+      "upper-body": "مشاهده همه بالاتنه‌ها",
+      "lower-body": "مشاهده همه پایین‌تنه‌ها",
+      sportswear: "مشاهده همه لباس‌های ورزشی",
+    };
+
+    const viewAllLabel = viewAllLabels[groupKey] ?? getViewAllCategoryLabel(item.label);
     return (
       <div
         key={item.key}
@@ -487,6 +495,14 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
           data-state={isExpanded ? "open" : "closed"}
         >
           <div className="storefront-mobile-category-panel-inner min-h-0 overflow-hidden">
+            <Link
+              href={`/plp?menuGroup=${encodeURIComponent(groupKey)}`}
+              prefetch={false}
+              onClick={onClose}
+              className="block border-t border-stone-100 bg-infinity-primary-lighter/20 px-3 py-3 text-right text-sm font-semibold text-infinity-primary-dark transition-colors hover:bg-infinity-primary-lighter/35 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-infinity-primary"
+            >
+              <span className="block truncate">{viewAllLabel}</span>
+            </Link>
             <div className="space-y-1 border-t border-stone-100 bg-white py-2 pr-3">
               {item.categories.map((category) =>
                 renderCategory(

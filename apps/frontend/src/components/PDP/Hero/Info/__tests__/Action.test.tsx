@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PDPHeroInfoAction from "../Action";
 
+let mockCartReady = true;
+let mockAuthRecoveryUnavailable = false;
+const mockRetryAuthRecovery = jest.fn();
+const mockAddToCart = jest.fn();
+
 jest.mock("@/components/Product/ShareModal", () => ({
   __esModule: true,
   default: ({ open }: { open: boolean }) => (open ? <div data-testid="share-modal-stub" /> : null),
@@ -22,8 +27,10 @@ jest.mock("@/hooks/useAddToCart", () => ({
     setQuantity: jest.fn(),
     isAdding: false,
     isInCart: false,
-    isCartReady: true,
-    addToCart: jest.fn(),
+    isCartReady: mockCartReady,
+    authRecoveryUnavailable: mockAuthRecoveryUnavailable,
+    retryAuthRecovery: mockRetryAuthRecovery,
+    addToCart: mockAddToCart,
   }),
 }));
 
@@ -61,6 +68,41 @@ jest.mock("../../../Icons/BasketIcon", () => ({
 }));
 
 describe("PDPHeroInfoAction", () => {
+  beforeEach(() => {
+    mockCartReady = true;
+    mockAuthRecoveryUnavailable = false;
+    jest.clearAllMocks();
+  });
+
+  it("lets the shopper recover a blocked stocked product without losing its selection", () => {
+    mockCartReady = false;
+    mockAuthRecoveryUnavailable = true;
+    const props = {
+      productId: "123",
+      name: "Product",
+      category: "Category",
+      price: 1000,
+      image: "/uploads/product.jpg",
+      hasStock: true,
+      variationId: "456",
+      currentVariation: { id: 456, attributes: {} },
+    };
+    const { rerender } = render(<PDPHeroInfoAction {...props} />);
+    expect(screen.getByTestId("pdp-add-to-cart")).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("اتصال به سبد خرید برقرار نشد.");
+    fireEvent.click(screen.getByRole("button", { name: "تلاش دوباره" }));
+    expect(mockRetryAuthRecovery).toHaveBeenCalledTimes(1);
+    expect(mockAddToCart).not.toHaveBeenCalled();
+
+    mockCartReady = true;
+    mockAuthRecoveryUnavailable = false;
+    rerender(<PDPHeroInfoAction {...props} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pdp-add-to-cart")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("pdp-add-to-cart"));
+    expect(mockAddToCart).toHaveBeenCalledWith(1);
+  });
+
   it("opens the share modal instead of copying immediately", async () => {
     render(
       <PDPHeroInfoAction

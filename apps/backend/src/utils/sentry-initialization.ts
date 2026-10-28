@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/node";
 import { beforeSendDiagnosticLog } from "./diagnostic-log";
 import { emitStagingStartupProbe } from "./sentry-staging-probe";
+import { redactEditProofs } from "./redact-edit-proofs";
 
 let initialized = false;
 
@@ -15,6 +16,8 @@ export function initializeBackendSentry(env: NodeJS.ProcessEnv = process.env): b
       release: env.SENTRY_RELEASE || env.RELEASE_SHA,
       enableLogs: true,
       beforeSendLog: beforeSendDiagnosticLog,
+      beforeSend: redactEditProofs,
+      beforeSendTransaction: redactEditProofs,
     });
     initialized = true;
     emitStagingStartupProbe(env);

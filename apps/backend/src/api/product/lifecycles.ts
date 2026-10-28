@@ -1,3 +1,5 @@
+import { runCatalogSystemMutation } from "../../utils/catalogEdit";
+
 export default {
   models: ["api::product.product"],
 
@@ -13,7 +15,7 @@ export default {
     );
 
     if (!product.product_size_helper) {
-      await strapi.entityService.create(
+      const createHelper = () => strapi.entityService.create(
         "api::product-size-helper.product-size-helper",
         {
           data: {
@@ -22,6 +24,14 @@ export default {
           },
         }
       );
+      if (strapi.requestContext?.get()?.state?.user) {
+        // This initial child belongs only to the row just created. Reuse the
+        // enclosing product-creation transaction and the usual ownership guard;
+        // subsequent HTTP child writes still require their edit lease.
+        await runCatalogSystemMutation(strapi, [result.id], "catalog-initialization", createHelper);
+      } else {
+        await createHelper();
+      }
     }
   },
 };

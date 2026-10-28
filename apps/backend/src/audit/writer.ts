@@ -58,7 +58,7 @@ export function resolveCurrentAuditContext(): AuditContext | null {
   const request = getAuditContext();
   const koa = (global as any)?.strapi?.requestContext?.get?.();
   if (!request && !koa) return null;
-  if (request.canonical) return request.canonical;
+  if (request?.canonical) return request.canonical;
   const liveUser = koa?.state?.adminActor?.user || koa?.state?.user;
   const liveRole = koa?.state?.adminActor?.role || liveUser?.role?.name || liveUser?.role?.type || null;
   const liveId = liveUser?.id ?? request?.userId ?? null;

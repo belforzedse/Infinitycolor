@@ -1,3 +1,4 @@
+import { afterCatalogCommit, catalogMutationContext, coordinateCatalogCommand, runCatalogSystemMutation } from "../../../utils/catalogEdit";
 import type { Strapi } from "@strapi/strapi";
 import { randomUUID } from "node:crypto";
 import type { AdminAuditActor } from "../../../utils/adminAudit";
@@ -546,6 +547,9 @@ export async function executePublicationCommand(
   command: PublicationCommand,
   context: PublicationCommandContext,
 ): Promise<PublicationResult> {
+  if (!catalogMutationContext()) {
+    return coordinateCatalogCommand(strapi, productId, context.origin, "publication", () => executePublicationCommand(strapi, productId, command, context));
+  }
   if (!Number.isSafeInteger(productId) || productId <= 0) {
     throw new PublicationCommandError("PRODUCT_ID_INVALID", 400);
   }
@@ -804,6 +808,9 @@ export async function publishScheduledProduct(
     now?: Date;
   },
 ): Promise<ScheduledPublicationAttempt> {
+  if (!catalogMutationContext()) {
+    return runCatalogSystemMutation(strapi, [input.productId], "scheduled-publication", () => publishScheduledProduct(strapi, input));
+  }
   const now = input.now || new Date();
   let failureCode: string | null = null;
 
@@ -979,6 +986,10 @@ export async function runPublicationEffects(
   productId: number,
   publicationRevision?: number,
 ): Promise<{ completed: boolean; revision: number }> {
+  if (catalogMutationContext()) {
+    await afterCatalogCommit(strapi, () => runPublicationEffects(strapi, productId, publicationRevision));
+    return;
+  }
   const row = (await strapi.db.connection("products").where({ id: productId }).first()) as ProductRow | undefined;
   if (!row) return { completed: true, revision: 0 };
   const revision = publicationRevision ?? Number(row.publication_revision || 0);

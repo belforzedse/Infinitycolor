@@ -5,6 +5,18 @@ import type { ProductDetail } from "@/services/product/product";
  * the flat entityService shape and the already-wrapped v4 REST shape — the
  * backend has historically returned either depending on the route.
  */
+const normalizeColorGalleries = (value: unknown) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((gallery) => gallery && typeof gallery === "object" && !Array.isArray(gallery))
+    .map((gallery) => ({
+      ...gallery,
+      color: normalizeRelation(gallery.color) ?? { data: null },
+      Images: normalizeRelation(gallery.Images) ?? { data: [] },
+    }));
+};
+
 export const normalizeRelation = (rel: any, isVariation = false): any => {
   if (!rel) return null;
 
@@ -87,6 +99,7 @@ export const normalizeProductDetail = (rawProduct: any): ProductDetail | null =>
         product_tags: normalizeRelation(rawProduct.attributes.product_tags),
         CoverImage: normalizeRelation(rawProduct.attributes.CoverImage),
         Media: normalizeRelation(rawProduct.attributes.Media),
+        ColorGalleries: normalizeColorGalleries(rawProduct.attributes.ColorGalleries),
         Files: normalizeRelation(rawProduct.attributes.Files),
         product_size_helper: normalizeRelation(rawProduct.attributes.product_size_helper),
       },
@@ -118,6 +131,7 @@ export const normalizeProductDetail = (rawProduct: any): ProductDetail | null =>
       product_tags: normalizeRelation(product_tags),
       CoverImage: normalizeRelation(CoverImage),
       Media: normalizeRelation(Media),
+      ColorGalleries: normalizeColorGalleries(rawProduct.ColorGalleries),
       Files: normalizeRelation(Files),
       product_size_helper: normalizeRelation(product_size_helper),
     },

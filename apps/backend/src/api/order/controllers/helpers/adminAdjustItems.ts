@@ -4,6 +4,7 @@ import { logAdminOrderEdit } from "../../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { releaseReservedStockAtomic } from "../../../cart/services/lib/stock";
 import { releaseOrderDiscountClaim } from "../../../cart/services/lib/discount-claim";
+import { assertMellatOrderAdjustable } from "../../../payment-gateway/services/mellat-state";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 import {
   queueSnappayAdminCancel,
@@ -286,6 +287,7 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
     let committedRefundToman = 0;
     const result = await strapi.db.transaction(async ({ trx }) => {
       await lockOrderForAdminMutation(trx, orderIdNum);
+      await assertMellatOrderAdjustable(strapi, orderIdNum, trx);
       const currentOrder: any = await strapi.db.query("api::order.order").findOne({
         where: { id: orderIdNum },
         populate: {
@@ -562,6 +564,11 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
   } catch (error: any) {
     strapi.log.error("adminAdjustItems error", error);
     const message = String(error?.message || "");
+    if (message === "MELLAT_PAYMENT_IN_PROGRESS") {
+      return ctx.conflict("پرداخت در حال بررسی است؛ پس از مشخص شدن نتیجه دوباره تلاش کنید.", {
+        data: { errorCode: "MELLAT_PAYMENT_IN_PROGRESS" },
+      });
+    }
 
     if (error instanceof OrderChangedConcurrentlyError) {
       return ctx.conflict("Order changed concurrently", {

@@ -1,3 +1,4 @@
+import { effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
 import type { Strapi } from "@strapi/strapi";
 import { logAdminBarcodeOperation } from "../../../utils/adminActivity";
 import { writeAuditEvent } from "../../../audit/writer";
@@ -264,7 +265,7 @@ async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
     },
   });
   if (!order) throw new AnipoWorkflowError(404, "ANIPO_ORDER_NOT_FOUND", "سفارش پیدا نشد");
-  return order;
+  return { ...order, delivery_address: await effectiveOrderDeliveryAddress(strapi, Number(order.id), order.delivery_address) };
 }
 
 /**

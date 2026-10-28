@@ -1,3 +1,5 @@
+import path from "node:path";
+
 jest.mock(
   "bullmq",
   () => ({
@@ -10,6 +12,8 @@ jest.mock(
   }),
   { virtual: true },
 );
+
+jest.mock("../../jobs/dispatchShippingSms", () => ({ dispatchDueShippingSms: jest.fn() }));
 
 jest.mock("../../jobs/expireStockReservations", () => ({
   runExpireStockReservationsTick: jest.fn(),
@@ -74,7 +78,10 @@ import {
 } from "../../api/payment-gateway/services/snappay-orchestrator";
 import { runAnalyticsDailyRollupTick } from "../../jobs/analyticsDailyRollup";
 import { runAnalyticsOutboxRepairTick } from "../../jobs/analyticsOutboxRepair";
-import { processAnipoRegistrationJob, runAnipoBarcodeReconciliation } from "../../api/order/services/anipoBarcodeWorkflow";
+import {
+  processAnipoRegistrationJob,
+  runAnipoBarcodeReconciliation,
+} from "../../api/order/services/anipoBarcodeWorkflow";
 import {
   processAnipoRecipientSync,
   runAnipoRecipientSyncReconciliation,
@@ -106,10 +113,9 @@ const mockedRunAnalyticsDailyRollupTick = runAnalyticsDailyRollupTick as jest.Mo
 const mockedRunAnalyticsOutboxRepairTick = runAnalyticsOutboxRepairTick as jest.MockedFunction<
   typeof runAnalyticsOutboxRepairTick
 >;
-const mockedRunAnipoBarcodeReconciliation =
-  runAnipoBarcodeReconciliation as jest.MockedFunction<
-    typeof runAnipoBarcodeReconciliation
-  >;
+const mockedRunAnipoBarcodeReconciliation = runAnipoBarcodeReconciliation as jest.MockedFunction<
+  typeof runAnipoBarcodeReconciliation
+>;
 const mockedProcessAnipoRecipientSync = processAnipoRecipientSync as jest.MockedFunction<
   typeof processAnipoRecipientSync
 >;
@@ -141,6 +147,16 @@ function createMockStrapi() {
 }
 
 describe("queue processors", () => {
+  it("dispatches due shipping messages through the commerce worker", async () => {
+    const { dispatchDueShippingSms } = await import("../../jobs/dispatchShippingSms");
+    const strapi = createMockStrapi();
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.shippingSmsDispatch,
+      data: {},
+    } as any);
+    expect(dispatchDueShippingSms).toHaveBeenCalledWith(strapi);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -366,7 +382,7 @@ describe("queue processors", () => {
 
     expect(mockedNormalizeProductVideoFile).toHaveBeenCalledWith(4624, 120001, {
       strapi,
-      uploadsDir: "/app/public/uploads",
+      uploadsDir: path.join("/app/public", "uploads"),
       jobId: "normalize-product-video-120001",
       attempt: 2,
     });
@@ -383,7 +399,12 @@ describe("queue processors", () => {
     await expect(
       processMaintenanceJob(
         strapi,
-        { id: "j", name: MEDIA_JOBS.normalizeProductVideo, data: { productId: 1, fileId: 9 }, moveToDelayed } as any,
+        {
+          id: "j",
+          name: MEDIA_JOBS.normalizeProductVideo,
+          data: { productId: 1, fileId: 9 },
+          moveToDelayed,
+        } as any,
         "lock-token",
       ),
     ).rejects.toMatchObject({ name: "DelayedError" });

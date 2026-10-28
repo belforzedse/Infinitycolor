@@ -1,3 +1,8 @@
+jest.mock("../../../../utils/orderDeliverySnapshot", () => ({
+  effectiveOrderDeliveryAddress: jest.fn(async (_strapi, _id, address) => address),
+  effectiveOrderDeliveryAddresses: jest.fn(async (_strapi, sources) => new Map(sources.map((source) => [source.id, source.delivery_address]))),
+}));
+import { effectiveOrderDeliveryAddress } from "../../../../utils/orderDeliverySnapshot";
 const mockWriteAuditEvent = jest.fn().mockResolvedValue({
   id: 1,
   eventId: "381576b6-ef74-4a90-b245-c40f06182350",
@@ -90,6 +95,18 @@ function createHarness(initialOrder: any, provider: any) {
 
 describe("Anipo barcode workflow", () => {
   beforeEach(() => mockWriteAuditEvent.mockClear());
+
+  it("registers the captured destination after a saved-profile address edit", async () => {
+    const original = baseOrder().delivery_address;
+    const harness = createHarness(baseOrder({ delivery_address: { ...original, FullAddress: "آدرس پروفایل جدید" } }), { current: { ok: true, data: { issued: false } } });
+    (effectiveOrderDeliveryAddress as jest.Mock).mockResolvedValue(original);
+    try {
+      await submitAnipoBarcode(harness.strapi, 10, { now: new Date("2026-08-11T09:00:00.000Z") });
+      expect(harness.anipo.createOrUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ receiver_address: original.FullAddress }));
+    } finally {
+      (effectiveOrderDeliveryAddress as jest.Mock).mockImplementation(async (_strapi, _id, address) => address);
+    }
+  });
 
   it("sends the payable contract amount in IRR", () => {
     expect(computeAnipoOrderTotalIrr(baseOrder())).toBe(9_500);

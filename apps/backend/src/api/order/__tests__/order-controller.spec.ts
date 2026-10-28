@@ -1,3 +1,9 @@
+jest.mock("../../../utils/orderDeliverySnapshot", () => ({
+  effectiveOrderDeliveryAddress: jest.fn(async (_strapi, _id, address) => address),
+  captureOrderDeliverySnapshot: jest.fn(async () => undefined),
+  updateExistingOrderDeliverySnapshot: jest.fn(async () => undefined),
+}));
+
 /**
  * Order controller tests
  * Tests: Order retrieval, permissions, pagination, status checks

@@ -27,6 +27,7 @@ import {
 } from "../../../api/admin-product-list/services/product-list-query";
 import { runTrashRetentionSweep } from "../../../jobs/purgeExpiredTrashedProducts";
 import { publicProductFilters } from "../../../utils/productVisibility";
+import { changeEditLease, readEditPresence, runCatalogMutation, runCatalogSystemMutation } from "../../../utils/catalogEdit";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 import { makeFactories, type Factories, TEST_PREFIX } from "../factories";
 
@@ -260,11 +261,21 @@ describe("product lifecycle on real PostgreSQL", () => {
   it("lets exactly one of two concurrent permanent deletes act, and a restore race never un-purges", async () => {
     const one = await product("race_purge");
     await trashProduct(strapi, one.id, admin());
+    const before = await row(one.id);
     const purges = await Promise.all([
       purgeProduct(strapi, one.id, admin()),
       purgeProduct(strapi, one.id, admin()),
     ]);
     expect(purges.map((result) => result.changed).sort()).toEqual([false, true]);
+    expect((await row(one.id)).edit_revision).toBe(Number(before.edit_revision) + 1);
+    await expect(purgeProduct(strapi, one.id, admin())).resolves.toMatchObject({ changed: false, state: "purged" });
+    expect((await row(one.id)).edit_revision).toBe(Number(before.edit_revision) + 1);
+    const logs = await strapi.db.query("api::product-log.product-log").findMany({
+      where: { product: { id: one.id }, Action: "PermanentDelete" },
+    });
+    expect(logs).toHaveLength(1);
+    const audits = await strapi.db.connection("manual_admin_activities").where({ event_key: "products.permanently_deleted", target_id: String(one.id) });
+    expect(audits).toHaveLength(1);
 
     const two = await product("race_restore_purge");
     await trashProduct(strapi, two.id, admin());
@@ -282,6 +293,27 @@ describe("product lifecycle on real PostgreSQL", () => {
       expect((purge as PromiseRejectedResult).reason).toMatchObject({ code: "PRODUCT_NOT_IN_TRASH" });
       expect(final.removed_at).toBeNull();
     }
+  });
+
+  it("keeps tombstones unavailable to ordinary catalog writers and rejects missing lifecycle IDs", async () => {
+    const one = await product("purged_guards");
+    await trashProduct(strapi, one.id, admin());
+    await purgeProduct(strapi, one.id, admin());
+    const callback = jest.fn(async () => undefined);
+    const editor = {} as any; // The row rejection happens before editor resolution.
+    for (const writer of [
+      { kind: "system", command: "publication" },
+      { kind: "system", command: "catalog-initialization" },
+      { kind: "human", editor, proof: {} },
+      { kind: "transient", editor },
+    ] as any[]) {
+      await expect(runCatalogMutation(strapi, [one.id], writer, callback)).rejects.toMatchObject({ code: "PRODUCT_NOT_FOUND", status: 404 });
+    }
+    await expect(changeEditLease(strapi, one.id, editor, "acquire", {})).rejects.toMatchObject({ code: "PRODUCT_NOT_FOUND", status: 404 });
+    await expect(readEditPresence(strapi, one.id, editor)).rejects.toMatchObject({ code: "PRODUCT_NOT_FOUND", status: 404 });
+    await expect(restoreProduct(strapi, one.id, admin())).rejects.toMatchObject({ code: "PRODUCT_PURGED", status: 409 });
+    await expect(runCatalogSystemMutation(strapi, [2147483647], "catalog-lifecycle", callback)).rejects.toMatchObject({ code: "PRODUCT_NOT_FOUND", status: 404 });
+    expect(callback).not.toHaveBeenCalled();
   });
 
   it("refuses permanent deletion outside Trash and keeps order history after it", async () => {

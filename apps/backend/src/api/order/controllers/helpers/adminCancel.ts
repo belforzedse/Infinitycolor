@@ -24,6 +24,7 @@ import {
   type AnipoCancelSnapshot,
 } from "./notifyAnipoParcelCancelled";
 import { releaseWalletHoldsForOrder } from "../../../local-user-wallet/services/wallet-holds";
+import { assertMellatReservationReleasable } from "../../../payment-gateway/services/mellat-state";
 
 /**
  * Cancel is allowed through fulfilment (including `Shipment`), but
@@ -132,6 +133,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
     let anipoCancelSnapshot: AnipoCancelSnapshot | null = null;
     const result = await strapi.db.transaction(async ({ trx }) => {
       await lockOrderForAdminMutation(trx, orderIdNum);
+      await assertMellatReservationReleasable(strapi, orderIdNum, trx);
       const currentOrder: any = await strapi.db.query("api::order.order").findOne({
         where: { id: orderIdNum },
         populate: {
@@ -367,6 +369,11 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   } catch (error: any) {
     strapi.log.error("adminCancelOrder error", error);
     const message = String(error?.message || "");
+    if (message === "MELLAT_PAYMENT_IN_PROGRESS") {
+      return ctx.conflict("پرداخت در حال بررسی است؛ پس از مشخص شدن نتیجه دوباره تلاش کنید.", {
+        data: { errorCode: "MELLAT_PAYMENT_IN_PROGRESS" },
+      });
+    }
     if (error instanceof OrderChangedConcurrentlyError) {
       return ctx.conflict("Order changed concurrently", {
         data: {

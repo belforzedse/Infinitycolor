@@ -12,6 +12,8 @@ export interface ColorFamilyDefinition {
 export interface CatalogColor {
   title: string;
   colorCode: string | null;
+  /** Every exact-title relation ID, only present when the catalog supplied all of them. */
+  ids?: number[];
 }
 
 export interface ColorFamilyBucket {

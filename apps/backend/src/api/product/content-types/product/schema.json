@@ -14,38 +14,24 @@
   "indexes": [
     {
       "name": "idx_products_active_slug_lookup",
-      "columns": [
-        "slug"
-      ]
+      "columns": ["slug"]
     },
     {
       "name": "uq_products_external_source_id",
-      "columns": [
-        "external_source",
-        "external_id"
-      ],
+      "columns": ["external_source", "external_id"],
       "type": "unique"
     },
     {
       "name": "idx_products_scheduled_publish",
-      "columns": [
-        "status",
-        "scheduled_publish_at"
-      ]
+      "columns": ["status", "scheduled_publish_at"]
     },
     {
       "name": "idx_products_lifecycle_view",
-      "columns": [
-        "status",
-        "removed_at",
-        "last_edited_by_admin_at"
-      ]
+      "columns": ["status", "removed_at", "last_edited_by_admin_at"]
     },
     {
       "name": "idx_products_removed_at",
-      "columns": [
-        "removed_at"
-      ]
+      "columns": ["removed_at"]
     }
   ],
   "attributes": {
@@ -66,21 +52,14 @@
       "type": "media",
       "multiple": false,
       "required": false,
-      "allowedTypes": [
-        "images",
-        "videos"
-      ]
+      "allowedTypes": ["images", "videos"]
     },
     "Description": {
       "type": "richtext"
     },
     "Status": {
       "type": "enumeration",
-      "enum": [
-        "Active",
-        "InActive",
-        "Scheduled"
-      ],
+      "enum": ["Active", "InActive", "Scheduled"],
       "default": "InActive"
     },
     "scheduledPublishAt": {
@@ -106,10 +85,7 @@
     },
     "scheduledPublishFailureKind": {
       "type": "enumeration",
-      "enum": [
-        "Transient",
-        "Permanent"
-      ]
+      "enum": ["Transient", "Permanent"]
     },
     "scheduledPublishAttemptCount": {
       "type": "integer",
@@ -138,10 +114,7 @@
     },
     "ProductType": {
       "type": "enumeration",
-      "enum": [
-        "Variable",
-        "Simple"
-      ],
+      "enum": ["Variable", "Simple"],
       "default": "Variable"
     },
     "IsSimpleProduct": {
@@ -152,10 +125,12 @@
       "type": "media",
       "multiple": true,
       "required": false,
-      "allowedTypes": [
-        "images",
-        "videos"
-      ]
+      "allowedTypes": ["images", "videos"]
+    },
+    "ColorGalleries": {
+      "type": "component",
+      "repeatable": true,
+      "component": "product.color-gallery"
     },
     "AverageRating": {
       "type": "decimal"
@@ -208,9 +183,7 @@
       "type": "media",
       "multiple": true,
       "required": false,
-      "allowedTypes": [
-        "files"
-      ]
+      "allowedTypes": ["files"]
     },
     "product_size_helper": {
       "type": "relation",
@@ -253,11 +226,7 @@
     },
     "preRemovalStatus": {
       "type": "enumeration",
-      "enum": [
-        "Active",
-        "InActive",
-        "Scheduled"
-      ]
+      "enum": ["Active", "InActive", "Scheduled"]
     },
     "preRemovalScheduledPublishAt": {
       "type": "datetime"
@@ -292,6 +261,11 @@
       "relation": "oneToMany",
       "target": "api::product-slug-alias.product-slug-alias",
       "mappedBy": "product"
+    },
+    "EditRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
     }
   }
 }
