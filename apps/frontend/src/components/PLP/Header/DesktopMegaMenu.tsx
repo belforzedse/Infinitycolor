@@ -262,7 +262,7 @@ export default function DesktopMegaMenu({ item, onLinkClick }: Props) {
             <div
               data-testid="desktop-mega-menu-links"
               className={[
-                "grid min-w-0 flex-1 auto-rows-[41px] grid-cols-[repeat(3,minmax(0,1fr))] gap-x-4 gap-y-[21px] overflow-visible pb-1",
+                "grid min-w-0 flex-1 auto-rows-[41px] gap-x-4 gap-y-[21px] overflow-visible pb-1",
                 gridColumnsClass,
               ].join(" ")}
             >
