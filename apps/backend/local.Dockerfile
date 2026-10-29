@@ -1,4 +1,4 @@
-FROM docker.arvancloud.ir/library/node:20-alpine
+FROM docker-cache.alpagency.net/library/node:20-alpine
 
 WORKDIR /app
 
@@ -8,7 +8,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY patches ./patches
 COPY apps/backend/package.json ./apps/backend/package.json
 COPY packages ./packages
-RUN corepack enable && pnpm install --filter @repo/backend... --frozen-lockfile
+ARG NPM_REGISTRY_URL="https://npm.alpagency.net/"
+RUN corepack enable \
+    && COREPACK_NPM_REGISTRY="${NPM_REGISTRY_URL}" npm_config_registry="${NPM_REGISTRY_URL}" \
+       pnpm install --filter @repo/backend... --frozen-lockfile
 
 # Copy source code
 COPY apps/backend ./apps/backend

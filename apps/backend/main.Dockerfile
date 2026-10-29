@@ -1,13 +1,13 @@
-# syntax=docker.arvancloud.ir/docker/dockerfile:1.7
-FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS dependencies
+# syntax=docker-cache.alpagency.net/docker/dockerfile:1.7
+FROM docker-cache.alpagency.net/library/node:22.23.4-alpine AS dependencies
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
 ARG NODE_OPTIONS="--max-old-space-size=4096"
-ARG NPM_REGISTRY_URL="https://mirror.abrha.net/repository/npm/"
+ARG NPM_REGISTRY_URL="https://npm.alpagency.net/"
 ARG NPM_REGISTRY_SECOND_FALLBACK_URL="https://package-mirror.liara.ir/repository/npm/"
 ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
-ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
+ARG NPM_REGISTRY_FALLBACK_URL="https://mirror.abrha.net/repository/npm/"
 ENV STRAPI_DISABLE_SOURCEMAPS=${STRAPI_DISABLE_SOURCEMAPS}
 ENV STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED}
 # Strapi's constructor asks registry.npmjs.org for its latest version; when that
@@ -97,15 +97,15 @@ RUN mkdir -p /runtime \
     && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /runtime/public/uploads/ \
     && echo "backend runtime assembly complete"
 
-FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS runner
+FROM docker-cache.alpagency.net/library/node:22.23.4-alpine AS runner
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
 ARG NODE_OPTIONS=""
-ARG NPM_REGISTRY_URL="https://mirror.abrha.net/repository/npm/"
+ARG NPM_REGISTRY_URL="https://npm.alpagency.net/"
 ARG NPM_REGISTRY_SECOND_FALLBACK_URL="https://package-mirror.liara.ir/repository/npm/"
 ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
-ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
+ARG NPM_REGISTRY_FALLBACK_URL="https://mirror.abrha.net/repository/npm/"
 ENV NODE_ENV=production \
     STRAPI_TELEMETRY_DISABLED=${STRAPI_TELEMETRY_DISABLED} \
     STRAPI_DISABLE_UPDATE_NOTIFICATION=true \
