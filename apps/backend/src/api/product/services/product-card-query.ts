@@ -5,6 +5,7 @@ import {
 } from "../../../utils/productAvailability";
 import { expandSearchTermVariants } from "../../../utils/searchTermVariants";
 import { publicProductFilters } from "../../../utils/productVisibility";
+import { OPPSI_TITLE_TERM } from "../../../utils/productDiscovery";
 
 export const PRODUCT_CARD_FIELDS = [
   "id",
@@ -43,6 +44,9 @@ export const PRODUCT_CARD_POPULATE = {
 } as const;
 
 export type FindProductCardsParams = {
+  // Derived from the authenticated caller by the controller, never request input.
+  isAdmin?: boolean;
+  oppsi?: unknown;
   filters?: Record<string, unknown>;
   sort?: unknown;
   availability?: unknown;
@@ -826,6 +830,12 @@ export async function findOrderedProductIds(strapi: any, params: OrderedProductI
 
   const buildBaseQuery = () => {
     const query = knex("products as p").whereNull("p.removed_at");
+    if (!params.isAdmin) {
+      query.whereRaw(
+        `LOWER(COALESCE(p.title, '')) ${isEnabledCardParam(params.oppsi) ? "LIKE" : "NOT LIKE"} ?`,
+        [`%${OPPSI_TITLE_TERM}%`],
+      );
+    }
     applyProductFilters(knex, query, strapi, filters);
     applySearchFilter(query, params.q);
     applyAvailabilityOnlyFilter(knex, query, strapi, params.availability);

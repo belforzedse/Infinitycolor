@@ -24,6 +24,14 @@ const paramsObject = (params: URLSearchParams) =>
   }, {});
 
 describe("PLP query helpers", () => {
+  it("requests the exclusive Oppsi collection only for its dedicated search page", () => {
+    for (const search of ["Oppsi", "OPPSI", " oppsi "]) {
+      expect(buildPLPProductsQuery({ page: 1, available: false, search }).get("oppsi")).toBe("true");
+    }
+    for (const search of [undefined, "مانتو", "مانتو Oppsi"]) {
+      expect(buildPLPProductsQuery({ page: 1, available: false, search }).has("oppsi")).toBe(false);
+    }
+  });
   it("preserves all matching color IDs and exact-title fallbacks in one OR group", () => {
     const params = buildPLPProductsQuery(
       { page: 1, available: false, color: ["blue"] },

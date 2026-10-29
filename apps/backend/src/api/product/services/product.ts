@@ -19,7 +19,8 @@ import {
   type VariationAvailabilityInput,
 } from "../../../utils/productAvailability";
 import { getAvailableStockCount } from "../../cart/services/lib/stock";
-import { catalogProductFilters, publicProductFilters } from "../../../utils/productVisibility";
+import { catalogProductFilters } from "../../../utils/productVisibility";
+import { publicProductDiscoveryFilters } from "../../../utils/productDiscovery";
 
 const CARD_COLOR_CODE_LIMIT = 8;
 const HOMEPAGE_CARD_LIMIT = 20;
@@ -108,7 +109,7 @@ const uniqueOrderedIds = (groups: Array<number[] | undefined>): number[] => {
  * (`buildProductAvailabilityExistsSql`) instead.
  */
 const baseHomepageProductFilters = () => ({
-  ...publicProductFilters(),
+  ...publicProductDiscoveryFilters(),
   product_variations: {
     Price: { $gte: 1 },
   },
@@ -714,7 +715,7 @@ export default factories.createCoreService("api::product.product", ({ strapi }) 
         ]),
       },
       // Admins also see drafts and scheduled products; trashed ones never.
-      catalogProductFilters(isAdmin),
+      isAdmin ? catalogProductFilters(true) : publicProductDiscoveryFilters(),
     ];
 
     const filters: any = {
