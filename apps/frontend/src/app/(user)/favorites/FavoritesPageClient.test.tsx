@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import FavoritesPage from "./FavoritesPageClient";
 import ProductLikeService from "@/services/product/product-like";
@@ -10,7 +10,10 @@ import {
   likedProductsLoadedAtom,
   likedProductsOwnerAtom,
 } from "@/hooks/useProductLike";
-
+jest.mock("@/services/product/product", () => ({
+  calculateUniqueColorsCount: jest.fn(() => 0),
+  getUniqueColorCodes: jest.fn(() => []),
+}));
 jest.mock("@/services/product/product-like", () => ({
   __esModule: true,
   default: { getUserFavorites: jest.fn() },
@@ -138,5 +141,125 @@ describe("FavoritesPageClient", () => {
     await waitFor(() => {
       expect(screen.getAllByTestId("fav-card")).toHaveLength(1);
     });
+  });
+  it("shows all 37 favorites across pages even when the global likes cache only has the first 25", async () => {
+    const allFavorites = Array.from({ length: 37 }, (_, index) => favorite(index + 1));
+
+    getUserFavorites.mockImplementation(async (page = 1, pageSize = 12) => {
+      const start = (page - 1) * pageSize;
+
+      return {
+        data: allFavorites.slice(start, start + pageSize),
+        meta: {
+          pagination: {
+            page,
+            pageSize,
+            pageCount: 4,
+            total: 37,
+          },
+        },
+      };
+    });
+
+    const store = createStore();
+
+    store.set(currentUserAtom, asUser(7));
+
+    // Simulate the old incomplete global cache: only the first 25 likes exist.
+    store.set(
+      likedProductsAtom,
+      Array.from({ length: 25 }, (_, index) => ({
+        id: index + 1,
+        product: { id: index + 1 },
+        createdAt: "",
+        updatedAt: "",
+      })),
+    );
+
+    // The cache must not be trusted until the complete paginated load succeeds.
+    store.set(likedProductsLoadedAtom, false);
+    store.set(likedProductsOwnerAtom, 7);
+
+    renderPage(store);
+
+    const renderedIds = () =>
+      screen.getAllByTestId("fav-card").map((card) => Number(card.textContent));
+
+    await waitFor(() => {
+      expect(renderedIds()).toEqual(Array.from({ length: 12 }, (_, index) => index + 1));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "بعدی" }));
+
+    await waitFor(() => {
+      expect(renderedIds()).toEqual(Array.from({ length: 12 }, (_, index) => index + 13));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "بعدی" }));
+
+    await waitFor(() => {
+      expect(renderedIds()).toEqual(Array.from({ length: 12 }, (_, index) => index + 25));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "بعدی" }));
+
+    await waitFor(() => {
+      expect(renderedIds()).toEqual([37]);
+    });
+
+    expect(getUserFavorites).toHaveBeenCalledWith(4, 12);
+  });
+
+  it("removes a favorite immediately when the completed likes cache changes", async () => {
+    getUserFavorites.mockResolvedValue({
+      data: [favorite(1), favorite(2)],
+      meta: {
+        pagination: {
+          page: 1,
+          pageSize: 12,
+          pageCount: 1,
+          total: 2,
+        },
+      },
+    });
+
+    const store = createStore();
+
+    store.set(currentUserAtom, asUser(7));
+    store.set(likedProductsOwnerAtom, 7);
+    store.set(likedProductsLoadedAtom, true);
+    store.set(likedProductsAtom, [
+      {
+        id: 1,
+        product: { id: 1 },
+        createdAt: "",
+        updatedAt: "",
+      },
+      {
+        id: 2,
+        product: { id: 2 },
+        createdAt: "",
+        updatedAt: "",
+      },
+    ]);
+
+    renderPage(store);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("fav-card")).toHaveLength(2);
+    });
+
+    await act(async () => {
+      store.set(
+        likedProductsAtom,
+        store.get(likedProductsAtom).filter((likedProduct) => likedProduct.product.id !== 2),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("fav-card")).toHaveLength(1);
+    });
+
+    expect(screen.getByTestId("fav-card")).toHaveTextContent("1");
   });
 });

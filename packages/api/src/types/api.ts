@@ -48,6 +48,8 @@ export interface ApiRequestOptions {
   suppressAuthRedirect?: boolean;
   signal?: AbortSignal;
   cache?: RequestCache;
+  /** Skip shared in-flight GET coalescing when the caller coordinates requests itself. */
+  deduplicate?: boolean;
 }
 
 export interface PaginationParams {
