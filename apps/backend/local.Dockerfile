@@ -10,7 +10,7 @@ COPY apps/backend/package.json ./apps/backend/package.json
 COPY packages ./packages
 ARG NPM_REGISTRY_URL="https://npm.alpagency.net/"
 RUN corepack enable \
-    && COREPACK_NPM_REGISTRY="${NPM_REGISTRY_URL}" npm_config_registry="${NPM_REGISTRY_URL}" \
+    && COREPACK_NPM_REGISTRY="${NPM_REGISTRY_URL%/}" npm_config_registry="${NPM_REGISTRY_URL}" \
        pnpm install --filter @repo/backend... --frozen-lockfile
 
 # Copy source code
