@@ -85,8 +85,10 @@ describe("product.findBySlug", () => {
     const ctx: any = { query: { filters: {} }, state: {} };
 
     expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
-    // The canonical public rule (utils/productVisibility.ts): published and not in Trash.
-    expect(ctx.query.filters.$and).toEqual([{ Status: "Active", removedAt: { $null: true } }]);
+    // Default public discovery also excludes the dedicated Oppsi collection.
+    expect(ctx.query.filters.$and).toEqual([
+      { Status: "Active", removedAt: { $null: true }, Title: { $notContainsi: "oppsi" } },
+    ]);
   });
 
   it("lets Store Managers inspect inactive and trashed catalog records but never tombstones", () => {
@@ -108,7 +110,9 @@ describe("product.findBySlug", () => {
     };
 
     expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
-    expect(ctx.query.filters.$and).toEqual([{ Status: "Active", removedAt: { $null: true } }]);
+    expect(ctx.query.filters.$and).toEqual([
+      { Status: "Active", removedAt: { $null: true }, Title: { $notContainsi: "oppsi" } },
+    ]);
   });
 
   it("keeps the default by-slug response on the full review populate", async () => {
