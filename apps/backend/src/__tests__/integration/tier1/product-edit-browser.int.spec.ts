@@ -387,6 +387,12 @@ it("fences a real authenticated stale browser, keeps its draft, observes on refr
     await a.locator('input[name="name"]').fill("تغییرات محفوظ همکار اول");
 
     await b.goto(`/products/${productId}`, { timeout: 120_000 });
+    // A navigation's load event precedes the editor's asynchronous snapshot
+    // and lease reads. Assert the observed state before its owner dialog.
+    await browserExpect(b.getByTestId("product-editor-status")).toContainText(
+      "حالت فقط مشاهده",
+      { timeout: 20_000 },
+    );
     await browserExpect(b.getByRole("dialog")).toContainText("این محصول در حال ویرایش است");
     await browserExpect(b.getByRole("dialog")).toContainText(staff[0].label);
     await b.getByRole("button", { name: "مشاهده بدون ویرایش", exact: true }).click();
@@ -461,6 +467,10 @@ it("fences a real authenticated stale browser, keeps its draft, observes on refr
     const acquisitionsBeforeReload = acquireCalls;
     a.on("dialog", (dialog: any) => void dialog.accept());
     await a.reload();
+    await browserExpect(a.getByTestId("product-editor-status")).toContainText(
+      "حالت فقط مشاهده",
+      { timeout: 20_000 },
+    );
     await browserExpect(a.getByRole("dialog")).toContainText(staff[1].label);
     await browserExpect(a.getByTestId("admin-product-save")).toBeDisabled();
     expect(acquireCalls).toBe(acquisitionsBeforeReload);
