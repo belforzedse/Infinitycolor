@@ -511,7 +511,7 @@ describe("orders page bounded data ownership", () => {
   });
   it("restores delivery criteria and applies identical filters to the list and counts", async () => {
     renderPage("?cityId=7&productCode=Ab-001&postalCode=0123456789&addressText=خیابان&page=3");
-    expect(screen.getByLabelText("کد محصول")).toHaveValue("Ab-001");
+    expect(screen.getByLabelText("نام یا کد محصول")).toHaveValue("Ab-001");
     await mockTableProps.dataLoader({ page: 3, pageSize: 25, filters: [], signal: new AbortController().signal });
     expect(listAdminOrders).toHaveBeenLastCalledWith(expect.objectContaining({
       cityId: "7", productCode: "Ab-001", postalCode: "0123456789", addressText: "خیابان", page: 3,

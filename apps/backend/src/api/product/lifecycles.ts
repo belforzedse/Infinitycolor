@@ -6,24 +6,18 @@ export default {
   async afterCreate(event, ctx) {
     const { result } = event;
 
-    const product = await strapi.entityService.findOne(
-      "api::product.product",
-      result.id,
-      {
-        populate: ["product_size_helper"],
-      }
-    );
+    const product = await strapi.entityService.findOne("api::product.product", result.id, {
+      populate: ["product_size_helper"],
+    });
 
     if (!product.product_size_helper) {
-      const createHelper = () => strapi.entityService.create(
-        "api::product-size-helper.product-size-helper",
-        {
+      const createHelper = () =>
+        strapi.entityService.create("api::product-size-helper.product-size-helper", {
           data: {
             product: result.id,
             Helper: {},
           },
-        }
-      );
+        });
       if (strapi.requestContext?.get()?.state?.user) {
         // This initial child belongs only to the row just created. Reuse the
         // enclosing product-creation transaction and the usual ownership guard;

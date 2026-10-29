@@ -3,6 +3,7 @@ import { ENDPOINTS } from "@/constants/api";
 import type { ProductData } from "@/types/super-admin/products";
 import { toast } from "react-hot-toast";
 import { syncSimpleProductVariation } from "./simple-variation";
+import { notifyProductTitleKeywordsChanged } from "./title-keywords-events";
 
 type RawRelationValue =
   | null
@@ -131,6 +132,7 @@ export const createProduct = async (body: ProductData) => {
       },
       { retries: 0 },
     );
+    notifyProductTitleKeywordsChanged();
     const productId = (response.data as { id?: number } | undefined)?.id;
 
     if (productId) {

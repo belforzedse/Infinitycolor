@@ -38,7 +38,11 @@ const ctx = (body: Record<string, unknown>) => ({
   }),
   set: jest.fn(),
 });
-async function seed(snapshot = true, overrides: Record<string, unknown> = {}) {
+async function seed(
+  snapshot = true,
+  overrides: Record<string, unknown> = {},
+  itemOverrides: Record<string, unknown> = {},
+) {
   const user = await f.createUser();
   const city = await f.createShippingCity({ title: "تهران" });
   const address = await f.createAddress({
@@ -70,11 +74,86 @@ async function seed(snapshot = true, overrides: Record<string, unknown> = {}) {
     const line = await f.createOrderItem({ orderId: order.id, variationId: variation.id });
     await strapi.db
       .query("api::order-item.order-item")
-      .update({ where: { id: line.id }, data: { ProductSKU: "Ab-۰۰۱  ٢" } });
+      .update({
+        where: { id: line.id },
+        data: { ProductSKU: "Ab-۰۰۱  ٢", ...itemOverrides },
+      });
   }
   return { order, address, city, product, variation };
 }
 describe("order delivery filters on real PostgreSQL", () => {
+  it("finds partial historical product names and codes with optional spacing without duplicating orders", async () => {
+    const row = await seed(true, {}, {
+      ProductSKU: "Coat- ۰۰۱\u00a0 ٢",
+      ProductTitle: "مانتو كتان ۱۲ مدل 50%_",
+    });
+    await seed(true, {}, { ProductSKU: "Other-1", ProductTitle: "پیراهن دیگر" });
+    for (const productCode of ["مانتو کتان 12", "50%_", "Coat-0012", " Coat - ٠٠١ ۲ "]) {
+      const request = ctx({ productCode, pageSize: 1 });
+      await controller.query(request);
+      expect(request.body.data.map((entry: any) => entry.id)).toEqual([row.order.id]);
+      expect(request.body.meta.pagination).toMatchObject({ total: 1, pageCount: 1 });
+      const counts = ctx({ productCode });
+      await controller.counts(counts);
+      expect(counts.body.data.counts.all).toBe(1);
+      expect(counts.body.data.counts.inprogress).toBe(1);
+    }
+    for (const productCode of ["51%_", "\u200c"]) {
+      const literal = ctx({ productCode });
+      await controller.query(literal);
+      expect(literal.body.data).toEqual([]);
+    }
+  });
+
+  it("keeps historical product matches while also finding the linked current catalog identity", async () => {
+    const row = await seed(true, {}, { ProductTitle: "نام قدیمی مانتو" });
+    await strapi.db.query("api::product.product").update({
+      where: { id: row.product.id }, data: { Title: "نام جدید پالتو" },
+    });
+    await strapi.db.query("api::product-variation.product-variation").update({
+      where: { id: row.variation.id }, data: { SKU: "NEW- ۱۲۳" },
+    });
+    for (const productCode of ["نام قدیمی", "Ab-0012", "نام جدید", "NEW-123"]) {
+      const request = ctx({ productCode });
+      await controller.query(request);
+      expect(request.body.data.map((entry: any) => entry.id)).toEqual([row.order.id]);
+    }
+    const lines = await strapi.db.query("api::order-item.order-item").findMany({
+      where: { order: { id: row.order.id } }, select: ["id"],
+    });
+    await strapi.db.connection("order_items_product_variation_links")
+      .whereIn("order_item_id", lines.map((line: any) => line.id)).delete();
+    const historical = ctx({ productCode: "نام قدیمی" });
+    await controller.query(historical);
+    expect(historical.body.data.map((entry: any) => entry.id)).toEqual([row.order.id]);
+    const current = ctx({ productCode: "NEW-123" });
+    await controller.query(current);
+    expect(current.body.data).toEqual([]);
+  });
+
+  it("combines product and city using the captured destination or the linked legacy address", async () => {
+    const saved = await seed(true, {}, { ProductTitle: "مانتو شهر" });
+    const legacy = await seed(false, {}, { ProductTitle: "مانتو شهر" });
+    const changedCity = await f.createShippingCity({ title: "شیراز" });
+    for (const row of [saved, legacy]) {
+      await strapi.db.query("api::local-user-address.local-user-address").update({
+        where: { id: row.address.id }, data: { shipping_city: changedCity.id },
+      });
+    }
+    for (const [cityId, expected] of [
+      [saved.city.id, [saved.order.id]],
+      [legacy.city.id, []],
+      [changedCity.id, [legacy.order.id]],
+    ] as const) {
+      const request = ctx({ cityId: String(cityId), productCode: "مانتو شهر" });
+      await controller.query(request);
+      expect(request.body.data.map((entry: any) => entry.id)).toEqual(expected);
+      const counts = ctx({ cityId: String(cityId), productCode: "مانتو شهر" });
+      await controller.counts(counts);
+      expect(counts.body.data.counts.all).toBe(expected.length);
+    }
+  });
+
   it("combines city, historical SKU, exact postal and normalized partial address with correct row/count pagination", async () => {
     const one = await seed();
     const two = await seed();

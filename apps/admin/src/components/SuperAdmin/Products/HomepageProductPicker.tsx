@@ -158,6 +158,7 @@ export default function HomepageProductPicker({
           onProductSelect={handleProductSelect}
           selectedItems={selectedItems}
           enableVariationSelection={false}
+          includeUnpublished
         />
       )}
 

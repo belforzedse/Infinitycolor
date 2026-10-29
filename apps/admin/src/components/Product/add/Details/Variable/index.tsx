@@ -4,7 +4,7 @@ import { ProductVariableTable } from "./Table";
 import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 import ProductEditorFields from "@/components/Product/add/ProductEditorFields";
 import type { ProductEditSnapshot } from "@/services/super-admin/product/editor-session";
-import { buildVariationEditorPayload } from "@/services/super-admin/product/variation-editor";
+import { buildVariationEditorPayload, loadVariationEditorRows } from "@/services/super-admin/product/variation-editor";
 import toast from "react-hot-toast";
 import { useCan } from "@/hooks/useCan";
 import Modal from "@/components/Kits/Modal";
@@ -106,19 +106,15 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({
 
   // Fetch product variations
   useEffect(() => {
+    let active = true;
     const fetchVariations = async () => {
       if (!productId || (restored?.variables && refreshKey === 0)) return;
 
       setLoading(true);
       try {
         const seed = refreshKey === 0 ? session?.snapshot?.product.attributes.product_variations?.data : undefined;
-        const response = seed ? { data: seed } : await apiClient.get(
-          `/product-variations?filters[product][id][$eq]=${productId}&populate[0]=product_variation_color&populate[1]=product_variation_size&populate[2]=product_variation_model&populate[3]=product_stock&populate[4]=general_discounts&populate[5]=selected_attribute_terms&populate[6]=selected_attribute_terms.product_attribute&pagination[pageSize]=100`,
-          { cache: "no-store" },
-        );
-
-        // Type assertion to work with the data
-        const variations = response.data as ProductVariable[];
+        const variations = (seed ?? await loadVariationEditorRows(apiClient, productId)) as ProductVariable[];
+        if (!active) return;
 
         // Debug: Log the API response to see what we're getting
         if (process.env.NODE_ENV !== "production") {
@@ -228,13 +224,14 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({
 
         setVariables(formattedVariations);
       } catch (error) {
-        console.error("Error fetching product variations:", error);
+        if (active) console.error("Error fetching product variations:", error);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     fetchVariations();
+    return () => { active = false; };
   }, [productId, refreshKey]);
 
   const handleCheckboxChange = (id: number) => {

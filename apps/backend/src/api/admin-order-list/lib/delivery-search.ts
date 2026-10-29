@@ -29,6 +29,10 @@ export const normalizeOrderAddress = (value: string) =>
 export const normalizeOrderPostal = (value: string) =>
   normalizeOrderDigits(value).replace(/[\s-]+/g, "");
 
+// Match pasted codes without changing the immutable order-item snapshot or its
+// case-sensitive SKU normalization. Keep SQL and JavaScript whitespace aligned.
+const CODE_SPACES = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u200c";
+
 export function parseDeliverySearch(
   ctx: any,
   body: Record<string, unknown>,
@@ -94,12 +98,38 @@ export function deliverySearchCondition(
   if (!Object.keys(input).length) return null;
   const ids = knex("orders as os").select("os.id");
   if (input.productCode) {
+    const code = normalizeOrderSku(input.productCode).replace(/[\s\u200c]+/g, "");
+    const title = normalizeOrderAddress(input.productCode);
+    const matchIdentity = (query: any, skuColumn: string, titleColumn: string) => {
+      query.whereRaw("infinity_order_sku(??) = ?", [skuColumn, input.productCode]);
+      if (code) {
+        query.orWhereRaw("translate(infinity_order_sku(??), ?, '') = ?", [skuColumn, CODE_SPACES, code]);
+      }
+      if (title) {
+        query.orWhereRaw("infinity_order_address(??) LIKE ?", [titleColumn, `%${escapeAdminLike(title)}%`]);
+      }
+    };
     ids.whereExists(
       knex("order_items_order_links as oil")
         .select(knex.raw("1"))
         .join("order_items as oi", "oi.id", "oil.order_item_id")
         .whereRaw("oil.order_id = os.id")
-        .whereRaw("infinity_order_sku(oi.product_sku) = ?", [input.productCode]),
+        .andWhere(function (this: any) {
+          matchIdentity(this, "oi.product_sku", "oi.product_title");
+          // Historical names/codes survive catalog edits and deleted links;
+          // linked items are also discoverable under their current identity.
+          this.orWhereExists(
+            knex("order_items_product_variation_links as ivl")
+              .select(knex.raw("1"))
+              .join("product_variations as pv", "pv.id", "ivl.product_variation_id")
+              .leftJoin("product_variations_product_links as vpl", "vpl.product_variation_id", "pv.id")
+              .leftJoin("products as p", "p.id", "vpl.product_id")
+              .whereRaw("ivl.order_item_id = oi.id")
+              .andWhere(function (this: any) {
+                matchIdentity(this, "pv.sku", "p.title");
+              }),
+          );
+        }),
     );
   }
   if (input.cityId || input.postalCode || input.addressText) {

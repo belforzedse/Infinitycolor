@@ -252,6 +252,7 @@ export function buildPLPProductsQuery(
   }
 
   if (query.search) {
+    if (query.search.trim().toLowerCase() === "oppsi") queryParams.append("oppsi", "true");
     const searchIndex = nextAnd();
     queryParams.append(`filters[$and][${searchIndex}][$or][0][Title][$containsi]`, query.search);
     queryParams.append(

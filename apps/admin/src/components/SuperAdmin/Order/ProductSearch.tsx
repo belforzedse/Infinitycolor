@@ -86,12 +86,14 @@ interface ProductSearchProps {
   onProductSelect: (product: Product, variation?: ProductVariation) => void;
   selectedItems: OrderItem[];
   enableVariationSelection?: boolean;
+  includeUnpublished?: boolean;
 }
 
 const ProductSearch: React.FC<ProductSearchProps> = ({
   onProductSelect,
   selectedItems,
   enableVariationSelection = true,
+  includeUnpublished = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
@@ -112,16 +114,52 @@ const ProductSearch: React.FC<ProductSearchProps> = ({
     setLoading(true);
     const timeout = setTimeout(async () => {
       try {
-        const url = `${API_BASE_URL}${ENDPOINTS.PRODUCT.SEARCH}?q=${encodeURIComponent(q)}&page=1&pageSize=20&view=suggestion`;
-        const res = await fetch(url, {
-          method: "GET",
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-          signal: controller.signal,
-        });
+        let json: any;
+        if (includeUnpublished) {
+          // The public suggestion route is anonymous. Use the staff catalog so
+          // a draft can be curated now and appear once it is published.
+          const params = new URLSearchParams({
+            "filters[removedAt][$null]": "true",
+            "pagination[pageSize]": "20",
+            "populate[CoverImage]": "true",
+            "populate[product_variations][fields][0]": "Price",
+            "populate[product_variations][fields][1]": "DiscountPrice",
+            "populate[product_main_category][fields][0]": "Title",
+            "sort[0]": "id:desc",
+          });
+          // Preserve code matching from the public search (W00288 / W 00288),
+          // including Persian and Arabic digits printed on product labels.
+          const normalized = q.replace(/[۰-۹٠-٩]/g, (digit) => {
+            const code = digit.charCodeAt(0);
+            return String(code - (code >= 0x0660 && code <= 0x0669 ? 0x0660 : 0x06f0));
+          });
+          const boundary = /([A-Za-z]+)[\s\u200c]*(\d)/g;
+          const variants = [...new Set([
+            q, normalized,
+            normalized.replace(boundary, "$1 $2"),
+            normalized.replace(boundary, "$1$2"),
+          ])];
+          variants.forEach((term, index) => {
+            params.set(`filters[$or][${index * 2}][Title][$containsi]`, term);
+            params.set(`filters[$or][${index * 2 + 1}][Description][$containsi]`, term);
+          });
+          json = await apiClient.get(`${ENDPOINTS.PRODUCT.PRODUCT}?${params}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+        } else {
+          const url = `${API_BASE_URL}${ENDPOINTS.PRODUCT.SEARCH}?q=${encodeURIComponent(q)}&page=1&pageSize=20&view=suggestion`;
+          const res = await fetch(url, {
+            method: "GET",
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+            signal: controller.signal,
+          });
+          if (!res.ok) throw new Error("Product search failed");
+          json = await res.json();
+        }
 
         if (!mounted) return;
-        const json = await res.json();
 
         const items = (json?.data || []).map((raw: any) => {
           const attrs = raw?.attributes ? raw.attributes : raw;
@@ -238,7 +276,7 @@ const ProductSearch: React.FC<ProductSearchProps> = ({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [searchQuery]);
+  }, [searchQuery, includeUnpublished]);
 
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat('fa-IR').format(price);

@@ -1,13 +1,14 @@
 "use client";
 
 import { Input } from "@/components/ui/Input";
-import { useAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import {
   editProductDataAtom,
   productDataAtom,
 } from "@/atoms/super-admin/products";
 import RichTextEditor from "@/components/RichTextEditor";
 import { useProductEditor } from "@/hooks/product/ProductEditorContext";
+import ProductTitleInput from "./ProductTitleInput";
 
 interface DetailsProps {
   isEditMode?: boolean;
@@ -15,6 +16,8 @@ interface DetailsProps {
 
 export default function ProductDetails({ isEditMode = false }: DetailsProps) {
   const { canEdit } = useProductEditor();
+  const setNewProduct = useSetAtom(productDataAtom);
+  const setEditedProduct = useSetAtom(editProductDataAtom);
   const [productAtom, setProductAtom] = useAtom(
     isEditMode ? editProductDataAtom : productDataAtom,
   );
@@ -70,17 +73,25 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
 
   return (
     <div className="flex w-full flex-col gap-6 rounded-xl bg-white p-5">
-      <div className="flex flex-col gap-3 lg:gap-4">
-        <label className="text-base text-gray-700">نام محصول</label>
-        <Input
-          type="text"
-          name="name"
-          value={productAtom.Title}
-          onChange={handleChange}
-          placeholder="نام محصول"
-          className="w-full text-right text-neutral-800 placeholder:text-gray-400"
-        />
-      </div>
+      <ProductTitleInput
+        value={productAtom.Title ?? ""}
+        disabled={!canEdit}
+        onChange={(value) => {
+          if (!canEdit) return;
+
+          if (isEditMode) {
+            setEditedProduct((previous) => ({
+              ...previous,
+              Title: value,
+            }));
+          } else {
+            setNewProduct((previous) => ({
+              ...previous,
+              Title: value,
+            }));
+          }
+        }}
+      />
 
       <div className="flex flex-col gap-3 lg:gap-4">
         <label className="text-base text-gray-700">اسلاگ (نامک) محصول</label>
