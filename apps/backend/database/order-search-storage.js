@@ -6,6 +6,7 @@ const LOCK_KEY = 827453138;
 // Match JavaScript whitespace, including NBSP and BOM, without changing SKU interiors.
 const SPACE_CONTENT = "[:space:]\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
 const SPACE_CLASS = `[${SPACE_CONTENT}]`;
+const CODE_SPACES = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u200c";
 
 async function registerSnapshotTable(knex) {
   const store = "strapi_core_store_settings";
@@ -55,6 +56,23 @@ function normalizedLatinSql(expression) {
   return `translate(${expression}, '${quote("يىك" + latinCase.upper)}', '${quote("ییک" + latinCase.lower)}')`;
 }
 
+async function ensureSearchIndex(knex, name, definition) {
+  // Fresh-database migrations run in a transaction. Existing installations
+  // install/repair these indexes during the serialized post-sync bootstrap;
+  // build concurrently there so checkout and catalog writes can continue.
+  const concurrently = knex.isTransaction ? "" : "CONCURRENTLY ";
+  const existing = await knex.raw(
+    "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(?)",
+    [name],
+  );
+  // A cancelled concurrent build leaves an invalid index behind. IF NOT EXISTS
+  // alone would silently retain it and the search would remain unindexed.
+  if (existing.rows[0]?.indisvalid === false) {
+    await knex.raw(`DROP INDEX ${concurrently}IF EXISTS ??`, [name]);
+  }
+  await knex.raw(`CREATE INDEX ${concurrently}IF NOT EXISTS ?? ${definition}`, [name]);
+}
+
 async function ensureStorage(knex) {
   // Bind nested function references at definition time. PostgreSQL 17 builds
   // indexes with search_path=pg_catalog,pg_temp, excluding the app schema.
@@ -64,6 +82,9 @@ async function ensureStorage(knex) {
   await knex.raw(`CREATE OR REPLACE FUNCTION infinity_order_sku(value text) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     RETURN regexp_replace(infinity_order_digits(normalize(coalesce(value, ''), NFC)), '^${SPACE_CLASS}+|${SPACE_CLASS}+$', '', 'g')`);
+  await knex.raw(`CREATE OR REPLACE FUNCTION infinity_order_code(value text) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    RETURN translate(infinity_order_sku(value), '${CODE_SPACES}', '')`);
   await knex.raw(`CREATE OR REPLACE FUNCTION infinity_order_postal(value text) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     RETURN regexp_replace(infinity_order_digits(coalesce(value, '')), '[${SPACE_CONTENT}-]+', '', 'g')`);
@@ -119,6 +140,25 @@ async function ensureStorage(knex) {
   if (await knex.schema.hasTable("order_items")) {
     await knex.raw(
       "CREATE INDEX IF NOT EXISTS idx_order_item_snapshot_sku ON order_items (infinity_order_sku(product_sku), id)",
+    );
+    await ensureSearchIndex(knex, "idx_order_item_snapshot_code",
+      "ON order_items (infinity_order_code(product_sku), id)",
+    );
+    await ensureSearchIndex(knex, "idx_order_item_snapshot_title",
+      "ON order_items USING gin (infinity_order_address(product_title) gin_trgm_ops)",
+    );
+  }
+  if (await knex.schema.hasTable("product_variations")) {
+    await ensureSearchIndex(knex, "idx_order_current_sku",
+      "ON product_variations (infinity_order_sku(sku), id)",
+    );
+    await ensureSearchIndex(knex, "idx_order_current_code",
+      "ON product_variations (infinity_order_code(sku), id)",
+    );
+  }
+  if (await knex.schema.hasTable("products")) {
+    await ensureSearchIndex(knex, "idx_order_current_title",
+      "ON products USING gin (infinity_order_address(title) gin_trgm_ops)",
     );
   }
 }

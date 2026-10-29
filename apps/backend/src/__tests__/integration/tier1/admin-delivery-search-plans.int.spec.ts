@@ -13,6 +13,8 @@ beforeAll(async () => {
   strapi = await setupStrapi();
 });
 afterAll(async () => {
+  await strapi.db.connection("order_items_order_links").whereIn("order_id", ids).delete();
+  await strapi.db.connection("order_items").where("external_source", "order-search-plan").delete();
   if (ids.length) {
     await strapi.db.connection("order_delivery_snapshots").whereIn("order_id", ids).delete();
     await strapi.db.connection("orders").whereIn("id", ids).delete();
@@ -89,4 +91,43 @@ it("measures indexed delivery queries on 10,000 synthetic orders", async () => {
     expect(plan.Plan["Actual Rows"]).toBe(1);
   }
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+});
+
+it("uses independent identity indexes for Persian product search across 160,000 order items", async () => {
+  const knex = strapi.db.connection;
+  await knex.raw(`WITH items AS (
+    INSERT INTO order_items (product_sku, product_title, per_amount, external_source)
+    SELECT CASE WHEN n = 1 THEN '۷۰۰' ELSE 'plan-' || n END,
+      CASE WHEN n = 2 THEN 'ارزیابی ۷۰۰ ویژه' ELSE 'لباس آزمایشی روزمره' END,
+      1000, 'order-search-plan'
+    FROM generate_series(1, 160000) AS n RETURNING id
+  ) INSERT INTO order_items_order_links (order_item_id, order_id)
+    SELECT id, (?::int[])[1 + (id % ?)] FROM items`, [ids, ids.length]);
+  await knex.raw("ANALYZE order_items");
+  await knex.raw("ANALYZE order_items_order_links");
+  await knex.raw("SELECT gin_clean_pending_list('idx_order_item_snapshot_title'::regclass)");
+  const condition = deliverySearchCondition(knex, { productCode: "۷۰۰" }) as any;
+  const query = knex("orders").count("id as total").whereIn("id", condition.id.$in).toSQL();
+  const result = await knex.raw(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query.sql}`, query.bindings);
+  const plan = result.rows[0]["QUERY PLAN"][0];
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+  report.product = { syntheticOrderItems: 160000, ...plan };
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_sku");
+  expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_code");
+  expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_title");
+  const visit = (node: any) => {
+    if (node["Relation Name"] === "order_items") expect(node["Node Type"]).not.toBe("Seq Scan");
+    for (const child of node.Plans || []) visit(child);
+  };
+  visit(plan.Plan);
+  expect(Number((await knex("orders").count("id as total").whereIn("id", condition.id.$in))[0].total)).toBe(2);
+  for (const productCode of ["۷", "۷۰"]) {
+    const short = deliverySearchCondition(knex, { productCode }) as any;
+    const sql = knex("orders").count("id as total").whereIn("id", short.id.$in).toSQL();
+    const result = await knex.raw(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql.sql}`, sql.bindings);
+    report[`product-${productCode.length}-character`] = result.rows[0]["QUERY PLAN"][0];
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+    expect(Number((await knex("orders").count("id as total").whereIn("id", short.id.$in))[0].total)).toBe(1);
+  }
 });
