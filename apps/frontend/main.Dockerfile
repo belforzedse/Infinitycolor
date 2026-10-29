@@ -1,13 +1,13 @@
-# syntax=docker.arvancloud.ir/docker/dockerfile:1.7
+# syntax=docker-cache.alpagency.net/docker/dockerfile:1.7
 # Node 22: avoids "controller[kState].transformAlgorithm is not a function" when cache handler handles streams under load
-FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS builder
+FROM docker-cache.alpagency.net/library/node:22.23.4-alpine AS builder
 
 WORKDIR /repo
 ENV NEXT_TELEMETRY_DISABLED=1
-ARG NPM_REGISTRY_URL="https://mirror.abrha.net/repository/npm/"
+ARG NPM_REGISTRY_URL="https://npm.alpagency.net/"
 ARG NPM_REGISTRY_SECOND_FALLBACK_URL="https://package-mirror.liara.ir/repository/npm/"
 ARG NPM_REGISTRY_THIRD_FALLBACK_URL="https://mirror-npm.runflare.com/"
-ARG NPM_REGISTRY_FALLBACK_URL="https://registry.npmjs.org/"
+ARG NPM_REGISTRY_FALLBACK_URL="https://mirror.abrha.net/repository/npm/"
 
 COPY .cursor/docker/fallback-registry.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/fallback-registry.sh
@@ -140,7 +140,7 @@ RUN node scripts/check-sentry-server-hook.mjs
 RUN node scripts/check-sentry-server-maps.mjs
 RUN node scripts/check-sentry-probe-exclusion.mjs
 
-FROM docker.arvancloud.ir/library/node:22.23.4-alpine AS runner
+FROM docker-cache.alpagency.net/library/node:22.23.4-alpine AS runner
 WORKDIR /app
 
 # Runtime env: STRAPI_INTERNAL_URL, FRONTEND_REDIS_URL (STRAPI_BUILD_TIME_URL is build-only).

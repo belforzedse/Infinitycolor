@@ -50,11 +50,17 @@ describe("applyNewestOfferOrder", () => {
     expect(calls).toHaveLength(5);
     expect(calls[0]).toEqual({
       method: "orderByRaw",
-      args: ["CASE WHEN p.id = ANY(string_to_array(?, ',')::integer[]) THEN 0 ELSE 1 END", ["73,11,42"]],
+      args: [
+        "CASE WHEN p.id = ANY(string_to_array(?, ',')::integer[]) THEN 0 ELSE 1 END",
+        ["73,11,42"],
+      ],
     });
     expect(calls[1]).toEqual({
       method: "orderByRaw",
-      args: ["array_position(string_to_array(?, ',')::integer[], p.id) ASC NULLS LAST", ["73,11,42"]],
+      args: [
+        "array_position(string_to_array(?, ',')::integer[], p.id) ASC NULLS LAST",
+        ["73,11,42"],
+      ],
     });
     // Stock only splits what follows the curated block: the curated CASE never mentions it.
     expect(sqlOf(calls[0])).not.toContain("EXISTS");
@@ -169,7 +175,7 @@ describe("Newest in the product service", () => {
     expect(params.curated).toBeUndefined();
   });
 
-  it("builds the homepage newest rail from the same Newest listing, in stock, 20 cards", async () => {
+  it("builds the homepage newest rail from the same Newest listing, in stock, 100 cards", async () => {
     await service.findHomepageSections();
 
     const newestCalls = findOrderedProductIdsMock.mock.calls.filter(
@@ -180,7 +186,7 @@ describe("Newest in the product service", () => {
       offer: "newest",
       curatedProductIds: [9, 4, 7],
       availability: "in-stock",
-      pagination: { limit: 20, withCount: false },
+      pagination: { limit: 100, withCount: false },
     });
   });
 
