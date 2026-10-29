@@ -94,16 +94,19 @@ it("measures indexed delivery queries on 10,000 synthetic orders", async () => {
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 });
 
-it("uses independent identity indexes for Persian product search across 160,000 order items", async () => {
+it("uses independent identity indexes for a large Persian product-search fixture", async () => {
   const knex = strapi.db.connection;
+  // Run the production-sized stress case with ORDER_SEARCH_PLAN_ITEMS=160000;
+  // ordinary CI still verifies the access paths without a slow bulk-load step.
+  const syntheticItems = Number(process.env.ORDER_SEARCH_PLAN_ITEMS || 20000);
   await knex.raw(`WITH items AS (
     INSERT INTO order_items (product_sku, product_title, per_amount, external_source)
     SELECT CASE WHEN n = 1 THEN '۷۰۰' ELSE 'plan-' || n END,
       CASE WHEN n = 2 THEN 'ارزیابی ۷۰۰ ویژه' ELSE 'لباس آزمایشی روزمره' END,
       1000, 'order-search-plan'
-    FROM generate_series(1, 160000) AS n RETURNING id
+    FROM generate_series(1, ?) AS n RETURNING id
   ) INSERT INTO order_items_order_links (order_item_id, order_id)
-    SELECT id, (?::int[])[1 + (id % ?)] FROM items`, [ids, ids.length]);
+    SELECT id, (?::int[])[1 + (id % ?)] FROM items`, [syntheticItems, ids, ids.length]);
   await knex.raw("ANALYZE order_items");
   await knex.raw("ANALYZE order_items_order_links");
   await knex.raw("SELECT gin_clean_pending_list('idx_order_item_snapshot_title'::regclass)");
@@ -112,7 +115,7 @@ it("uses independent identity indexes for Persian product search across 160,000 
   const result = await knex.raw(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query.sql}`, query.bindings);
   const plan = result.rows[0]["QUERY PLAN"][0];
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-  report.product = { syntheticOrderItems: 160000, ...plan };
+  report.product = { syntheticOrderItems: syntheticItems, ...plan };
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
   expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_sku");
   expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_code");
