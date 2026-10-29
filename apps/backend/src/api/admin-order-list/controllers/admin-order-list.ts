@@ -1,5 +1,5 @@
 import { loadOrderSnapshotRecipientNames } from "../../../utils/orderDeliverySnapshot";
-import { parseDeliverySearch, deliverySearchCondition } from "../lib/delivery-search";
+import { parseDeliverySearch, resolveDeliverySearchCondition } from "../lib/delivery-search";
 import { sanitize } from "@strapi/utils";
 import {
   adminPagination,
@@ -118,7 +118,7 @@ async function parseOrderListCriteria(
   const delivery = parseDeliverySearch(ctx, body);
   if (!delivery) return null;
   const conditions: Record<string, unknown>[] = [...filters];
-  const deliveryCondition = deliverySearchCondition(Object.keys(delivery).length ? strapi.db.connection : null, delivery);
+  const deliveryCondition = await resolveDeliverySearchCondition(Object.keys(delivery).length ? strapi.db.connection : null, delivery);
   if (deliveryCondition) conditions.push(deliveryCondition);
   if (shippingMethodCodes.length > 0) {
     conditions.push({

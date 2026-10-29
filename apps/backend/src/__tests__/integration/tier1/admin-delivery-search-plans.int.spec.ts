@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { deliverySearchCondition } from "../../../api/admin-order-list/lib/delivery-search";
+import controller from "../../../api/admin-order-list/controllers/admin-order-list";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 
 let strapi: any;
@@ -130,4 +131,11 @@ it("uses independent identity indexes for Persian product search across 160,000 
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
     expect(Number((await knex("orders").count("id as total").whereIn("id", short.id.$in))[0].total)).toBe(1);
   }
+  const request = { request: { body: { productCode: "۷۰" } }, set: jest.fn(), body: null as any };
+  const started = Date.now();
+  await controller.counts(request);
+  report.productShortCounts = { durationMs: Date.now() - started };
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  expect(request.body.data.counts.all).toBe(1);
+  expect(request.body.data.counts.inprogress).toBe(1);
 });

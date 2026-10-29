@@ -164,3 +164,14 @@ export function deliverySearchCondition(
   }
   return { id: { $in: ids } };
 }
+
+export async function resolveDeliverySearchCondition(knex: any, input: DeliverySearch) {
+  const condition = deliverySearchCondition(knex, input);
+  if (!condition || !input.productCode) return condition;
+  // A short title fragment cannot use a selective trigram lookup. Resolve the
+  // candidates once per request rather than repeating that scan for every tab
+  // (or the rows and total). One array binding also handles broad matches past
+  // PostgreSQL's parameter limit without truncating the matching orders.
+  const matches = await (condition.id as any).$in;
+  return { id: { $in: knex.select(knex.raw("unnest(?::int[])", [matches.map((row: any) => row.id)])) } };
+}
