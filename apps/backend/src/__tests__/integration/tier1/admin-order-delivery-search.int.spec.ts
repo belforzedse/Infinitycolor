@@ -255,8 +255,13 @@ describe("order delivery filters on real PostgreSQL", () => {
         "idx_order_snapshot_address",
         "idx_order_item_snapshot_sku",
         "idx_order_legacy_postal",
+        "idx_order_item_snapshot_code",
+        "idx_order_item_snapshot_title",
+        "idx_order_current_sku",
+        "idx_order_current_code",
+        "idx_order_current_title",
       ]);
-    expect(indexes).toHaveLength(3);
+    expect(indexes).toHaveLength(8);
   });
   it("SQL and request normalization agree on Persian and compatibility inputs", async () => {
     const text = "  خيابان\u200cكاشاني  ＡＢＣ ۱۲ ";
@@ -269,6 +274,10 @@ describe("order delivery filters on real PostgreSQL", () => {
       address: normalizeOrderAddress(text),
       sku: normalizeOrderSku(sku),
     });
+    for (const code of [" Coat - ۰۰۱\u00a0\u200c٢ ", "A\u0301-\ufeff۱\t۲", "\u200c"]) {
+      const normalized = await strapi.db.connection.raw("SELECT infinity_order_code(?) AS code", [code]);
+      expect(normalized.rows[0].code).toBe(normalizeOrderSku(code).replace(/[\s\u200c]+/g, ""));
+    }
     const latin = await strapi.db.connection.raw("SELECT infinity_order_address(?) AS address", [
       "CAFÉ Étage",
     ]);
@@ -289,17 +298,31 @@ describe("order delivery filters on real PostgreSQL", () => {
     ]);
     expect(all.rows[0].address).toBe(normalizeOrderAddress(allLatin));
   });
+  it("repairs an invalid index left by an interrupted concurrent build", async () => {
+    await seed();
+    const knex = strapi.db.connection;
+    await knex.raw("DROP INDEX CONCURRENTLY idx_order_item_snapshot_code");
+    await expect(knex.raw(
+      "CREATE INDEX CONCURRENTLY idx_order_item_snapshot_code ON order_items ((1 / (id - id)))",
+    )).rejects.toThrow("division by zero");
+    const validity = async () => (await knex.raw(
+      "SELECT indisvalid FROM pg_index WHERE indexrelid = 'idx_order_item_snapshot_code'::regclass",
+    )).rows[0].indisvalid;
+    expect(await validity()).toBe(false);
+    await ensureOrderSearchStorage(strapi);
+    expect(await validity()).toBe(true);
+  });
   it("evaluates and rebuilds populated expression indexes with PostgreSQL 17's restricted search path", async () => {
     await seed();
     const functions = () => strapi.db.connection.raw(
       "SELECT p.oid, p.proname, p.proowner, p.proacl FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY(?::text[]) ORDER BY p.proname",
-      [["infinity_order_digits", "infinity_order_postal", "infinity_order_sku", "infinity_order_address"]],
+      [["infinity_order_digits", "infinity_order_postal", "infinity_order_sku", "infinity_order_address", "infinity_order_code"]],
     );
     const beforeFunctions = (await functions()).rows;
     const beforeRows = await strapi.db.connection("order_delivery_snapshots").orderBy("order_id");
     await ensureOrderSearchStorage(strapi);
     expect((await functions()).rows).toEqual(beforeFunctions);
-    expect(beforeFunctions).toHaveLength(4);
+    expect(beforeFunctions).toHaveLength(5);
     expect(await strapi.db.connection("order_delivery_snapshots").orderBy("order_id")).toEqual(beforeRows);
     await strapi.db.connection.transaction(async (trx: any) => {
       await trx.raw("SET LOCAL search_path TO pg_catalog, pg_temp");
@@ -318,15 +341,20 @@ describe("order delivery filters on real PostgreSQL", () => {
         "idx_order_legacy_postal",
         "idx_order_legacy_address",
         "idx_order_item_snapshot_sku",
+        "idx_order_item_snapshot_code",
+        "idx_order_item_snapshot_title",
+        "idx_order_current_sku",
+        "idx_order_current_code",
+        "idx_order_current_title",
       ]) {
         await trx.raw("REINDEX INDEX ??", [`public.${index}`]);
       }
     });
     const result = await strapi.db.connection.raw(
       "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = ANY(?::text[])",
-      [["idx_order_snapshot_postal", "idx_order_snapshot_address", "idx_order_legacy_postal", "idx_order_legacy_address", "idx_order_item_snapshot_sku"]],
+      [["idx_order_snapshot_postal", "idx_order_snapshot_address", "idx_order_legacy_postal", "idx_order_legacy_address", "idx_order_item_snapshot_sku", "idx_order_item_snapshot_code", "idx_order_item_snapshot_title", "idx_order_current_sku", "idx_order_current_code", "idx_order_current_title"]],
     );
-    expect(result.rows).toHaveLength(5);
+    expect(result.rows).toHaveLength(10);
     expect(result.rows.every((row: any) => row.indisvalid)).toBe(true);
   });
 });

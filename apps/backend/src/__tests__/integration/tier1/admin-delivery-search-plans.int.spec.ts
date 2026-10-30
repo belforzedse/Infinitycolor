@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { deliverySearchCondition } from "../../../api/admin-order-list/lib/delivery-search";
+import controller from "../../../api/admin-order-list/controllers/admin-order-list";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 
 let strapi: any;
@@ -13,6 +14,8 @@ beforeAll(async () => {
   strapi = await setupStrapi();
 });
 afterAll(async () => {
+  await strapi.db.connection("order_items_order_links").whereIn("order_id", ids).delete();
+  await strapi.db.connection("order_items").where("external_source", "order-search-plan").delete();
   if (ids.length) {
     await strapi.db.connection("order_delivery_snapshots").whereIn("order_id", ids).delete();
     await strapi.db.connection("orders").whereIn("id", ids).delete();
@@ -89,4 +92,53 @@ it("measures indexed delivery queries on 10,000 synthetic orders", async () => {
     expect(plan.Plan["Actual Rows"]).toBe(1);
   }
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+});
+
+it("uses independent identity indexes for a large Persian product-search fixture", async () => {
+  const knex = strapi.db.connection;
+  // Run the production-sized stress case with ORDER_SEARCH_PLAN_ITEMS=160000;
+  // ordinary CI still verifies the access paths without a slow bulk-load step.
+  const syntheticItems = Number(process.env.ORDER_SEARCH_PLAN_ITEMS || 20000);
+  await knex.raw(`WITH items AS (
+    INSERT INTO order_items (product_sku, product_title, per_amount, external_source)
+    SELECT CASE WHEN n = 1 THEN '۷۰۰' ELSE 'plan-' || n END,
+      CASE WHEN n = 2 THEN 'ارزیابی ۷۰۰ ویژه' ELSE 'لباس آزمایشی روزمره' END,
+      1000, 'order-search-plan'
+    FROM generate_series(1, ?) AS n RETURNING id
+  ) INSERT INTO order_items_order_links (order_item_id, order_id)
+    SELECT id, (?::int[])[1 + (id % ?)] FROM items`, [syntheticItems, ids, ids.length]);
+  await knex.raw("ANALYZE order_items");
+  await knex.raw("ANALYZE order_items_order_links");
+  await knex.raw("SELECT gin_clean_pending_list('idx_order_item_snapshot_title'::regclass)");
+  const condition = deliverySearchCondition(knex, { productCode: "۷۰۰" }) as any;
+  const query = knex("orders").count("id as total").whereIn("id", condition.id.$in).toSQL();
+  const result = await knex.raw(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query.sql}`, query.bindings);
+  const plan = result.rows[0]["QUERY PLAN"][0];
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+  report.product = { syntheticOrderItems: syntheticItems, ...plan };
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_sku");
+  expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_code");
+  expect(JSON.stringify(plan)).toContain("idx_order_item_snapshot_title");
+  const visit = (node: any) => {
+    if (node["Relation Name"] === "order_items") expect(node["Node Type"]).not.toBe("Seq Scan");
+    for (const child of node.Plans || []) visit(child);
+  };
+  visit(plan.Plan);
+  expect(Number((await knex("orders").count("id as total").whereIn("id", condition.id.$in))[0].total)).toBe(2);
+  for (const productCode of ["۷", "۷۰"]) {
+    const short = deliverySearchCondition(knex, { productCode }) as any;
+    const sql = knex("orders").count("id as total").whereIn("id", short.id.$in).toSQL();
+    const result = await knex.raw(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql.sql}`, sql.bindings);
+    report[`product-${productCode.length}-character`] = result.rows[0]["QUERY PLAN"][0];
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+    expect(Number((await knex("orders").count("id as total").whereIn("id", short.id.$in))[0].total)).toBe(1);
+  }
+  const request = { request: { body: { productCode: "۷۰" } }, set: jest.fn(), body: null as any };
+  const started = Date.now();
+  await controller.counts(request);
+  report.productShortCounts = { durationMs: Date.now() - started };
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  expect(request.body.data.counts.all).toBe(1);
+  expect(request.body.data.counts.inprogress).toBe(1);
 });

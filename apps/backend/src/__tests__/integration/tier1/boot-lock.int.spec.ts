@@ -1,7 +1,7 @@
 /**
  * The boot lock (bootstrap/bootLock.ts) against a real Postgres: an advisory
- * lock belongs to one session, a second session blocks in pg_advisory_lock
- * until the first unlocks, and lock_timeout bounds that wait. No Strapi boot:
+ * lock belongs to one session, a second session retries until the first
+ * unlocks, and the configured deadline bounds that wait. No Strapi boot:
  * the lock only needs a pool that hands out and takes back connections.
  */
 import fs from "node:fs";
@@ -93,5 +93,56 @@ describe("boot lock on Postgres", () => {
       expect(rows[0].lock_timeout).toBe("0");
       connection.release();
     }
+  });
+
+  it("lets a concurrent expression index finish while another boot waits for the lock", async () => {
+    await pool.query("CREATE TABLE boot_lock_index_probe AS SELECT n::text AS title FROM generate_series(1, 1000) n");
+    const releaseFirst = await acquireBootLock(strapi, "the index-building boot");
+    let secondHasIt = false;
+    let waiterPid: number | undefined;
+    const waitingStrapi = {
+      ...strapi,
+      db: { connection: { client: {
+        ...strapi.db.connection.client,
+        acquireConnection: async () => {
+          const connection = await pool.connect();
+          waiterPid = connection.processID;
+          return connection;
+        },
+      } } },
+    };
+    const second = acquireBootLock(waitingStrapi, "the waiting boot").then((release) => {
+      secondHasIt = true;
+      return release;
+    });
+    const builder = await pool.connect();
+    try {
+      let attempted = false;
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const result = await builder.query("SELECT query FROM pg_stat_activity WHERE pid = $1", [waiterPid ?? 0]);
+        if (String(result.rows[0]?.query).includes("_advisory_lock(")) {
+          attempted = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(attempted).toBe(true);
+      await builder.query("SET statement_timeout = '3s'");
+      await builder.query("CREATE INDEX CONCURRENTLY boot_lock_index_probe_title ON boot_lock_index_probe (lower(title))");
+      const { rows } = await builder.query(
+        "SELECT indisvalid FROM pg_index WHERE indexrelid = 'boot_lock_index_probe_title'::regclass",
+      );
+      expect(rows[0].indisvalid).toBe(true);
+      expect(secondHasIt).toBe(false);
+    } finally {
+      await builder.query("SET statement_timeout = DEFAULT");
+      builder.release();
+      await releaseFirst();
+      const releaseSecond = await second;
+      await releaseSecond();
+      await pool.query("DROP TABLE boot_lock_index_probe");
+    }
+    expect(await holders()).toBe(0);
   });
 });
