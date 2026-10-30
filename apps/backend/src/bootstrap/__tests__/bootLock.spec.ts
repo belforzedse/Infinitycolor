@@ -1,10 +1,9 @@
 import { acquireBootLock, BOOT_LOCK_KEY, registerSchemaSyncLock, withBootLock } from "../bootLock";
 
 // A stand-in for Postgres advisory locks: one session holds a key, the others
-// wait in pg_advisory_lock until it is unlocked on that same session.
+// retry pg_try_advisory_lock until it is unlocked on that same session.
 const fakePostgres = (clientName = "postgres") => {
   const holders = new Map<number, object>();
-  let wake: Array<() => void> = [];
   const statements: string[] = [];
   let open = 0;
   let failLock: Error | undefined;
@@ -14,17 +13,13 @@ const fakePostgres = (clientName = "postgres") => {
       query: async (text: string, values: unknown[] = []) => {
         statements.push(text);
         const key = values[0] as number;
-        if (text.startsWith("SELECT pg_advisory_lock")) {
+        if (text.startsWith("SELECT pg_try_advisory_lock")) {
           if (failLock) throw failLock;
-          while (holders.has(key) && holders.get(key) !== connection) {
-            await new Promise<void>((resolve) => wake.push(resolve));
-          }
+          if (holders.has(key) && holders.get(key) !== connection) return { rows: [{ locked: false }] };
           holders.set(key, connection);
+          return { rows: [{ locked: true }] };
         } else if (text.startsWith("SELECT pg_advisory_unlock") && holders.get(key) === connection) {
           holders.delete(key);
-          const waiting = wake;
-          wake = [];
-          waiting.forEach((resolve) => resolve());
         }
         return { rows: [] };
       },
@@ -100,7 +95,7 @@ describe("boot lock", () => {
     await release();
     expect(pg.statements).toEqual([
       "SET lock_timeout = 4500",
-      "SELECT pg_advisory_lock($1)",
+      "SELECT pg_try_advisory_lock($1) AS locked",
       "SET lock_timeout = DEFAULT",
       "SELECT pg_advisory_unlock($1)",
     ]);
@@ -113,6 +108,19 @@ describe("boot lock", () => {
       /boot lock for the database invariants within 300000 ms: canceling statement due to lock timeout/,
     );
     expect(pg.statements).toContain("SET lock_timeout = DEFAULT");
+    expect(pg.openConnections()).toBe(0);
+  });
+
+  it("bounds retries while another boot holds the lock and returns its connection", async () => {
+    const pg = fakePostgres();
+    const release = await acquireBootLock(pg.strapi, "the first boot");
+    process.env.BOOT_LOCK_TIMEOUT_MS = "25";
+    await expect(acquireBootLock(pg.strapi, "the second boot")).rejects.toThrow(
+      /boot lock for the second boot within 25 ms: timed out waiting for another boot/,
+    );
+    expect(pg.holders.size).toBe(1);
+    expect(pg.openConnections()).toBe(1);
+    await release();
     expect(pg.openConnections()).toBe(0);
   });
 

@@ -63,7 +63,20 @@ export async function acquireBootLock(strapi: StrapiLike, section: string): Prom
   const started = Date.now();
   try {
     await connection.query(`SET lock_timeout = ${limit}`);
-    await connection.query("SELECT pg_advisory_lock($1)", [BOOT_LOCK_KEY]);
+    // A blocking SELECT keeps a snapshot while it waits. Concurrent expression
+    // index builds under this lock would wait for that snapshot, while the
+    // waiting boot needs this lock to finish: neither can make progress.
+    // End each try's transaction before sleeping, on the same pinned session.
+    while (true) {
+      if (Date.now() - started >= limit) throw new Error("timed out waiting for another boot");
+      const result = await connection.query("SELECT pg_try_advisory_lock($1) AS locked", [BOOT_LOCK_KEY]) as {
+        rows: Array<{ locked: boolean }>;
+      };
+      if (result.rows[0]?.locked) break;
+      const remaining = limit - (Date.now() - started);
+      if (remaining <= 0) throw new Error("timed out waiting for another boot");
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, remaining)));
+    }
   } catch (error) {
     await connection.query("SET lock_timeout = DEFAULT").catch(() => undefined);
     await client.releaseConnection(connection);
