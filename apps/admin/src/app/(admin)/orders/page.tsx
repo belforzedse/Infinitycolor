@@ -39,6 +39,7 @@ import { useOrderStatusCounts } from "@/hooks/useOrderStatusCounts";
 import { faNum } from "@/utils/faNum";
 import Link from "next/link";
 import { reserveParcelGrouping } from "./ReserveParcelHeader";
+import { orderListSearchAtom } from "@/lib/atoms/listSearch";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
@@ -132,8 +133,8 @@ export default function OrdersPage() {
   const [sort, setSort] = useState<"last-edited" | "newest" | "oldest">(
     "newest",
   );
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useAtom(orderListSearchAtom);
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
   // Tab badges must count the same population the table shows, so the reserve
   // toggle is folded into the counts request exactly as it is into the list.
   const countFilters = useMemo(

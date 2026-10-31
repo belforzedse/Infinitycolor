@@ -17,7 +17,7 @@ let mockOrderCountsState: {
 let mockOrderCountOptions: { filters: unknown[] };
 
 jest.mock("@/components/SuperAdmin/Table", () => ({
-  refreshTable: {},
+  refreshTable: jest.requireActual("jotai").atom(false),
   SuperAdminTable: (props: any) => {
     mockTableProps = props;
     return <div data-testid="orders-table" />;
@@ -70,7 +70,6 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/orders",
   useSearchParams: () => new URLSearchParams(),
 }));
-jest.mock("jotai", () => ({ atom: () => ({}), useAtom: () => [false, jest.fn()], useSetAtom: () => jest.fn() }));
 // Stable across renders like the real hook: a new function each render would
 // re-run the page's search effect, and its setPage, on every render.
 jest.mock("use-debounce", () => {
@@ -95,6 +94,8 @@ import {
   listAdminShippingMethods,
 } from "@/services/super-admin/orders/list";
 import { cancelOrder, changeOrderStatus } from "@/services/super-admin/orders/adjustItems";
+import { getDefaultStore } from "jotai";
+import { orderListSearchAtom } from "@/lib/atoms/listSearch";
 
 function renderPage(searchParams = "", onUrlUpdate?: (event: UrlUpdateEvent) => void) {
   return render(
@@ -106,6 +107,7 @@ function renderPage(searchParams = "", onUrlUpdate?: (event: UrlUpdateEvent) => 
 
 describe("orders page bounded data ownership", () => {
   beforeEach(() => {
+    getDefaultStore().set(orderListSearchAtom, "");
     mockTableProps = undefined;
     mockWrapperProps = undefined;
     mockCapabilities = new Set([
@@ -135,6 +137,20 @@ describe("orders page bounded data ownership", () => {
     (listAdminShippingMethods as jest.Mock)
       .mockReset()
       .mockImplementation(() => new Promise(() => undefined));
+  });
+
+  it("restores the customer search and results after leaving and returning", async () => {
+    const { unmount } = renderPage();
+    fireEvent.change(screen.getByPlaceholderText(/شماره سفارش، نام گیرنده/), { target: { value: "09121234567" } });
+    unmount();
+    const second = renderPage();
+    expect(screen.getByPlaceholderText(/شماره سفارش، نام گیرنده/)).toHaveValue("09121234567");
+    await mockTableProps.dataLoader({ page: 1, pageSize: 25, filters: [], signal: new AbortController().signal });
+    expect(listAdminOrders).toHaveBeenLastCalledWith(expect.objectContaining({ search: "09121234567" }));
+    fireEvent.click(screen.getByRole("button", { name: "پاک کردن" }));
+    second.unmount();
+    renderPage();
+    expect(screen.getByPlaceholderText(/شماره سفارش، نام گیرنده/)).toHaveValue("");
   });
 
   it("uses one POST-backed loader with controlled filters", async () => {

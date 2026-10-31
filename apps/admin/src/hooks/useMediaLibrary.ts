@@ -28,6 +28,8 @@ export function useMediaLibrary({ initialType, pageSize = 24 }: UseMediaLibraryO
   const [reloadKey, setReloadKey] = useState(0);
   const controllerRef = useRef<AbortController | null>(null);
   const requestKeyRef = useRef(0);
+  const uploadsRef = useRef<Array<{ item: MediaLibraryItem; sequence: number }>>([]);
+  const uploadSequenceRef = useRef(0);
 
   const applySearch = useDebouncedCallback((value: string) => {
     setSearch(value.trim());
@@ -39,6 +41,7 @@ export function useMediaLibrary({ initialType, pageSize = 24 }: UseMediaLibraryO
       const controller = new AbortController();
       controllerRef.current = controller;
       const requestKey = ++requestKeyRef.current;
+      const uploadSequence = uploadSequenceRef.current;
       setStatus(append ? "loadingMore" : "loading");
 
       try {
@@ -51,13 +54,19 @@ export function useMediaLibrary({ initialType, pageSize = 24 }: UseMediaLibraryO
           signal: controller.signal,
         });
         if (requestKey !== requestKeyRef.current) return;
+        // A newly uploaded file can arrive while the first library page is in
+        // flight. Keep it visible even if that older response cannot contain it.
+        const returnedIds = new Set(response.data.map((item) => item.id));
+        const newUploads = append ? [] : uploadsRef.current
+          .filter(({ sequence, item }) => sequence > uploadSequence && !returnedIds.has(item.id))
+          .map(({ item }) => item);
         setItems((previous) => {
-          if (!append) return response.data;
+          if (!append) return [...newUploads, ...response.data];
           const seen = new Set(previous.map((item) => item.id));
           return [...previous, ...response.data.filter((item) => !seen.has(item.id))];
         });
         setPage(nextPage);
-        setTotal(response.meta.pagination.total);
+        setTotal(response.meta.pagination.total + newUploads.length);
         setStatus("ready");
       } catch (error) {
         if (requestKey !== requestKeyRef.current || controller.signal.aborted) return;
@@ -107,6 +116,7 @@ export function useMediaLibrary({ initialType, pageSize = 24 }: UseMediaLibraryO
   /** Show a file uploaded inside the picker without refetching. */
   const prepend = (item: MediaLibraryItem) => {
     if (!item.mime.startsWith(`${type}/`)) return;
+    uploadsRef.current.push({ item, sequence: ++uploadSequenceRef.current });
     setItems((previous) => [item, ...previous.filter((existing) => existing.id !== item.id)]);
     setTotal((previous) => previous + 1);
   };
