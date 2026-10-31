@@ -95,6 +95,7 @@ describe("PhotoUploader media library", () => {
     fireEvent.click(screen.getByRole("tab", { name: /تصاویر این محصول/ }));
     expect(screen.getAllByTestId("media-library-tile").map((tile) => tile.getAttribute("data-file-id"))).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
     expect(screen.getAllByTestId("media-library-tile").every((tile) => tile.getAttribute("aria-disabled") === "true")).toBe(true);
+    expect(screen.queryByText("روی تصاویر کلیک کنید تا انتخاب شوند")).not.toBeInTheDocument();
   });
 
   it("appends only new files to a saved product's gallery", async () => {
