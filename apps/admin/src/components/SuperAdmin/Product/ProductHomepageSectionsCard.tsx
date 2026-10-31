@@ -58,9 +58,8 @@ type Props = {
  * searching for it again.
  *
  * Checking a box PREPENDS the product (index 0), pushing everything else down — that is
- * what «جدیدترین» means, and it also keeps the product clear of the 20-item carousel
- * slice the backend applies (HOMEPAGE_RENDER_LIMIT). Appending would silently bury it
- * on any section that is already full.
+ * what «جدیدترین» means. It also keeps the product near the front of the other
+ * sections, whose homepage rails have a smaller display limit.
  *
  * Note that each rail falls back to an algorithm when its manual list is EMPTY (see
  * `newestPromise`/`discountedPromise` in api/product/services/product.ts). So the first
@@ -187,7 +186,8 @@ export default function ProductHomepageSectionsCard({ productId }: Props) {
             const index = saved.indexOf(productId);
             const isSaved = index >= 0;
             const position = index + 1;
-            const pastRenderLimit = isSaved && position > HOMEPAGE_RENDER_LIMIT;
+            const pastRenderLimit =
+              field !== "homeNewestProductIds" && isSaved && position > HOMEPAGE_RENDER_LIMIT;
             const turnsManual = checked[field] && saved.length === 0;
             const turnsAutomatic =
               !checked[field] && saved.length === 1 && saved[0] === productId;

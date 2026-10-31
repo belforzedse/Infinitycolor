@@ -1,7 +1,7 @@
 /**
  * The picker used to claim all 26 selected products were live. The backend slices
- * every manual section to HOMEPAGE_CARD_LIMIT (20), so six of them were saved and
- * never rendered, with nothing in the UI saying so.
+ * several manual sections to HOMEPAGE_CARD_LIMIT (20), so overflow in those
+ * sections needs a warning. Newest uses a separate 100-product rail.
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import HomepageProductPicker from "../HomepageProductPicker";

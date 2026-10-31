@@ -230,7 +230,6 @@ export default function HomepageProductsPage() {
             productSummaries={newestSummariesForPicker}
             onProductsChange={setNewestIds}
             onProductAdded={(p) => setNewestSummaries((prev) => [...prev, p])}
-            renderLimit={HOMEPAGE_RENDER_LIMIT}
             sectionKind="newest"
           />
           <HomepageProductPicker

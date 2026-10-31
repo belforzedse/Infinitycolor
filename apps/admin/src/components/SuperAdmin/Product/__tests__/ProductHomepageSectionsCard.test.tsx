@@ -134,10 +134,15 @@ describe("ProductHomepageSectionsCard", () => {
     expect(screen.getByTestId("homepage-sections-save")).toBeEnabled();
   });
 
-  it("flags a curated position the homepage carousel will not render", async () => {
+  it("does not warn about the old 20-product limit for newest", async () => {
     await renderCard(settingsWith({ newest: [...Array.from({ length: 24 }, (_, i) => i + 100), 7] }));
 
     expect(screen.getByText(/جایگاه ۲۵ از ۲۵/)).toBeInTheDocument();
+    expect(screen.queryByText(/فقط در «مشاهده همه» دیده می‌شود/)).not.toBeInTheDocument();
+  });
+
+  it("still flags positions outside the other sections' 20-product rails", async () => {
+    await renderCard(settingsWith({ favorite: [...Array.from({ length: 24 }, (_, i) => i + 100), 7] }));
     expect(screen.getByText(/فقط در «مشاهده همه» دیده می‌شود/)).toBeInTheDocument();
   });
 });

@@ -10,6 +10,7 @@ import { editProductDataAtom, productDataAtom } from "@/atoms/super-admin/produc
 import MediaLibraryModal from "@/components/MediaLibrary/MediaLibraryModal";
 import { faNum } from "@/utils/faNum";
 import { useProductEditor } from "@/hooks/product/ProductEditorContext";
+import { useOwnProductMedia } from "@/hooks/product/useOwnProductMedia";
 
 interface PhotoUploaderProps {
   initialImages?: string[];
@@ -42,6 +43,7 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
   const editCoverId = useAtomValue(editProductDataAtom).CoverImage?.data?.id ?? null;
   const addCoverId = useAtomValue(productDataAtom).CoverImage?.data?.id ?? null;
   const currentCoverId = isEditMode ? editCoverId : addCoverId;
+  const ownMedia = useOwnProductMedia({ isEditMode });
 
   return (
     <div className="w-full rounded-xl bg-white p-5">
@@ -77,6 +79,7 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
           title="افزودن تصویر از کتابخانه"
           selection="multiple"
           allowedTypes={GALLERY_TYPES}
+          ownMedia={ownMedia}
           maxSelection={MAX_LIBRARY_PICK}
           lockedIds={mediaFileIds}
           lockedLabel="در گالری"
