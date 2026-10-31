@@ -105,6 +105,20 @@ beforeEach(() => {
   mockPicked = [];
 });
 
+it("keeps repeated picks for the same color in a single unsaved draft", () => {
+  const store = createStore();
+  const base = transformToProductData(response());
+  store.set(editProductDataAtom, base);
+  render(<Provider store={store}><ProductColorGalleries colors={colors} /></Provider>);
+  for (const id of [20, 21, 22]) {
+    mockPicked = [item(id)];
+    fireEvent.click(section("قرمز").getByRole("button", { name: "انتخاب یا آپلود تصویر" }));
+    fireEvent.click(section("قرمز").getByText("confirm library"));
+  }
+  expect(buildProductEditorPayload(store.get(editProductDataAtom), base).data.ColorGalleries)
+    .toEqual([{ id: 7, color: 1, Images: [10, 20, 21, 22] }]);
+});
+
 it("loads one gallery per color, assigns/reorders/removes images independently and preserves the saved component id", () => {
   const store = createStore();
   const base = transformToProductData(response());
