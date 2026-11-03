@@ -7,7 +7,8 @@ export const RETURNS_INTRO = "مشتری گرامی لطفا قبل از خری�
 
 export const RETURNS_HEADING = "شرایط تعویض و مرجوع فروشگاه اینفینیتی:";
 
-export const RETURNS_WHATSAPP = "09016552530";
+/** Support number on the Bale messenger (WhatsApp support was discontinued). */
+export const RETURNS_SUPPORT_NUMBER = "09015529909";
 
 export interface ReturnPolicyClause {
   number: number;
@@ -65,7 +66,7 @@ export const RETURNS_CLAUSES: readonly ReturnPolicyClause[] = [
   {
     number: 8,
     paragraphs: [
-      "بلافاصله بعد از ثبت سفارش و قبل از ارسال فقط تا ساعت 10 صبح روز بعد امکان تعویض وجود دارد.برای تعویض بعد از ثبت سفارش از طریق واتساپ اعلام و اقدام فرمایید(09016552530)",
+      "بلافاصله بعد از ثبت سفارش و قبل از ارسال فقط تا ساعت 10 صبح روز بعد امکان تعویض وجود دارد.برای تعویض بعد از ثبت سفارش از طریق پیام‌رسان بله اعلام و اقدام فرمایید(09015529909)",
     ],
   },
   {

@@ -3,29 +3,29 @@ import {
   RETURNS_CLAUSES,
   RETURNS_HEADING,
   RETURNS_INTRO,
-  RETURNS_WHATSAPP,
+  RETURNS_SUPPORT_NUMBER,
   type ReturnPolicyClause,
 } from "@/constants/legal";
 
-const WHATSAPP_HREF = contactHref({ number: RETURNS_WHATSAPP, type: "whatsapp" });
+const SUPPORT_HREF = contactHref({ number: RETURNS_SUPPORT_NUMBER, type: "phone" });
 
 function PolicyParagraph({ text }: { text: string }) {
-  if (!WHATSAPP_HREF || !text.includes(RETURNS_WHATSAPP)) {
+  if (!SUPPORT_HREF || !text.includes(RETURNS_SUPPORT_NUMBER)) {
     return <p>{text}</p>;
   }
 
-  const [before, after] = text.split(RETURNS_WHATSAPP);
+  const [before, after] = text.split(RETURNS_SUPPORT_NUMBER);
 
   return (
     <p>
       {before}
       <a
-        href={WHATSAPP_HREF}
+        href={SUPPORT_HREF}
         target="_blank"
         rel="noopener noreferrer"
         className="font-medium text-infinity-primary underline underline-offset-2"
       >
-        {RETURNS_WHATSAPP}
+        {RETURNS_SUPPORT_NUMBER}
       </a>
       {after}
     </p>
