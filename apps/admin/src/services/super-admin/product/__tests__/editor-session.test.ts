@@ -258,17 +258,77 @@ describe("one product editor session", () => {
     ).toHaveLength(0);
   });
 
-  it("freezes on renewal uncertainty", async () => {
+  it("keeps editing through a dropped renewal and renews on the retry", async () => {
     install.mockReset();
     await session.open(true);
     post.mockRejectedValueOnce({ status: 0 });
     await jest.advanceTimersByTimeAsync(30_000);
-    expect(session.state.phase).toBe("frozen");
-    const renew = post.mock.calls.find(([url]) => url.endsWith("renew"));
-    expect(renew?.[2]).toMatchObject({
+    expect(session.state.phase).toBe("editing");
+    await jest.advanceTimersByTimeAsync(3_000);
+    expect(session.state.phase).toBe("editing");
+    const renewals = post.mock.calls.filter(([url]) => url.endsWith("renew"));
+    expect(renewals).toHaveLength(2);
+    expect(renewals[0]?.[2]).toMatchObject({
       retries: 0,
+      suppressAuthRedirect: true,
       headers: { "X-Product-Edit-Token": "memory-only-secret" },
     });
+  });
+
+  it("retries a status read rejected for an expired API token instead of freezing", async () => {
+    install.mockReset();
+    await session.open(true);
+    get.mockRejectedValueOnce({ status: 401 });
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(session.state.phase).toBe("editing");
+    const reads = () =>
+      get.mock.calls.filter(([url]) => url.endsWith("edit-lease")).length;
+    const before = reads();
+    await jest.advanceTimersByTimeAsync(3_000);
+    expect(reads()).toBe(before + 1);
+    expect(get.mock.calls.at(-1)?.[1]).toMatchObject({
+      suppressAuthRedirect: true,
+    });
+    expect(session.state.phase).toBe("editing");
+  });
+
+  it("freezes at once when renewal says the lease is gone", async () => {
+    install.mockReset();
+    await session.open(true);
+    post.mockRejectedValueOnce({
+      status: 409,
+      errorCode: "EDIT_LEASE_LOST",
+    });
+    await jest.advanceTimersByTimeAsync(30_000);
+    expect(session.state.phase).toBe("frozen");
+  });
+
+  it("freezes on a forbidden status read", async () => {
+    install.mockReset();
+    await session.open(true);
+    get.mockRejectedValueOnce({ status: 403 });
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(session.state.phase).toBe("frozen");
+  });
+
+  it("still freezes at the confirmed expiry when every check keeps failing", async () => {
+    install.mockReset();
+    await session.open(true);
+    get.mockImplementation(async (url: string) => {
+      if (url.endsWith("edit-lease")) throw { status: 0 };
+      return { data: snapshot() };
+    });
+    await jest.advanceTimersByTimeAsync(89_000);
+    expect(session.state.phase).toBe("editing");
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(session.state.phase).toBe("frozen");
+    expect(session.state.reason).toBe(
+      "مهلت ویرایش تمام شد. تغییرات شما محفوظ است.",
+    );
+    await expect(
+      session.client.put("/products/42/editor", {}),
+    ).rejects.toMatchObject({ errorCode: "EDIT_LEASE_LOST" });
+    expect(put).not.toHaveBeenCalled();
   });
 
   it("freezes at expiry even when a pending renewal never answers", async () => {
