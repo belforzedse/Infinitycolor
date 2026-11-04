@@ -89,6 +89,24 @@ describe("consumeOrderReservation", () => {
     expect(mockedConsume).not.toHaveBeenCalled();
   });
 
+  it("with allowLapsed, consumes a lapsed but still-Reserved hold (count and reserved together)", async () => {
+    const { strapi, orderFindOne, trx } = createStrapi();
+    trx.raw.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    orderFindOne.mockResolvedValueOnce({
+      id: 1,
+      order_items: [{ Count: 1, product_variation: { product_stock: { id: 7 } } }],
+    });
+    mockedConsume.mockResolvedValue({ success: true });
+
+    const res = await consumeOrderReservation(strapi, 1, trx, { allowLapsed: true });
+
+    expect(res).toEqual({ outcome: "consumed" });
+    expect(mockedConsume).toHaveBeenCalledWith(strapi, 7, 1, trx);
+    // Still only a Reserved order, but no TTL guard.
+    expect(trx.raw.mock.calls[0][0]).toMatch(/reservation_status = 'Reserved'/);
+    expect(trx.raw.mock.calls[0][0]).not.toMatch(/reserved_until >= \?/);
+  });
+
   it("is a no-op for a duplicate callback on an already-consumed order", async () => {
     const { strapi, orderFindOne, trx } = createStrapi();
     trx.raw.mockResolvedValueOnce({ rows: [] });
