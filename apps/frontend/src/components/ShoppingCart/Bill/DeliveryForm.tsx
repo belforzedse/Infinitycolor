@@ -186,7 +186,7 @@ function ShoppingCartBillDeliveryForm({
             {totalPrice.toLocaleString()} تومان
           </span>
           {baleCheckoutId ? (
-            <a href="#bale-checkout-items" className="text-sm text-infinity-primary underline">
+            <a href="#bale-checkout-items" className="whitespace-nowrap text-sm text-infinity-primary underline">
               اقلام سفارش
             </a>
           ) : (
