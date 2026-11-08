@@ -9,6 +9,7 @@ import { loadEditorSnapshot } from "../../../api/product/services/product-editor
 import { deleteVariationWithStock } from "../../../api/product-variation/services/variation-removal";
 import { validateProductOwnedRelations } from "../../../utils/catalogOwnership";
 import { makeFactories, type Factories } from "../factories";
+import { stockCountChange } from "../../../api/report-export/lib/semantics";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 
 let strapi: any;
@@ -120,6 +121,37 @@ describe("product edit coordination on real PostgreSQL", () => {
     const stock = await strapi.db.connection("product_stocks").where({ id: variation.stockId }).first();
     expect(stock.count).toBe(10); expect(stock.stock_revision).toBe(0);
     expect((await strapi.db.connection("products").where({ id: product.id }).first()).edit_revision).toBe(0);
+  });
+
+  it("records who changed stock from what to what, and nothing when the save rolls back", async () => {
+    const { product, variation, a } = await fixture(); const original = await acquire(product.id, a);
+    const stockAudit = () => strapi.db.connection("manual_admin_activities").where({ resource_type: "Stock", resource_id: String(variation.stockId) });
+    const stockLogs = () => strapi.db.connection("product_stock_logs as l")
+      .join("product_stock_logs_product_stock_links as k", "k.product_stock_log_id", "l.id").where("k.product_stock_id", variation.stockId).select("l.*");
+    const logsBefore = (await stockLogs()).length;
+
+    await expect(runCatalogMutation(strapi, [product.id], { kind: "human", editor: a, proof: original.proof }, async () => {
+      await saveEditorStock(strapi, product.id, variation.id, { id: variation.stockId, Count: 4, expectedStockRevision: 0 });
+      throw new Error("injected failure");
+    })).rejects.toThrow("injected failure");
+    expect(await stockAudit()).toHaveLength(0);
+    expect(await stockLogs()).toHaveLength(logsBefore);
+
+    await runCatalogMutation(strapi, [product.id], { kind: "human", editor: a, proof: original.proof },
+      () => saveEditorStock(strapi, product.id, variation.id, { id: variation.stockId, Count: 8, expectedStockRevision: 0 }));
+    const [audit] = await stockAudit();
+    expect(audit).toMatchObject({ message_en: `Stock ${variation.stockId} changed from 10 to 8`, initiator_id: String(a.actor.user.id), event_key: "products.inventory_changed" });
+    expect(stockCountChange(audit.changes)).toEqual({ from: 10, to: 8 }); // what the staff-changes report reads
+    expect(String(audit.metadata)).toContain(`"productId": ${product.id}`);
+    const logs = await stockLogs();
+    expect(logs).toHaveLength(logsBefore + 1);
+    expect(logs.at(-1)).toMatchObject({ count: 2, type: "Minus" });
+
+    // An unchanged save and a system job leave no staff audit row.
+    await runCatalogSystemMutation(strapi, [product.id], "fixture", () => saveEditorStock(strapi, product.id, variation.id, { id: variation.stockId, Count: 8, expectedStockRevision: 1 }));
+    await runCatalogSystemMutation(strapi, [product.id], "fixture", () => saveEditorStock(strapi, product.id, variation.id, { id: variation.stockId, Count: 6, expectedStockRevision: 1 }));
+    expect(await stockAudit()).toHaveLength(1);
+    expect(await stockLogs()).toHaveLength(logsBefore + 2);
   });
 
   it("never resets a sale or reservation with an old absolute stock value", async () => {

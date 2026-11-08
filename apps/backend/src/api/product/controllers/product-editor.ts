@@ -8,6 +8,10 @@ import { requireCapability } from "../../../utils/adminAuthorization";
 import { loadEditorSnapshot } from "../services/product-editor-snapshot";
 import { canonicalizeAdminSignature } from "../../product-variation/controllers/product-variation";
 import { saveEditorHomepage } from "../services/product-editor-homepage";
+import { recordAdminAudit } from "../../../utils/adminAudit";
+import { resolveAuditActor } from "../../../utils/audit";
+import { resolveUserFullName } from "../../../utils/userDisplayName";
+import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 
 const VARIATION = "api::product-variation.product-variation";
 const STOCK = "api::product-stock.product-stock";
@@ -36,6 +40,43 @@ function requireFields(data: Record<string, any>, fields: string[]) {
   if (Object.keys(data).some((key) => !fields.includes(key))) throw new CatalogEditError("EDITOR_PROTECTED_FIELD", 400);
 }
 
+/**
+ * The editor writes stock with a revision-guarded raw update, which skips the product-stock
+ * lifecycle. Record what that lifecycle used to: a stock log row and, for staff, the
+ * "from X to Y" admin audit row. Both join the catalog transaction, so a rolled-back save
+ * leaves no trace and a committed one always has its record.
+ */
+async function recordEditorStockChange(strapi: any, context: any, change: { stockId: number; productId: number; variationId: number; previous: number; current: number; created: boolean }) {
+  const { stockId, productId, variationId, previous, current, created } = change;
+  if (previous === current || isTrustedWordPressMigrationRequest()) return; // the lifecycle skipped importer writes too
+  const delta = Math.abs(current - previous);
+  const type = current > previous ? "Add" : "Minus";
+  // A created stock row already gets its "Initial stock" log from the product-stock lifecycle.
+  if (!created) {
+    await strapi.entityService.create("api::product-stock-log.product-stock-log", {
+      data: { product_stock: stockId, Count: delta, Type: type, Description: "Stock updated" },
+    });
+  }
+  const editor: StaffEditor | undefined = context.writer.kind === "system" ? undefined : context.writer.editor;
+  if (!editor) return; // Jobs and imports have no staff actor; the old lifecycle skipped them too.
+  const request = resolveAuditActor();
+  await recordAdminAudit(strapi, {
+    resourceType: "Stock",
+    resourceId: stockId,
+    action: "Adjust", // a created row is logged as 0 → N so it keeps the inventory_changed event
+    title: "موجودی تغییر کرد",
+    message: `موجودی ${stockId} از ${previous} به ${current} تغییر یافت`,
+    messageEn: `Stock ${stockId} changed from ${previous} to ${current}`,
+    severity: "info",
+    changes: { Count: { from: previous, to: current } },
+    metadata: { previous, current, delta, type, productId, variationId, source: "product-editor" },
+    actor: { id: Number(editor.actor.user.id), role: editor.actor.role, name: resolveUserFullName(editor.actor.user) || editor.actor.user.username || null },
+    ip: request.ip,
+    userAgent: request.userAgent,
+    trx: context.trx,
+  });
+}
+
 export async function saveEditorStock(strapi: any, productId: number, variationId: number, input: any): Promise<any> {
   const context = catalogMutationContext();
   if (!context?.ids.includes(productId)) throw new CatalogEditError("CATALOG_GUARD_REQUIRED", 500);
@@ -49,13 +90,18 @@ export async function saveEditorStock(strapi: any, productId: number, variationI
     if (data.id !== undefined && Number(data.id) !== existing.id) throw new CatalogEditError("CATALOG_PARENT_CHANGE_FORBIDDEN", 400);
     const expected = Number(data.expectedStockRevision);
     if (!Number.isSafeInteger(expected) || expected < 0 || data.expectedStockRevision === undefined) throw new CatalogEditError("PRODUCT_STOCK_VERSION_CONFLICT");
+    // Lock first so the count read here is the one this update replaces.
+    const before = await context.trx("product_stocks").where({ id: existing.id }).forUpdate().first("count");
     const rows = await context.trx("product_stocks").where({ id: existing.id, stock_revision: expected })
       .whereRaw("COALESCE(reserved_count, 0) <= ?", [data.Count]).update({ count: data.Count }).returning(["id", "count", "stock_revision"]);
     if (!rows.length) throw new CatalogEditError("PRODUCT_STOCK_VERSION_CONFLICT");
+    await recordEditorStockChange(strapi, context, { stockId: existing.id, productId, variationId, previous: Number(before?.count ?? 0), current: data.Count, created: false });
     return rows[0];
   }
   if (data.id !== undefined) throw new CatalogEditError("PRODUCT_STOCK_VERSION_CONFLICT");
-  return strapi.entityService.create(STOCK, { data: { Count: data.Count, product_variation: variationId } });
+  const created = await strapi.entityService.create(STOCK, { data: { Count: data.Count, product_variation: variationId } });
+  await recordEditorStockChange(strapi, context, { stockId: Number(created.id), productId, variationId, previous: 0, current: data.Count, created: true });
+  return created;
 }
 
 async function saveVariation(strapi: any, ctx: any, productId: number, variationId: number | null, input: any, stock?: any) {
