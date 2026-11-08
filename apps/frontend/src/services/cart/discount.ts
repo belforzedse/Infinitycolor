@@ -1,3 +1,4 @@
+import { checkoutPath } from "./checkout-path";
 import { apiClient } from "../index";
 import { unwrap } from "./helpers/response";
 import type { ShippingAddressContext } from "../shipping";
@@ -28,7 +29,7 @@ interface DiscountResponse {
 const normaliseDiscountPayload = (payload: DiscountPayload) =>
   typeof payload === "string" ? { code: payload } : payload;
 
-export const applyDiscount = async (payload: DiscountPayload): Promise<DiscountResponse> => {
-  const response = await apiClient.post<DiscountResponse>("/carts/apply-discount", normaliseDiscountPayload(payload));
+export const applyDiscount = async (payload: DiscountPayload, baleCheckoutId?: string): Promise<DiscountResponse> => {
+  const response = await apiClient.post<DiscountResponse>(checkoutPath("/carts/apply-discount", baleCheckoutId), normaliseDiscountPayload(payload));
   return unwrap<DiscountResponse>(response);
 };

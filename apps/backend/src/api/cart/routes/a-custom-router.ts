@@ -10,6 +10,7 @@ export default {
       handler: "cart.getMyCart",
       config: {
         auth: { scope: [] },
+        middlewares: ["api::cart.bale-checkout-scope"],
       },
     },
     {
@@ -50,6 +51,7 @@ export default {
       handler: "cart.checkStock",
       config: {
         auth: { scope: [] },
+        middlewares: ["api::cart.bale-checkout-scope"],
       },
     },
     {
@@ -58,7 +60,7 @@ export default {
       handler: "cart.applyDiscount",
       config: {
         auth: { scope: [] },
-        middlewares: ["api::cart.discount-throttle"],
+        middlewares: ["api::cart.bale-checkout-scope", "api::cart.discount-throttle"],
       },
     },
     {
@@ -67,6 +69,7 @@ export default {
       handler: "cart.checkoutQuote",
       config: {
         auth: { scope: [] },
+        middlewares: ["api::cart.bale-checkout-scope"],
       },
     },
     {
@@ -75,6 +78,7 @@ export default {
       handler: "cart.finalizeToOrder",
       config: {
         auth: { scope: [] },
+        middlewares: ["api::cart.bale-checkout-scope"],
       },
     },
     {
@@ -83,6 +87,7 @@ export default {
       handler: "cart.shippingPreview",
       config: {
         auth: { scope: [] },
+        middlewares: ["api::cart.bale-checkout-scope"],
       },
     },
     {
@@ -91,6 +96,7 @@ export default {
       handler: "cart.shippingOptions",
       config: {
         auth: { scope: [] },
+        middlewares: ["api::cart.bale-checkout-scope"],
       },
     },
   ],

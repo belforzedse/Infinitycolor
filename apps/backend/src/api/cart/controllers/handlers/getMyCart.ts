@@ -8,7 +8,7 @@ export const getMyCartHandler = (strapi: Strapi) => async (ctx: any) => {
     if (!userId) return;
 
     const cartService = strapi.service("api::cart.cart");
-    const cart = await cartService.getUserCart(userId);
+    const cart = ctx.state?.baleCheckoutScope?.cart ?? (await cartService.getUserCart(userId));
 
     return {
       data: {

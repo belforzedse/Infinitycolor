@@ -44,6 +44,10 @@
       "target": "api::contract.contract",
       "inversedBy": "order"
     },
+    "BaleCheckoutId": {
+      "type": "string",
+      "private": true
+    },
     "Status": {
       "type": "enumeration",
       "enum": ["Paying", "Started", "Shipment", "Done", "Returned", "Cancelled"],

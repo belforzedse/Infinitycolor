@@ -151,7 +151,7 @@ export default factories.createCoreController(
           }
 
           const cartService = strapi.service("api::cart.cart");
-          const cart = await cartService.getUserCart(userId);
+          const cart = ctx.state.baleCheckoutScope?.cart ?? (await cartService.getUserCart(userId));
           if (!cart?.cart_items?.length) {
             return ctx.send({
               data: { eligible: false, message: "Cart is empty" },
@@ -216,7 +216,7 @@ export default factories.createCoreController(
 
         // Load user's current cart with items (same as applyDiscount)
         const cartService = strapi.service("api::cart.cart");
-        const cart = await cartService.getUserCart(userId);
+        const cart = ctx.state.baleCheckoutScope?.cart ?? (await cartService.getUserCart(userId));
 
         if (!cart?.cart_items?.length) {
           return ctx.send({

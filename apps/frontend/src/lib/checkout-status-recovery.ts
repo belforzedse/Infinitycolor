@@ -8,6 +8,7 @@ import { persistCheckoutOrder, readCheckoutIdentity } from "./checkout-identity"
 export const CHECKOUT_STATUS_RECOVERY_CODES = new Set([
   "PAYMENT_UNKNOWN",
   "PAYMENT_IN_PROGRESS",
+  "BALE_CHECKOUT_PAYMENT_EXISTS",
   "SNAPPAY_RECONCILIATION_PENDING",
   "SNAPPAY_TOKEN_DUPLICATE",
   "SNAPPAY_MANUAL_REVIEW",
@@ -30,7 +31,7 @@ function recordFromUnknown(value: unknown): Record<string, unknown> | undefined 
  * Prefer the order id on the failed finalize payload, then a previously stored
  * checkout identity. Never trust a client-supplied order id from the form.
  */
-export function orderIdFromCheckoutFailure(source: unknown): number | undefined {
+export function orderIdFromCheckoutFailure(source: unknown, scope?: string): number | undefined {
   const record = recordFromUnknown(source);
   const nested = recordFromUnknown(record?.data);
   const details = recordFromUnknown(record?.details);
@@ -40,13 +41,13 @@ export function orderIdFromCheckoutFailure(source: unknown): number | undefined 
     readNumericOrderId(record?.orderId) ||
     readNumericOrderId(nested?.orderId) ||
     readNumericOrderId(detailsData?.orderId) ||
-    readNumericOrderId(readCheckoutIdentity()?.orderId)
+    readNumericOrderId(readCheckoutIdentity(scope)?.orderId)
   );
 }
 
-export function persistPendingPaymentResult(orderId: number, attemptId?: string): string {
-  persistCheckoutOrder(orderId);
-  if (typeof window !== "undefined") {
+export function persistPendingPaymentResult(orderId: number, attemptId?: string, scope?: string): string {
+  persistCheckoutOrder(orderId, scope);
+  if (!scope && typeof window !== "undefined") {
     try {
       window.localStorage.setItem("pendingOrderId", String(orderId));
       const pendingAttempt = String(attemptId || "").trim();

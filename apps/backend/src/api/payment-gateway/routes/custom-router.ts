@@ -57,6 +57,7 @@ export default {
       handler: "payment-gateway.snappEligible",
       config: {
         auth: { scope: [] },
+        middlewares: ["api::cart.bale-checkout-scope"],
       },
     },
   ],

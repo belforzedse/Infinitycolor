@@ -31,7 +31,9 @@ export interface OrderStatusResponse {
 /**
  * Interface for order payment status check
  */
-export type OrderPaymentStatusResponse = SharedOrderPaymentStatusResponse;
+export type OrderPaymentStatusResponse = SharedOrderPaymentStatusResponse & {
+  baleReturnUrl?: string;
+};
 
 /**
  * Interface for user's order list

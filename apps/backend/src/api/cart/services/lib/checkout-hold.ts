@@ -145,6 +145,7 @@ export async function findLiveCheckoutHoldForUser(
       where: {
         user: { id: userId },
         Status: "Paying",
+        BaleCheckoutId: { $null: true },
         ReservationStatus: "Reserved",
         ReservedUntil: { $gte: new Date() },
       },

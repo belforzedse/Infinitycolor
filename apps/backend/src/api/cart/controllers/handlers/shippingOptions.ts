@@ -8,11 +8,13 @@ export const shippingOptionsHandler = (strapi: Strapi) => async (ctx: any) => {
     const userId = await resolveCustomerTargetUserId(ctx, strapi);
     if (!userId) return;
 
+    const bale = ctx.state?.baleCheckoutScope;
     const shippingService = strapi.service("api::shipping.shipping");
-    const methods = await shippingService.getAvailableMethodsForCart(userId, {
-      addressId,
-      addressPayload,
-    });
+    const methods = await shippingService.getAvailableMethodsForCart(
+      userId,
+      { addressId, addressPayload },
+      ...(bale ? [{ cart: bale.cart }] : []),
+    );
 
     return {
       data: {

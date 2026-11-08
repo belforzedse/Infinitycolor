@@ -1,0 +1,33 @@
+{
+  "kind": "collectionType",
+  "collectionName": "bale_checkouts",
+  "info": {
+    "singularName": "bale-checkout",
+    "pluralName": "bale-checkouts",
+    "displayName": "Bale Checkout"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {
+    "content-manager": { "visible": false },
+    "content-type-builder": { "visible": false }
+  },
+  "indexes": [
+    { "name": "uq_bale_checkouts_checkout_id", "columns": ["checkout_id"], "type": "unique" },
+    { "name": "uq_bale_checkouts_request_key_hash", "columns": ["request_key_hash"], "type": "unique" },
+    { "name": "uq_bale_checkouts_order_id", "columns": ["order_id"], "type": "unique" },
+    { "name": "uq_bale_checkouts_attempt_id", "columns": ["attempt_id"], "type": "unique" }
+  ],
+  "attributes": {
+    "checkoutId": { "type": "string", "required": true, "unique": true, "private": true, "column": { "notNullable": true } },
+    "chatHash": { "type": "string", "required": true, "private": true, "column": { "notNullable": true } },
+    "requestKeyHash": { "type": "string", "required": true, "unique": true, "private": true, "column": { "notNullable": true } },
+    "requestHash": { "type": "string", "required": true, "private": true, "column": { "notNullable": true } },
+    "items": { "type": "json", "required": true, "private": true, "column": { "notNullable": true } },
+    "expiresAt": { "type": "datetime", "required": true, "private": true, "column": { "notNullable": true } },
+    "userId": { "type": "integer", "private": true },
+    "orderId": { "type": "integer", "unique": true, "private": true },
+    "attemptId": { "type": "string", "unique": true, "private": true }
+  }
+}

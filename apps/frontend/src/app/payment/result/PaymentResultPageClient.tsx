@@ -6,6 +6,7 @@ import { useSetAtom } from "jotai";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle2, CircleAlert, CircleX, Clock3, Truck } from "lucide-react";
 import { OrderService } from "@/services";
+import { centralLoginUrl } from "@/lib/central-auth";
 import type { Order, OrderPaymentStatusResponse } from "@/services/order";
 import OrderItemsList from "@/components/User/Orders/Detail/OrderItemsList";
 import ReserveOutcomeNotice from "@/components/User/Orders/ReserveOutcomeNotice";
@@ -137,7 +138,7 @@ const applyPaidSideEffects = async (
   next: OrderPaymentStatusResponse,
   clearCart: () => Promise<unknown>,
 ) => {
-  if (!isAuthoritativePaid(next)) return;
+  if (!isAuthoritativePaid(next) || next.baleReturnUrl) return;
   window.localStorage.removeItem("pendingCheckoutAttemptId");
   window.localStorage.removeItem("pendingCheckoutQuoteHash");
   window.localStorage.removeItem("pendingPaymentAttemptId");
@@ -164,6 +165,7 @@ export default function PaymentResultPageClient() {
   const resultHintRef = useRef(searchParams.get("resultHint"));
   const latestResultRef = useRef<OrderPaymentStatusResponse | null>(null);
   const [result, setResult] = useState<OrderPaymentStatusResponse | null>(null);
+  const [requiresLogin, setRequiresLogin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   /** Sticky: the release is queued, so the confirmation must outlive the request. */
@@ -240,6 +242,7 @@ export default function PaymentResultPageClient() {
                 skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
               );
         setResult(next);
+        setRequiresLogin(false);
         reportPaymentResult(next, { resultHint: resultHintRef.current });
         if (isAbandon) {
           // The server decides whether the claim was recorded: a shopper whose
@@ -257,7 +260,12 @@ export default function PaymentResultPageClient() {
           // Quiet poll failure must not blank the checking UI or trip the spinner.
           return;
         }
-        setError("نتیجه پرداخت قابل دریافت نیست. اتصال خود را بررسی و دوباره تلاش کنید.");
+        if ((err as { status?: number } | null)?.status === 401) {
+          setRequiresLogin(true);
+          setError("برای مشاهده نتیجه پرداخت وارد حساب خود شوید.");
+        } else {
+          setError("نتیجه پرداخت قابل دریافت نیست. اتصال خود را بررسی و دوباره تلاش کنید.");
+        }
       } finally {
         setLoading(false);
         setChecking(false);
@@ -624,9 +632,17 @@ export default function PaymentResultPageClient() {
             )}
 
             {error && (
-              <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm leading-7 text-red-800">
-                {error}
-              </p>
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm leading-7 text-red-800">
+                <p>{error}</p>
+                {requiresLogin && (
+                  <a
+                    href={centralLoginUrl(`/payment/result?orderId=${encodeURIComponent(orderId)}`)}
+                    className="font-medium underline underline-offset-4"
+                  >
+                    ورود و مشاهده نتیجه
+                  </a>
+                )}
+              </div>
             )}
 
             {!paid && walletReleaseOffered && (
@@ -655,15 +671,26 @@ export default function PaymentResultPageClient() {
             )}
 
             <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:p-5">
+              {result?.baleReturnUrl && (
+                <a
+                  href={result.baleReturnUrl}
+                  referrerPolicy="no-referrer"
+                  className="w-full rounded-xl bg-infinity-primary px-5 py-3 text-center font-medium text-white transition-opacity hover:opacity-90 sm:w-auto"
+                >
+                  بازگشت به بله
+                </a>
+              )}
               {paid && (
                 <button
-                  className="w-full rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white transition-opacity hover:opacity-90 sm:w-auto"
+                  className={result?.baleReturnUrl
+                    ? "w-full rounded-xl border border-slate-300 px-5 py-3 font-medium text-slate-700 hover:bg-slate-50 sm:w-auto"
+                    : "w-full rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white transition-opacity hover:opacity-90 sm:w-auto"}
                   onClick={() => router.push(`/orders/${orderId}`)}
                 >
                   مشاهده سفارش
                 </button>
               )}
-              {result?.canRetry && !paid && (
+              {result?.canRetry && !paid && !result.baleReturnUrl && (
                 <button
                   className="w-full rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white transition-opacity hover:opacity-90 sm:w-auto"
                   onClick={returnToCart}
