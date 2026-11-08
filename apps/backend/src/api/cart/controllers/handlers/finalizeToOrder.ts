@@ -13,6 +13,7 @@ import {
   isCheckoutGatewayEnabled,
   normalizeCheckoutGatewayCode,
 } from "../../../payment-gateway/services/checkout-gateway-availability";
+import { gatewayExpectedAmountIrr } from "../../../payment-attempt/services/payment-legs";
 import { redactSensitive } from "../../../../utils/redactSensitive";
 import {
   claimPaymentAttemptForInitiation,
@@ -648,7 +649,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     // What the bank is asked for. Wallet credit is a tender, so the gateway
     // only ever sees the remainder; with no wallet leg this is the full total
     // and every existing gateway call is byte-for-byte what it was.
-    const gatewayAmountToman = Number(paymentAllocation?.gatewayToman ?? totalAmount);
+    const gatewayAmountToman = paymentAllocation?.gatewayToman ??
+      gatewayExpectedAmountIrr(paymentAttempt, Math.round(totalAmount * 10)) / 10;
 
     strapi.log.info(`Processing payment for Order ${order.id}:`, {
       orderId: order.id,

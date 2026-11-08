@@ -7,8 +7,9 @@ import ShoppingCartBillForm from "@/components/ShoppingCart/Bill";
 import { BaleCheckoutCartProvider, useBaleCheckoutCart } from "@/contexts/BaleCheckoutCart";
 import { centralAuth, centralLoginUrl, subscribeToAuthState } from "@/lib/central-auth";
 import { apiClient, CartService } from "@/services";
-import type { CartResponse } from "@/services/cart/types/cart";
+import type { CartResponse, CheckoutGatewayCode } from "@/services/cart/types/cart";
 import { unwrap } from "@/services/cart/helpers/response";
+import { submitPaymentHandoff } from "@/utils/paymentHandoff";
 import { faNum } from "@/utils/faNum";
 
 type Handoff = {
@@ -16,6 +17,7 @@ type Handoff = {
   orderId: number | null;
   expiresAt: string;
   baleReturnUrl: string;
+  resume?: { gateway: CheckoutGatewayCode; attemptId: string; quoteHash: string };
 };
 
 const checkoutIdPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -51,10 +53,13 @@ export default function BaleCheckoutClient({ checkoutId }: { checkoutId: string 
   const grantInTab = useRef<string | undefined>(undefined);
   const [ready, setReady] = useState<{ handoff: Handoff; cart: CartResponse } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<Handoff | null>(null);
+  const [resuming, setResuming] = useState(false);
   const [retry, setRetry] = useState(0);
 
   useEffect(() => subscribeToAuthState(() => {
     setReady(null);
+    setPending(null);
     setError(null);
     setRetry((value) => value + 1);
   }), []);
@@ -110,7 +115,8 @@ export default function BaleCheckoutClient({ checkoutId }: { checkoutId: string 
       grantInTab.current = undefined;
       const handoff = unwrap<Handoff>(response);
       if (handoff.orderId) {
-        router.replace(`/payment/result?orderId=${handoff.orderId}`);
+        if (handoff.resume) setPending(handoff);
+        else router.replace(`/payment/result?orderId=${handoff.orderId}`);
         return;
       }
       const cart = await CartService.getUserCart(checkoutId);
@@ -127,9 +133,44 @@ export default function BaleCheckoutClient({ checkoutId }: { checkoutId: string 
     return () => { active = false; };
   }, [checkoutId, retry, router]);
 
+  const resume = async () => {
+    if (!pending?.resume || resuming) return;
+    setResuming(true);
+    setError(null);
+    try {
+      const result = await CartService.finalizeCart(pending.resume, checkoutId);
+      if (result.redirectUrl && submitPaymentHandoff(result)) return;
+      router.replace(`/payment/result?orderId=${pending.orderId}`);
+    } catch {
+      setError("ادامه پرداخت ممکن نشد. وضعیت سفارش را بررسی کنید.");
+      setResuming(false);
+    }
+  };
+
   return (
     <PageContainer variant="wide" className="space-y-6 pb-16 pt-8">
-      {ready ? (
+      {pending ? (
+        <div className="min-h-[35vh] space-y-4 text-neutral-800">
+          <h1 className="text-xl font-semibold">پرداخت سفارش بله</h1>
+          {error && <p role="alert">{error}</p>}
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              className="rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white disabled:opacity-60"
+              onClick={() => void resume()}
+              disabled={resuming}
+            >
+              {resuming ? "در حال بررسی…" : "ادامه پرداخت"}
+            </button>
+            <a
+              className="font-medium text-infinity-primary underline underline-offset-4"
+              href={`/payment/result?orderId=${pending.orderId}`}
+            >
+              مشاهده نتیجه پرداخت
+            </a>
+          </div>
+        </div>
+      ) : ready ? (
         <BaleCheckoutCartProvider checkoutId={checkoutId} initialCart={ready.cart}>
           <SelectedItems />
           <ShoppingCartBillForm baleReturnUrl={ready.handoff.baleReturnUrl} />

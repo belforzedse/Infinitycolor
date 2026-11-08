@@ -106,7 +106,7 @@ export const checkCartStockOp = async (
 
   let holdResolution: CheckoutHoldResolution = { status: "missing" };
   try {
-    holdResolution = await resolveEligibleCheckoutHold(strapi, userId, options?.attemptId);
+    holdResolution = await resolveEligibleCheckoutHold(strapi, userId, options?.attemptId, { excludeBale: true });
   } catch {
     // Identified continuation: a thrown lookup is not "no reservation".
     holdResolution = String(options?.attemptId || "").trim()

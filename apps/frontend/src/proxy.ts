@@ -343,6 +343,16 @@ export async function proxy(request: NextRequest) {
     response.headers.set("Cache-Control", "no-store, max-age=0");
   }
 
+  if (pathname.startsWith("/bale/checkout/")) {
+    // The claim grant lives in the fragment until hydration. Third-party
+    // scripts must not be able to read it or this tab's session storage.
+    response.headers.set("Content-Security-Policy",
+      process.env.NODE_ENV === "production"
+        ? "script-src 'self' 'unsafe-inline'"
+        : "script-src 'self' 'unsafe-inline' 'unsafe-eval'");
+    response.headers.set("Referrer-Policy", "no-referrer");
+  }
+
   // The storefront's own /auth/* pages carry the sign-in and callback flow. They
   // are not in PRIVATE_ROUTE_PREFIXES because they are reachable while signed
   // out, but a shared cache in front must never hold one: the callback sets the

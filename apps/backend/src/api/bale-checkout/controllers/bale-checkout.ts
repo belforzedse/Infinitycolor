@@ -1,4 +1,7 @@
 import type { Context } from "koa";
+import { checkoutAttemptOrderId, gateCheckoutResume } from "../../cart/services/lib/checkout-resume";
+import { normalizeCheckoutGatewayCode } from "../../payment-gateway/services/checkout-gateway-availability";
+import { findPaymentAttempt } from "../../payment-attempt/services/payment-attempt";
 import { loadBaleInventory } from "../lib/inventory";
 import {
   BaleApiError,
@@ -66,12 +69,23 @@ function userIdFrom(ctx: Context): number {
   return userId;
 }
 
-function ownedSummary(checkout: BaleCheckout) {
+async function ownedSummary(checkout: BaleCheckout) {
+  const attempt = checkout.orderId && checkout.userId && checkout.attemptId
+    ? await findPaymentAttempt(strapi, checkout.userId, checkout.attemptId)
+    : null;
+  const gateway = normalizeCheckoutGatewayCode(attempt?.Gateway);
+  const resume = gateway && checkout.userId && checkout.attemptId && attempt?.quoteHash &&
+    checkoutAttemptOrderId(attempt) === checkout.orderId &&
+    ["Created", "Redirected"].includes(attempt.Status) &&
+    (await gateCheckoutResume(strapi, checkout.userId, attempt, gateway, attempt.quoteHash)) === "replay"
+    ? { gateway, attemptId: checkout.attemptId, quoteHash: attempt.quoteHash }
+    : null;
   return {
     checkoutId: checkout.checkoutId,
     orderId: checkout.orderId,
     expiresAt: checkout.expiresAt.toISOString(),
     baleReturnUrl: baleReturnUrl(checkout.checkoutId),
+    ...(resume ? { resume } : {}),
   };
 }
 

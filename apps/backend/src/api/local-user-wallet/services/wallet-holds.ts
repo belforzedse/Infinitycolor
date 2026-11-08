@@ -311,8 +311,11 @@ async function readWalletAvailabilityOrThrow(
               pa.wallet_hold_status
          FROM payment_attempts pa
          JOIN payment_attempts_user_links pul ON pul.payment_attempt_id = pa.id
+         LEFT JOIN payment_attempts_order_links pol ON pol.payment_attempt_id = pa.id
+         LEFT JOIN orders o ON o.id = pol.order_id
         WHERE pa.attempt_id = ?
           AND pul.user_id = ?
+          AND o.bale_checkout_id IS NULL
         LIMIT 1`,
       [reusableAttemptId, userId],
     );

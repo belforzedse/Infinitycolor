@@ -11,6 +11,8 @@ export default (_config: unknown, { strapi }: { strapi: Strapi }) =>
   async (ctx: any, next: () => Promise<unknown>) => {
     const { query, body } = ctx.request;
     const checkoutId = query?.baleCheckoutId;
+    const attemptIds = [body?.supersedeAttemptId, body?.attemptId, query?.attemptId];
+    if (attemptIds.some((id) => id != null && typeof id !== "string")) return ctx.badRequest();
     const userId = Number(ctx.state.user?.id);
     if (checkoutId !== undefined) {
       ctx.set("Cache-Control", "no-store");
@@ -34,7 +36,6 @@ export default (_config: unknown, { strapi }: { strapi: Strapi }) =>
     } else if (userId > 0) {
       // A regular checkout may not resume or abandon a Bale payment by passing
       // an attempt id copied from another tab.
-      const attemptIds = [body?.supersedeAttemptId, query?.attemptId ?? body?.attemptId];
       for (const id of attemptIds) {
         if (
           typeof id === "string" &&

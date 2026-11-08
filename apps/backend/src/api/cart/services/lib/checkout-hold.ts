@@ -199,6 +199,7 @@ export async function resolveEligibleCheckoutHold(
   strapi: Strapi,
   userId: number,
   attemptId: string | undefined,
+  options: { excludeBale?: boolean } = {},
 ): Promise<CheckoutHoldResolution> {
   const normalizedAttemptId = String(attemptId || "").trim();
   if (!normalizedAttemptId || !Number.isInteger(userId) || userId <= 0) {
@@ -231,7 +232,7 @@ export async function resolveEligibleCheckoutHold(
       return { status: "ineligible" };
     }
 
-    if (userIdFromOrder(order) !== userId) {
+    if (userIdFromOrder(order) !== userId || (options.excludeBale && order.BaleCheckoutId)) {
       return { status: "missing" };
     }
 

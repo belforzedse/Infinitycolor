@@ -1,6 +1,9 @@
 import { createServer } from "node:http";
 import { makeFactories } from "../factories";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
+import { loadBaleCheckoutCart, readOwnedBaleCheckout } from "../../../api/bale-checkout/services/handoff";
+import { supersedeCheckoutAttempt } from "../../../api/cart/services/lib/checkout-supersede";
+import { readWalletAvailability } from "../../../api/local-user-wallet/services/wallet-holds";
 import { refreshWalletReadiness } from "../../../api/local-user-wallet/services/wallet-readiness";
 
 it("pays one Bale order from concurrent hosted checkout submissions and preserves the site cart", async () => {
@@ -36,7 +39,7 @@ it("pays one Bale order from concurrent hosted checkout submissions and preserve
     return { status: response.status, body: await response.json() };
   };
 
-  let checkoutId: string | undefined;
+  const checkoutIds: string[] = [];
   let customerId: number | undefined;
   const permissions: number[] = [];
   try {
@@ -87,7 +90,8 @@ it("pays one Bale order from concurrent hosted checkout submissions and preserve
       items: [{ variationId: bale.id, quantity: 1 }],
     }, { ...chat, "Idempotency-Key": "hosted-checkout-race" });
     expect(link.status).toBe(200);
-    checkoutId = link.body.checkoutId;
+    const checkoutId = link.body.checkoutId;
+    checkoutIds.push(checkoutId);
     const claim = await call(`/bale/checkout/${checkoutId}/claim`, jwt, {
       grant: new URL(link.body.checkoutUrl).hash.slice(1),
     });
@@ -138,14 +142,43 @@ it("pays one Bale order from concurrent hosted checkout submissions and preserve
     expect((await call(`/bale/v1/checkouts/${checkoutId}`, botToken, undefined, chat)).body)
       .toEqual({ checkoutId, status: "paid", orderNumber: orderId });
     expect((await call(`/carts/check-stock?attemptId=${paid!.body.data.attemptId}`, jwt)).status).toBe(400);
+
+    const anotherLink = await call("/bale/v1/checkouts", botToken, {
+      items: [{ variationId: bale.id, quantity: 1 }],
+    }, { ...chat, "Idempotency-Key": "hosted-checkout-reopen" });
+    const reopenId = anotherLink.body.checkoutId;
+    checkoutIds.push(reopenId);
+    const reopenPath = `/bale/checkout/${reopenId}`;
+    await call(`${reopenPath}/claim`, jwt, { grant: new URL(anotherLink.body.checkoutUrl).hash.slice(1) });
+    const reopenScope = `?baleCheckoutId=${reopenId}`;
+    const reopenQuote = await call(`/carts/quote${reopenScope}`, jwt, checkoutInput);
+    const resume = { gateway: "wallet", attemptId: "bale-interrupted", quoteHash: reopenQuote.body.data.quoteHash };
+    const owned = (await readOwnedBaleCheckout(strapi, reopenId, customer.id))!;
+    // Stop after the order and payment attempt commit, before the HTTP handler debits the wallet.
+    const interrupted = await strapi.service("api::cart.cart").finalizeCartToOrder(customer.id, {
+      ...resume, shippingId: shipping.id, shippingCost: 33000, addressId: address.id,
+    }, { checkout: owned, cart: await loadBaleCheckoutCart(strapi, owned) });
+    expect(interrupted.paymentAttempt.Status).toBe("Created");
+
+    expect((await call("/carts/finalize", jwt, { supersedeAttemptId: [resume.attemptId] })).status).toBe(400);
+    await expect(supersedeCheckoutAttempt(strapi, {
+      userId: customer.id, attemptId: resume.attemptId, replacementAttemptId: "other-cart",
+    })).resolves.toMatchObject({ outcome: "refused" });
+    expect((await readWalletAvailability(strapi, customer.id, { reusableAttemptId: resume.attemptId })).reusableIrr).toBe(0);
+    expect((await call(reopenPath, jwt)).body).toMatchObject({ orderId: interrupted.order.id, resume });
+    const recovered = await call(`/carts/finalize${reopenScope}`, jwt, resume);
+    expect(recovered.body.data).toMatchObject({
+      orderId: interrupted.order.id, attemptId: resume.attemptId, paymentStatus: "Succeeded",
+    });
+    expect((await f.getStock(bale.stockId)).Count).toBe(3);
   } finally {
-    if (checkoutId) await strapi.db.connection("bale_checkouts").where({ checkout_id: checkoutId }).delete();
+    if (checkoutIds.length) await strapi.db.connection("bale_checkouts").whereIn("checkout_id", checkoutIds).delete();
     if (customerId) {
-      const order = await strapi.db.query("api::order.order").findOne({
+      const createdOrders = await strapi.db.query("api::order.order").findMany({
         where: { user: { id: customerId } },
         populate: { order_items: true, contract: true },
       });
-      if (order) {
+      for (const order of createdOrders) {
         f.remember("api::order.order", order.id);
         if (order.contract?.id) f.remember("api::contract.contract", order.contract.id);
         for (const line of order.order_items) f.remember("api::order-item.order-item", line.id);
