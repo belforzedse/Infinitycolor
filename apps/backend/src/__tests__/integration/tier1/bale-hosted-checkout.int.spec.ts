@@ -125,8 +125,8 @@ it("pays one Bale order from concurrent hosted checkout submissions and preserve
       order_items: [{ SourceCartItemId: null }],
     });
     expect(Number(orders[0].order_items[0].PerAmount)).toBe(130000);
-    expect((await f.getStock(bale.stockId)).count).toBe(4);
-    expect((await f.getStock(regular.stockId)).count).toBe(5);
+    expect((await f.getStock(bale.stockId)).Count).toBe(4);
+    expect((await f.getStock(regular.stockId)).Count).toBe(5);
     const regularCart = await call("/carts/me", jwt);
     expect(regularCart.body.data.cart_items).toMatchObject([{ id: regularLine.id, Count: 1 }]);
 
