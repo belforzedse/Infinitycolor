@@ -4,6 +4,8 @@ import { chargeableVariationPrice } from "../../../utils/productAvailability";
 import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
 import { snappayProviderPaymentIsUnresolved } from "../../payment-gateway/services/snappay-generation";
 import { validateBaleItemAvailability } from "../lib/inventory";
+import { quoteBaleItems } from "../lib/quote";
+import type { BaleCity } from "../lib/catalog";
 import {
   BALE_CHECKOUT_TTL_MS,
   BaleApiError,
@@ -12,7 +14,9 @@ import {
   checkoutGrantUrl,
   checkoutNotFound,
   hashBaleValue,
+  type BaleCheckoutRequest,
   type BaleItem,
+  type BaleRecipient,
 } from "../lib/protocol";
 
 export { baleReturnUrl, baleStorefrontCheckoutUrl } from "../lib/protocol";
@@ -31,6 +35,17 @@ type CheckoutRow = {
   attempt_id: string | null;
   expires_at_utc: Date;
   items: BaleItem[] | string;
+  handoff: BaleHandoff | string | null;
+};
+
+export type BaleRecipientWithPlace = BaleRecipient & BaleCity;
+type BaleQuote = Awaited<ReturnType<typeof quoteBaleItems>>;
+
+/** Recipient, shipping choice and the quote the bot showed, fixed at link creation. */
+export type BaleHandoff = {
+  recipient: BaleRecipientWithPlace;
+  shippingMethodId: number | null;
+  quote: Omit<BaleQuote, "city">;
 };
 
 export type BaleCheckout = {
@@ -41,6 +56,7 @@ export type BaleCheckout = {
   attemptId: string | null;
   expiresAt: Date;
   items: BaleItem[];
+  handoff: BaleHandoff | null;
 };
 
 function checkoutRows(db: Db) {
@@ -54,6 +70,7 @@ function toCheckout(row: CheckoutRow): BaleCheckout {
   // normal decoded representation too (e.g. in tests).
   const items = typeof row.items === "string" ? JSON.parse(row.items) : row.items;
   if (!Array.isArray(items)) throw baleUnavailable();
+  const handoff = typeof row.handoff === "string" ? JSON.parse(row.handoff) : row.handoff ?? null;
   return {
     id: row.id,
     checkoutId: row.checkout_id,
@@ -62,6 +79,7 @@ function toCheckout(row: CheckoutRow): BaleCheckout {
     attemptId: row.attempt_id,
     expiresAt: new Date(row.expires_at_utc),
     items,
+    handoff,
   };
 }
 
@@ -109,7 +127,7 @@ export async function readBaleCheckoutForAttempt(
   return row ? toCheckout(row) : null;
 }
 
-export async function loadBaleCheckoutCart(strapi: Strapi, checkout: BaleCheckout) {
+export async function loadBaleCheckoutCart(strapi: Strapi, checkout: Pick<BaleCheckout, "items">) {
   const variations = await strapi.db.query("api::product-variation.product-variation").findMany({
     where: { id: { $in: checkout.items.map(({ variationId }) => variationId) } },
     populate: {
@@ -143,19 +161,34 @@ function responseFor(row: CheckoutRow, requestHash: string) {
   if (row.request_hash !== requestHash) {
     throw new BaleApiError(409, "BALE_IDEMPOTENCY_CONFLICT", "This idempotency key already belongs to a different request.");
   }
+  const handoff: BaleHandoff | null = typeof row.handoff === "string"
+    ? JSON.parse(row.handoff)
+    : row.handoff ?? null;
   return {
     checkoutId: row.checkout_id,
     checkoutUrl: checkoutGrantUrl(row.checkout_id),
     expiresAt: new Date(row.expires_at_utc).toISOString(),
+    ...(handoff ? { recipient: publicRecipient(handoff.recipient), quote: handoff.quote } : {}),
   };
 }
 
+function publicRecipient(recipient: BaleRecipientWithPlace) {
+  const { fullName, phone, provinceId, provinceTitle, cityId, cityTitle, postalCode, address } = recipient;
+  return { fullName, phone, provinceId, provinceTitle, cityId, cityTitle, postalCode, address };
+}
+
+/** Items-only links keep their original hash, so a retry across the deploy still replays. */
+function requestHashFor({ items, recipient, shippingMethodId }: BaleCheckoutRequest): string {
+  return recipient ? hashBaleValue({ items, recipient, shippingMethodId }) : hashBaleValue(items);
+}
+
 export async function createBaleCheckout(
-  strapi: Strapi, chatRef: string, idempotencyKey: string, items: BaleItem[],
+  strapi: Strapi, chatRef: string, idempotencyKey: string, request: BaleCheckoutRequest,
 ) {
   const db = strapi.db.connection;
+  const { items, recipient, shippingMethodId } = request;
   const requestKeyHash = hashBaleValue([chatRef, idempotencyKey]);
-  const requestHash = hashBaleValue(items);
+  const requestHash = requestHashFor(request);
   const findExisting = () => checkoutRows(db).where({ request_key_hash: requestKeyHash }).first();
 
   const existing = await findExisting();
@@ -166,11 +199,17 @@ export async function createBaleCheckout(
 
   const checkoutId = randomUUID();
   const checkoutUrl = checkoutGrantUrl(checkoutId); // Fail before writing if link configuration is missing.
+  let handoff: BaleHandoff | null = null;
   try {
-    await validateBaleItemAvailability(strapi, items);
+    if (recipient) {
+      const { city, ...quote } = await quoteBaleItems(strapi, items, recipient.cityId, shippingMethodId);
+      handoff = { recipient: { ...recipient, ...city }, shippingMethodId, quote };
+    } else {
+      await validateBaleItemAvailability(strapi, items);
+    }
   } catch (error) {
     // A concurrent request may already have succeeded before the availability check finished.
-    if (!(error instanceof BaleApiError) || error.code !== "BALE_ITEMS_UNAVAILABLE") throw error;
+    if (!(error instanceof BaleApiError) || error.status !== 409) throw error;
     const concurrent = await findExisting();
     if (concurrent) return responseFor(concurrent, requestHash);
     throw error;
@@ -184,12 +223,20 @@ export async function createBaleCheckout(
     request_key_hash: requestKeyHash,
     request_hash: requestHash,
     items: JSON.stringify(items),
+    handoff: handoff ? JSON.stringify(handoff) : null,
     expires_at: expiresAt.toISOString(),
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
   }).onConflict("request_key_hash").ignore().returning("id");
 
-  if (inserted) return { checkoutId, checkoutUrl, expiresAt: expiresAt.toISOString() };
+  if (inserted) {
+    return {
+      checkoutId,
+      checkoutUrl,
+      expiresAt: expiresAt.toISOString(),
+      ...(handoff ? { recipient: publicRecipient(handoff.recipient), quote: handoff.quote } : {}),
+    };
+  }
   const winner = await findExisting();
   if (!winner) throw baleUnavailable();
   return responseFor(winner, requestHash);
@@ -216,6 +263,8 @@ export function requireActiveBaleCheckout(checkout: BaleCheckout) {
 export type BaleCheckoutStatus = "ready" | "payment_pending" | "paid" | "failed" | "cancelled" | "expired";
 
 type CheckoutStatusRow = {
+  checkout_id: string;
+  created_at_utc: Date;
   order_number: number | null;
   order_id: number | null;
   order_status: string | null;
@@ -259,28 +308,116 @@ function readStatus(row: CheckoutStatusRow): BaleCheckoutStatus {
   return "payment_pending";
 }
 
+const STATUS_SQL = `
+  SELECT b.checkout_id, b.created_at AT TIME ZONE 'UTC' AS created_at_utc,
+         b.expires_at AT TIME ZONE 'UTC' AS expires_at_utc, b.order_id, o.id AS order_number,
+         o.status AS order_status, o.reservation_status, pa.status AS attempt_status,
+         pa.gateway, pa.provider_status, pa.provider_response
+    FROM bale_checkouts b
+    LEFT JOIN orders o ON o.id = b.order_id
+    LEFT JOIN payment_attempts pa ON pa.attempt_id = b.attempt_id
+     AND EXISTS (
+       SELECT 1 FROM payment_attempts_order_links l
+        WHERE l.payment_attempt_id = pa.id AND l.order_id = o.id
+     )`;
+
+/** Customer-facing order status, matching the storefront's labels. */
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  Paying: "در انتظار پرداخت",
+  Started: "در حال انجام",
+  Done: "تکمیل شده",
+  Shipment: "ارسال شده",
+  Returned: "مرجوع شده",
+  Cancelled: "لغو شده",
+};
+
+/** What a paid order looks like to the bot: progress, tracking code, and what was bought. */
+async function loadPaidOrders(strapi: Strapi, orderIds: number[]) {
+  if (!orderIds.length) return new Map<number, ReturnType<typeof serializeOrder>>();
+  const rows = await strapi.db.query("api::order.order").findMany({
+    where: { id: { $in: orderIds } },
+    select: ["id", "Status", "ShippingBarcode", "ShippingMethodTitle", "ShippingCost", "AppliedDiscountAmount", "createdAt"],
+    populate: {
+      order_items: { select: ["id", "ProductTitle", "ProductSKU", "Count", "PerAmount"] },
+      contract: { select: ["Amount"] },
+    },
+  });
+  return new Map(rows.map((row) => [Number(row.id), serializeOrder(row)]));
+}
+
+function serializeOrder(row: any) {
+  const items = (row.order_items ?? [])
+    .sort((a: any, b: any) => Number(a.id) - Number(b.id))
+    .map((item: any) => ({
+      title: item.ProductTitle ?? "",
+      sku: item.ProductSKU ?? null,
+      quantity: Number(item.Count || 0),
+      unitPriceToman: Number(item.PerAmount || 0),
+    }));
+  const shippingToman = Number(row.ShippingCost || 0);
+  const itemsTotal = items.reduce((sum: number, item: any) => sum + item.unitPriceToman * item.quantity, 0);
+  const contractAmount = Number(row.contract?.Amount);
+  return {
+    orderStatus: String(row.Status ?? ""),
+    orderStatusLabel: ORDER_STATUS_LABELS[row.Status] ?? "نامشخص",
+    trackingCode: row.ShippingBarcode || null,
+    shippingMethod: row.ShippingMethodTitle || null,
+    shippingToman,
+    discountToman: Number(row.AppliedDiscountAmount || 0),
+    totalToman: Number.isFinite(contractAmount) && contractAmount > 0
+      ? contractAmount
+      : itemsTotal - Number(row.AppliedDiscountAmount || 0) + shippingToman,
+    items,
+  };
+}
+
+async function describeCheckouts(strapi: Strapi, rows: CheckoutStatusRow[]) {
+  const statuses = rows.map((row) => ({ row, status: readStatus(row) }));
+  const paid = await loadPaidOrders(
+    strapi,
+    statuses.flatMap(({ row, status }) => status === "paid" && row.order_number !== null ? [Number(row.order_number)] : []),
+  );
+  return statuses.map(({ row, status }) => {
+    const order = status === "paid" && row.order_number !== null ? paid.get(Number(row.order_number)) : undefined;
+    return {
+      checkoutId: row.checkout_id,
+      status,
+      ...(order ? { orderNumber: Number(row.order_number), order } : {}),
+    };
+  });
+}
+
 export async function readBaleCheckoutStatus(strapi: Strapi, checkoutId: string, chatRef: string) {
   const { rows } = await strapi.db.connection.raw<{ rows: CheckoutStatusRow[] }>(
-    `SELECT b.expires_at AT TIME ZONE 'UTC' AS expires_at_utc, b.order_id, o.id AS order_number,
-            o.status AS order_status, o.reservation_status, pa.status AS attempt_status,
-            pa.gateway, pa.provider_status, pa.provider_response
-       FROM bale_checkouts b
-       LEFT JOIN orders o ON o.id = b.order_id
-       LEFT JOIN payment_attempts pa ON pa.attempt_id = b.attempt_id
-        AND EXISTS (
-          SELECT 1 FROM payment_attempts_order_links l
-           WHERE l.payment_attempt_id = pa.id AND l.order_id = o.id
-        )
-      WHERE b.checkout_id = ? AND b.chat_hash = ?`,
+    `${STATUS_SQL} WHERE b.checkout_id = ? AND b.chat_hash = ?`,
     [checkoutId, hashBaleValue(chatRef)],
   );
-  const row = rows[0];
-  if (!row) throw checkoutNotFound();
-  const status = readStatus(row);
+  if (!rows[0]) throw checkoutNotFound();
+  const [described] = await describeCheckouts(strapi, rows);
+  return described;
+}
+
+/** This chat's orders, newest first. Links that never reached an order are left out. */
+export async function listBaleChatOrders(
+  strapi: Strapi, chatRef: string, { page, pageSize }: { page: number; pageSize: number },
+) {
+  const chatHash = hashBaleValue(chatRef);
+  const [{ rows }, countRows] = await Promise.all([
+    strapi.db.connection.raw<{ rows: CheckoutStatusRow[] }>(
+      `${STATUS_SQL} WHERE b.chat_hash = ? AND b.order_id IS NOT NULL
+        ORDER BY b.created_at DESC, b.id DESC LIMIT ? OFFSET ?`,
+      [chatHash, pageSize, (page - 1) * pageSize],
+    ),
+    strapi.db.connection(TABLE).where({ chat_hash: chatHash }).whereNotNull("order_id").count({ total: "*" }),
+  ]);
+  const total = Number((countRows[0] as { total?: unknown })?.total ?? 0);
+  const described = await describeCheckouts(strapi, rows);
   return {
-    checkoutId,
-    status,
-    ...(status === "paid" && row.order_number !== null ? { orderNumber: row.order_number } : {}),
+    items: described.map((entry, index) => ({
+      ...entry,
+      createdAt: new Date(rows[index].created_at_utc).toISOString(),
+    })),
+    pagination: { page, pageSize, total, pageCount: Math.ceil(total / pageSize) },
   };
 }
 

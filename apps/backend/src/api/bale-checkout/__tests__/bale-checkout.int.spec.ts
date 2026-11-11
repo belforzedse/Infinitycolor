@@ -236,9 +236,16 @@ it("replays idempotently, claims one owner, and only reads the linked payment", 
     ["Failed", "failed"], ["Cancelled", "cancelled"], ["Expired", "expired"], ["Succeeded", "paid"],
   ]) {
     await app.db.connection("payment_attempts").where({ id: attempt.id }).update({ status: stored });
-    expect((await status(checkoutId)).body).toEqual({
+    const body = (await status(checkoutId)).body;
+    expect(body).toMatchObject({
       checkoutId, status: external, ...(external === "paid" ? { orderNumber: order.id } : {}),
     });
+    if (external !== "paid") expect(body).toEqual({ checkoutId, status: external });
+    else {
+      // The factory order has no lines; the hosted checkout spec covers real items.
+      expect(body.order).toMatchObject({ orderStatus: expect.any(String), trackingCode: null });
+      expect(Array.isArray(body.order.items)).toBe(true);
+    }
     expect((await app.db.connection("payment_attempts").where({ id: attempt.id }).first()).status).toBe(stored);
   }
 
@@ -276,4 +283,87 @@ it("expires an unclaimed link without assigning an owner", async () => {
   expect(claim.response.status).toBe(410);
   expect((await status(checkoutId)).body).toEqual({ checkoutId, status: "expired" });
   await expect(readOwnedBaleCheckout(app, checkoutId, user.id)).resolves.toBeNull();
+});
+
+it("searches public products, lists places, quotes shipping, and validates the recipient", async () => {
+  const product = await factories.createProduct({ status: "Active" });
+  const hidden = await factories.createProduct({ status: "InActive" });
+  const live = await factories.createVariation({ productId: product.id, price: 200000, stockCount: 4 });
+  await factories.createVariation({ productId: hidden.id, stockCount: 4 });
+  const city = await factories.createShippingCity({ title: "Bale quote city" });
+  const shipping = await app.db.query("api::shipping.shipping").create({
+    data: { Title: "Bale quote shipping", Code: `bale-quote-${live.id}`, IsActive: true, Price: 45000 },
+  });
+  factories.remember("api::shipping.shipping", shipping.id);
+
+  expect((await call(`/bale/v1/products?q=${encodeURIComponent(product.Title)}`)).response.status).toBe(401);
+  const found = await call(`/bale/v1/products?q=${encodeURIComponent(product.Title)}`, { token: BOT_TOKEN });
+  expect(found.response.status).toBe(200);
+  expect(found.body.items).toEqual([expect.objectContaining({
+    productId: product.id, title: product.Title, inStock: true, minPriceToman: 200000,
+    variations: [expect.objectContaining({ variationId: live.id, availableQuantity: 4 })],
+  })]);
+  expect((await call(`/bale/v1/products?q=${encodeURIComponent(hidden.Title)}`, { token: BOT_TOKEN })).body.items)
+    .toEqual([]);
+  expect((await call(`/bale/v1/products/${product.id}`, { token: BOT_TOKEN })).body.productId).toBe(product.id);
+  expect((await call(`/bale/v1/products/${hidden.id}`, { token: BOT_TOKEN })).response.status).toBe(404);
+  expect((await call("/bale/v1/products?pageSize=0", { token: BOT_TOKEN })).response.status).toBe(400);
+
+  expect((await call("/bale/v1/provinces", { token: BOT_TOKEN })).body.items)
+    .toContainEqual({ id: city.provinceId, title: expect.any(String) });
+  expect((await call(`/bale/v1/provinces/${city.provinceId}/cities`, { token: BOT_TOKEN })).body.items)
+    .toEqual([{ id: city.id, title: "Bale quote city" }]);
+
+  const items = [{ variationId: live.id, quantity: 2 }];
+  const quote = await call("/bale/v1/quote", {
+    token: BOT_TOKEN, body: { items, cityId: city.id, shippingMethodId: shipping.id },
+  });
+  expect(quote.response.status).toBe(200);
+  expect(quote.body).toMatchObject({
+    city: { cityId: city.id, provinceId: city.provinceId },
+    items: [{ variationId: live.id, quantity: 2, unitPriceToman: 200000, lineTotalToman: 400000 }],
+    subtotalToman: 400000,
+    shippingToman: 45000,
+    totalToman: 445000,
+  });
+  expect((await call("/bale/v1/quote", {
+    token: BOT_TOKEN, body: { items, cityId: 2_000_000_000 },
+  })).body.error.details.errorCode).toBe("BALE_INVALID_CITY");
+  expect((await call("/bale/v1/quote", {
+    token: BOT_TOKEN, body: { items: [{ variationId: live.id, quantity: 5 }], cityId: city.id },
+  })).response.status).toBe(409);
+
+  const recipient = {
+    fullName: "Bale Recipient", phone: "+989121112233", cityId: city.id,
+    postalCode: "1234567890", address: "Integration street, number 10",
+  };
+  const bad = (patch: object, extra: object = {}) => call("/bale/v1/checkouts", {
+    token: BOT_TOKEN, chat: CHAT_REF, key: `bale-bad-${Math.random()}`,
+    body: { items, recipient: { ...recipient, ...patch }, ...extra },
+  });
+  for (const patch of [{ phone: "021-1234" }, { postalCode: "12345" }, { address: "x" }, { extra: 1 }]) {
+    expect((await bad(patch)).response.status).toBe(400);
+  }
+  expect((await bad({ cityId: 2_000_000_000 })).response.status).toBe(400);
+  expect((await bad({}, { shippingMethodId: 2_000_000_000 })).body.error.details.errorCode)
+    .toBe("BALE_SHIPPING_UNAVAILABLE");
+  expect((await call("/bale/v1/checkouts", {
+    token: BOT_TOKEN, chat: CHAT_REF, key: "bale-no-address", body: { items, shippingMethodId: shipping.id },
+  })).response.status).toBe(400);
+
+  const created = await call("/bale/v1/checkouts", {
+    token: BOT_TOKEN, chat: CHAT_REF, key: "bale-addressed", body: { items, recipient, shippingMethodId: shipping.id },
+  });
+  expect(created.response.status).toBe(200);
+  expect(created.body.recipient.phone).toBe("09121112233");
+  expect(created.body.quote.totalToman).toBe(445000);
+  const replay = await call("/bale/v1/checkouts", {
+    token: BOT_TOKEN, chat: CHAT_REF, key: "bale-addressed", body: { items, recipient, shippingMethodId: shipping.id },
+  });
+  expect(replay.body).toEqual(created.body);
+  expect((await call("/bale/v1/checkouts", {
+    token: BOT_TOKEN, chat: CHAT_REF, key: "bale-addressed", body: { items },
+  })).response.status).toBe(409);
+  expect((await call("/bale/v1/orders", { token: BOT_TOKEN, chat: CHAT_REF })).body)
+    .toEqual({ items: [], pagination: { page: 1, pageSize: 10, total: 0, pageCount: 0 } });
 });

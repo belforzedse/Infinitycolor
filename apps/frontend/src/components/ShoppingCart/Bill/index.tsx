@@ -38,6 +38,7 @@ import WalletService, { type WalletHold } from "@/services/wallet";
 import { holdsAreReconciling } from "@/utils/walletHolds";
 import { useCart } from "@/contexts/CartContext";
 import { useBaleCheckoutCart } from "@/contexts/BaleCheckoutCart";
+import BaleRecipientSummary from "./BaleRecipientSummary";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 import {
@@ -335,6 +336,10 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
   const regularCart = useCart();
   const baleCart = useBaleCheckoutCart();
   const baleCheckoutId = baleCart?.checkoutId;
+  const baleRecipient = baleCart?.recipient;
+  // A Bale link fixes the delivery address, so it never joins or opens a
+  // reserve shipment (whose address would replace the one given to the bot).
+  const reserveEnabled = RESERVE_FEATURE_ENABLED && !baleRecipient;
   const discountStorageKey = baleCheckoutId ? `bale:${baleCheckoutId}:discountCode` : "discountCode";
   const cartService = useMemo(() => baleCheckoutId ? {
     ...CartService,
@@ -444,6 +449,18 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
     defaultValues: {
       saveAddress: true,
       acceptTerms: false,
+      // The Bale bot already collected the recipient; the server enforces it too.
+      ...(baleRecipient
+        ? {
+            fullName: baleRecipient.fullName,
+            phoneNumber: baleRecipient.phone,
+            address: null,
+            province: { id: baleRecipient.provinceId, name: baleRecipient.provinceTitle },
+            city: { id: baleRecipient.cityId, name: baleRecipient.cityTitle },
+            postalCode: baleRecipient.postalCode,
+            fullAddress: baleRecipient.address,
+          }
+        : {}),
     },
   });
 
@@ -636,7 +653,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
   const activeReserveGroupIdRef = React.useRef<string | null>(null);
 
   const loadActiveReserve = React.useCallback(async () => {
-    if (!RESERVE_FEATURE_ENABLED) return;
+    if (!reserveEnabled) return;
     if (!currentUserId) return;
     try {
       const res = await OrderService.getActiveReserve();
@@ -668,7 +685,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
       activeReserveGroupIdRef.current = null;
       setActiveReserve(null);
     }
-  }, [currentUserId]);
+  }, [currentUserId, reserveEnabled]);
 
   useEffect(() => {
     loadActiveReserve();
@@ -1274,7 +1291,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
 
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
-    if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !continuationCandidate) {
+    if (reserveEnabled && activeReserve && mergeChoice === null && !continuationCandidate) {
       trackCheckoutError(undefined, "validation");
       failPayment("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
       return;
@@ -2044,7 +2061,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
         </div>
       )}
 
-      {RESERVE_FEATURE_ENABLED && activeReserve && (
+      {reserveEnabled && activeReserve && (
         <ReserveFulfillmentChoice
           reserve={activeReserve}
           value={mergeChoice}
@@ -2057,7 +2074,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
         />
       )}
 
-      {RESERVE_FEATURE_ENABLED && reserveWindowClosed && (
+      {reserveEnabled && reserveWindowClosed && (
         <div
           role="status"
           data-testid="reserve-window-closed-notice"
@@ -2069,14 +2086,18 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <ShoppingCartBillInformationForm
-          register={register}
-          errors={errors}
-          control={control}
-          setValue={setValue}
-          hideAddressFields={isMergeMode}
-          reserveRecipientName={activeReserve?.recipientName}
-        />
+        {baleRecipient ? (
+          <BaleRecipientSummary recipient={baleRecipient} />
+        ) : (
+          <ShoppingCartBillInformationForm
+            register={register}
+            errors={errors}
+            control={control}
+            setValue={setValue}
+            hideAddressFields={isMergeMode}
+            reserveRecipientName={activeReserve?.recipientName}
+          />
+        )}
 
         <div className="mb-20 flex flex-col gap-6">
           {isMergeMode ? (
@@ -2119,6 +2140,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
                 discountCode={discountCode}
                 previewLoading={discountPreviewLoading}
                 addressContext={shippingAddressContext}
+                preferredShippingId={baleCart?.shippingMethodId ?? undefined}
                 walletToman={walletContribution.walletToman}
                 walletTender={
                   <WalletContribution
@@ -2139,7 +2161,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
                 to someone who already has a group would invite a checkout that
                 `RESERVE_ALREADY_ACTIVE` is guaranteed to refuse.
               */}
-              {RESERVE_FEATURE_ENABLED && !activeReserve && (
+              {reserveEnabled && !activeReserve && (
                 <ReserveShipping
                   checked={reserveShipping}
                   onChange={setReserveShipping}
@@ -2147,7 +2169,7 @@ function ShoppingCartBillForm({ baleReturnUrl }: Props) {
                   shippingCost={shippingToman}
                 />
               )}
-              {RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === "new" && (
+              {reserveEnabled && activeReserve && mergeChoice === "new" && (
                 <p className="rounded-control border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-neutral-600">
                   چون یک بسته رزروی فعال دارید، نمی‌توانید همزمان بسته رزروی دیگری باز کنید. این
                   سفارش جداگانه و با هزینه ارسال عادی فرستاده می‌شود.

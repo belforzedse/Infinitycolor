@@ -140,7 +140,10 @@ it("pays one Bale order from concurrent hosted checkout submissions and preserve
       baleReturnUrl: `https://ble.ir/Integration_bot?start=${checkoutId}`,
     });
     expect((await call(`/bale/v1/checkouts/${checkoutId}`, botToken, undefined, chat)).body)
-      .toEqual({ checkoutId, status: "paid", orderNumber: orderId });
+      .toMatchObject({ checkoutId, status: "paid", orderNumber: orderId, order: {
+        orderStatus: "Started", orderStatusLabel: "در حال انجام", trackingCode: null,
+        totalToman: 163000, items: [{ quantity: 1, unitPriceToman: 130000 }],
+      } });
     expect((await call(`/carts/check-stock?attemptId=${paid!.body.data.attemptId}`, jwt)).status).toBe(400);
 
     const anotherLink = await call("/bale/v1/checkouts", botToken, {
@@ -171,6 +174,73 @@ it("pays one Bale order from concurrent hosted checkout submissions and preserve
       orderId: interrupted.order.id, attemptId: resume.attemptId, paymentStatus: "Succeeded",
     });
     expect((await f.getStock(bale.stockId)).Count).toBe(3);
+
+    // A link created with the recipient the bot collected: the site cannot swap the address.
+    const city = await f.createShippingCity({ title: "شهر ربات" });
+    const recipient = {
+      fullName: "گیرنده ربات", phone: "۰۹۱۲۳۴۵۶۷۸۹", cityId: city.id,
+      postalCode: "۱۱۱۱۱۲۲۲۲۲", address: "خیابان آزمایشی، پلاک ۱۲، واحد ۳",
+    };
+    const botQuote = await call("/bale/v1/quote", botToken, {
+      items: [{ variationId: bale.id, quantity: 1 }], cityId: city.id,
+    });
+    expect(botQuote.status).toBe(200);
+    expect(botQuote.body).toMatchObject({
+      subtotalToman: 130000, discountToman: 0,
+      shippingOptions: expect.arrayContaining([expect.objectContaining({
+        id: shipping.id, priceToman: 33000, totalToman: 163000,
+      })]),
+    });
+    const addressed = await call("/bale/v1/checkouts", botToken, {
+      items: [{ variationId: bale.id, quantity: 1 }], recipient, shippingMethodId: shipping.id,
+    }, { ...chat, "Idempotency-Key": "hosted-checkout-addressed" });
+    expect(addressed.status).toBe(200);
+    expect(addressed.body.recipient).toMatchObject({
+      phone: "09123456789", postalCode: "1111122222", cityTitle: "شهر ربات",
+    });
+    expect(addressed.body.quote).toMatchObject({ shippingToman: 33000, totalToman: 163000 });
+    const addressedId = addressed.body.checkoutId;
+    checkoutIds.push(addressedId);
+    const addressedPath = `/bale/checkout/${addressedId}`;
+    const addressedClaim = await call(`${addressedPath}/claim`, jwt, {
+      grant: new URL(addressed.body.checkoutUrl).hash.slice(1),
+    });
+    expect(addressedClaim.body).toMatchObject({
+      shippingMethodId: shipping.id,
+      recipient: { fullName: "گیرنده ربات", cityId: city.id, provinceId: city.provinceId },
+    });
+    const addressedScope = `?baleCheckoutId=${addressedId}`;
+    // The page tries to use the shopper's saved address; the bot's address wins.
+    // A reserve group id would otherwise route the parcel to the group's address.
+    const swapped = { ...checkoutInput, addressId: address.id, reserveGroupId: "not-a-group", mobile: "09350000000" };
+    const addressedQuote = await call(`/carts/quote${addressedScope}`, jwt, swapped);
+    expect(addressedQuote.body.data.financialSummary).toMatchObject({ total: 163000 });
+    const addressedPaid = await call(`/carts/finalize${addressedScope}`, jwt, {
+      ...swapped, attemptId: "bale-addressed", quoteHash: addressedQuote.body.data.quoteHash,
+    });
+    expect(addressedPaid.body.data.paymentStatus).toBe("Succeeded");
+    const addressedOrder = await strapi.db.query("api::order.order").findOne({
+      where: { id: addressedPaid.body.data.orderId },
+      populate: { delivery_address: { populate: { shipping_city: true } } },
+    });
+    expect(addressedOrder.delivery_address).toMatchObject({
+      PostalCode: "1111122222", FullName: "گیرنده ربات", Phone: "09123456789",
+      FullAddress: recipient.address, shipping_city: { id: city.id },
+    });
+    f.remember("api::local-user-address.local-user-address", addressedOrder.delivery_address.id);
+    await strapi.db.query("api::order.order").update({
+      where: { id: addressedOrder.id }, data: { Status: "Shipment", ShippingBarcode: "TRACK-123" },
+    });
+    const history = await call("/bale/v1/orders?pageSize=2", botToken, undefined, chat);
+    expect(history.status).toBe(200);
+    expect(history.body.pagination).toEqual({ page: 1, pageSize: 2, total: 3, pageCount: 2 });
+    expect(history.body.items[0]).toMatchObject({
+      checkoutId: addressedId, status: "paid", orderNumber: addressedOrder.id,
+      order: { orderStatus: "Shipment", orderStatusLabel: "ارسال شده", trackingCode: "TRACK-123" },
+    });
+    expect((await call("/bale/v1/orders", botToken, undefined, {
+      "X-Bale-Chat-Ref": "someone-else",
+    })).body.items).toEqual([]);
   } finally {
     if (checkoutIds.length) await strapi.db.connection("bale_checkouts").whereIn("checkout_id", checkoutIds).delete();
     if (customerId) {

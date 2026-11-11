@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { canonicalIranPhone } from "@repo/auth-core";
 
 export const BALE_CHECKOUT_TTL_MS = 60 * 60 * 1_000;
 const MAX_ITEMS = 20;
@@ -7,6 +8,20 @@ const MAX_INVENTORY_KEYS = 50;
 const MAX_VARIATION_ID = 2_147_483_647;
 
 export type BaleItem = { variationId: number; quantity: number };
+/** Who receives the parcel and where, as collected by the bot. */
+export type BaleRecipient = {
+  fullName: string;
+  /** Local mobile form, `09xxxxxxxxx`. */
+  phone: string;
+  cityId: number;
+  postalCode: string;
+  address: string;
+};
+export type BaleCheckoutRequest = {
+  items: BaleItem[];
+  recipient: BaleRecipient | null;
+  shippingMethodId: number | null;
+};
 export type InventoryLookup = { ids: number[] } | { skus: string[] };
 
 export class BaleApiError extends Error {
@@ -56,15 +71,12 @@ export function parseInventoryLookup(value: unknown): InventoryLookup {
   return { skus: Array.from(new Set(keys)) };
 }
 
-export function parseBaleItems(body: unknown): BaleItem[] {
-  if (
-    !isObject(body) || Object.keys(body).length !== 1 || !Array.isArray(body.items) ||
-    body.items.length < 1 || body.items.length > MAX_ITEMS
-  ) {
+function parseItemList(value: unknown): BaleItem[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ITEMS) {
     invalid("Supply between 1 and 20 items.");
   }
   const items = new Map<number, number>();
-  for (const line of body.items) {
+  for (const line of value) {
     if (
       !isObject(line) || Object.keys(line).length !== 2 || !isVariationId(line.variationId) ||
       typeof line.quantity !== "number" || !Number.isInteger(line.quantity) ||
@@ -80,6 +92,91 @@ export function parseBaleItems(body: unknown): BaleItem[] {
     variationId,
     quantity,
   }));
+}
+
+export function parseBaleItems(body: unknown): BaleItem[] {
+  if (!isObject(body) || Object.keys(body).length !== 1) invalid("Supply between 1 and 20 items.");
+  return parseItemList(body.items);
+}
+
+/** Fold Persian and Arabic digits to ASCII. */
+export function asciiDigits(value: string): string {
+  return value
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)));
+}
+
+function cleanText(value: unknown, field: string, min: number, max: number): string {
+  if (typeof value !== "string") invalid(`Supply ${field}.`);
+  const text = value.normalize("NFC").replace(/\s+/g, " ").trim();
+  if (text.length < min || text.length > max || /[\u0000-\u001f\u007f<>]/.test(text)) {
+    invalid(`${field} must be ${min} to ${max} characters.`);
+  }
+  return text;
+}
+
+export function parsePositiveId(value: unknown, field: string): number {
+  const numeric = typeof value === "string" && /^[1-9][0-9]{0,9}$/.test(value) ? Number(value) : value;
+  if (!isVariationId(numeric)) invalid(`${field} must be a positive integer.`);
+  return numeric;
+}
+
+export function parseBaleRecipient(value: unknown): BaleRecipient {
+  const keys = ["fullName", "phone", "cityId", "postalCode", "address"];
+  if (!isObject(value) || Object.keys(value).some((key) => !keys.includes(key))) {
+    invalid(`recipient takes only ${keys.join(", ")}.`);
+  }
+  const canonical = canonicalIranPhone(value.phone);
+  if (!canonical) invalid("recipient.phone must be an Iranian mobile number.");
+  const postalCode = typeof value.postalCode === "string" || typeof value.postalCode === "number"
+    ? asciiDigits(String(value.postalCode)).replace(/[\s-]/g, "")
+    : "";
+  if (!/^\d{10}$/.test(postalCode)) invalid("recipient.postalCode must be 10 digits.");
+  return {
+    fullName: cleanText(value.fullName, "recipient.fullName", 3, 100),
+    phone: `0${canonical.slice(3)}`,
+    cityId: parsePositiveId(value.cityId, "recipient.cityId"),
+    postalCode,
+    address: cleanText(value.address, "recipient.address", 10, 500),
+  };
+}
+
+export function parseBaleCheckoutRequest(body: unknown): BaleCheckoutRequest {
+  const keys = ["items", "recipient", "shippingMethodId"];
+  if (!isObject(body) || Object.keys(body).some((key) => !keys.includes(key))) {
+    invalid(`The request takes only ${keys.join(", ")}.`);
+  }
+  const recipient = body.recipient === undefined || body.recipient === null
+    ? null
+    : parseBaleRecipient(body.recipient);
+  const shippingMethodId = body.shippingMethodId === undefined || body.shippingMethodId === null
+    ? null
+    : parsePositiveId(body.shippingMethodId, "shippingMethodId");
+  if (shippingMethodId !== null && !recipient) invalid("shippingMethodId needs a recipient address.");
+  return { items: parseItemList(body.items), recipient, shippingMethodId };
+}
+
+export function parseBaleQuoteRequest(body: unknown) {
+  const keys = ["items", "cityId", "shippingMethodId"];
+  if (!isObject(body) || Object.keys(body).some((key) => !keys.includes(key))) {
+    invalid(`The request takes only ${keys.join(", ")}.`);
+  }
+  return {
+    items: parseItemList(body.items),
+    cityId: parsePositiveId(body.cityId, "cityId"),
+    shippingMethodId: body.shippingMethodId === undefined || body.shippingMethodId === null
+      ? null
+      : parsePositiveId(body.shippingMethodId, "shippingMethodId"),
+  };
+}
+
+export function parsePage(query: Record<string, unknown>, maxPageSize: number) {
+  const read = (value: unknown, fallback: number, max: number) => {
+    if (value === undefined) return fallback;
+    if (typeof value !== "string" || !/^[1-9][0-9]{0,4}$/.test(value)) invalid("page and pageSize must be positive integers.");
+    return Math.min(Number(value), max);
+  };
+  return { page: read(query.page, 1, 10_000), pageSize: read(query.pageSize, 10, maxPageSize) };
 }
 
 export function requireOpaqueHeader(value: string, name: string): string {

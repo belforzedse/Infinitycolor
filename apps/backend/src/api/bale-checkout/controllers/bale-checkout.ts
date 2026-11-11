@@ -3,12 +3,16 @@ import { checkoutAttemptOrderId, gateCheckoutResume } from "../../cart/services/
 import { normalizeCheckoutGatewayCode } from "../../payment-gateway/services/checkout-gateway-availability";
 import { findPaymentAttempt } from "../../payment-attempt/services/payment-attempt";
 import { loadBaleInventory } from "../lib/inventory";
+import { listBaleCities, listBaleProvinces, readBaleProduct, searchBaleProducts } from "../lib/catalog";
+import { quoteBaleItems } from "../lib/quote";
 import {
   BaleApiError,
   checkoutNotFound,
   isCheckoutId,
-  parseBaleItems,
+  parseBaleCheckoutRequest,
+  parseBaleQuoteRequest,
   parseInventoryLookup,
+  parsePage,
   requireBotToken,
   requireOpaqueHeader,
   verifyCheckoutGrant,
@@ -18,6 +22,7 @@ import {
   baleReturnUrl,
   claimBaleCheckout,
   createBaleCheckout,
+  listBaleChatOrders,
   readBaleCheckoutStatus,
   readOwnedBaleCheckout,
   requireActiveBaleCheckout,
@@ -85,6 +90,14 @@ async function ownedSummary(checkout: BaleCheckout) {
     orderId: checkout.orderId,
     expiresAt: checkout.expiresAt.toISOString(),
     baleReturnUrl: baleReturnUrl(checkout.checkoutId),
+    // The address and shipping method the shopper gave the bot. The site
+    // prefills its checkout with them and the cart routes enforce the address.
+    ...(checkout.handoff
+      ? {
+          recipient: checkout.handoff.recipient,
+          shippingMethodId: checkout.handoff.shippingMethodId,
+        }
+      : {}),
     ...(resume ? { resume } : {}),
   };
 }
@@ -101,7 +114,45 @@ export default {
     await limitBaleRequest("create");
     const chatRef = requireOpaqueHeader(ctx.get("X-Bale-Chat-Ref"), "X-Bale-Chat-Ref");
     const idempotencyKey = requireOpaqueHeader(ctx.get("Idempotency-Key"), "Idempotency-Key");
-    return createBaleCheckout(strapi, chatRef, idempotencyKey, parseBaleItems(ctx.request.body));
+    return createBaleCheckout(strapi, chatRef, idempotencyKey, parseBaleCheckoutRequest(ctx.request.body));
+  }),
+
+  products: withBaleResponse("products", async (ctx) => {
+    requireBotToken(ctx.get("Authorization"));
+    await limitBaleRequest("catalog");
+    return searchBaleProducts(strapi, ctx.query as Record<string, unknown>);
+  }),
+
+  product: withBaleResponse("product", async (ctx) => {
+    requireBotToken(ctx.get("Authorization"));
+    await limitBaleRequest("catalog");
+    return readBaleProduct(strapi, ctx.params.productId);
+  }),
+
+  provinces: withBaleResponse("provinces", async (ctx) => {
+    requireBotToken(ctx.get("Authorization"));
+    await limitBaleRequest("catalog");
+    return listBaleProvinces(strapi);
+  }),
+
+  cities: withBaleResponse("cities", async (ctx) => {
+    requireBotToken(ctx.get("Authorization"));
+    await limitBaleRequest("catalog");
+    return listBaleCities(strapi, ctx.params.provinceId);
+  }),
+
+  quote: withBaleResponse("quote", async (ctx) => {
+    requireBotToken(ctx.get("Authorization"));
+    await limitBaleRequest("quote");
+    const { items, cityId, shippingMethodId } = parseBaleQuoteRequest(ctx.request.body);
+    return quoteBaleItems(strapi, items, cityId, shippingMethodId);
+  }),
+
+  orders: withBaleResponse("orders", async (ctx) => {
+    requireBotToken(ctx.get("Authorization"));
+    await limitBaleRequest("status");
+    const chatRef = requireOpaqueHeader(ctx.get("X-Bale-Chat-Ref"), "X-Bale-Chat-Ref");
+    return listBaleChatOrders(strapi, chatRef, parsePage(ctx.query as Record<string, unknown>, 20));
   }),
 
   status: withBaleResponse("status", async (ctx) => {

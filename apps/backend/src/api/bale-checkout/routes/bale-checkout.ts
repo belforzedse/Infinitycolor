@@ -17,6 +17,30 @@ export default {
       config: { auth: false },
     },
     {
+      method: "GET", path: "/bale/v1/products", handler: "bale-checkout.products",
+      config: { auth: false },
+    },
+    {
+      method: "GET", path: "/bale/v1/products/:productId", handler: "bale-checkout.product",
+      config: { auth: false },
+    },
+    {
+      method: "GET", path: "/bale/v1/provinces", handler: "bale-checkout.provinces",
+      config: { auth: false },
+    },
+    {
+      method: "GET", path: "/bale/v1/provinces/:provinceId/cities", handler: "bale-checkout.cities",
+      config: { auth: false },
+    },
+    {
+      method: "POST", path: "/bale/v1/quote", handler: "bale-checkout.quote",
+      config: { auth: false },
+    },
+    {
+      method: "GET", path: "/bale/v1/orders", handler: "bale-checkout.orders",
+      config: { auth: false },
+    },
+    {
       method: "POST", path: "/bale/checkout/:checkoutId/claim", handler: "bale-checkout.claim",
       config: { auth: storefrontAuth },
     },

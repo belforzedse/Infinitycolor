@@ -77,6 +77,8 @@ type Props = {
    * and the figure inside the wallet card can never disagree.
    */
   walletToman?: number;
+  /** Shipping method chosen in the Bale bot, selected once it is offered here. */
+  preferredShippingId?: number;
 };
 
 function ShoppingCartBillDeliveryForm({
@@ -89,6 +91,7 @@ function ShoppingCartBillDeliveryForm({
   previewLoading,
   walletTender,
   walletToman = 0,
+  preferredShippingId,
 }: Props) {
   const regularCart = useCart();
   const baleCart = useBaleCheckoutCart();
@@ -166,6 +169,15 @@ function ShoppingCartBillDeliveryForm({
 
     fetchShippingMethods();
   }, [addressContextKey, baleCheckoutId, cartSignature, hasAddressContext, setValue]);
+
+  const preferredAppliedRef = useRef(false);
+  useEffect(() => {
+    if (preferredAppliedRef.current || !preferredShippingId || selectedShipping) return;
+    const preferred = shippingMethods.find((method) => Number(method.id) === preferredShippingId);
+    if (!preferred) return;
+    preferredAppliedRef.current = true;
+    setValue("shippingMethod", preferred);
+  }, [preferredShippingId, selectedShipping, setValue, shippingMethods]);
 
   useEffect(() => {
     if (!selectedShipping) return;

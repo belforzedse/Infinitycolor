@@ -29,8 +29,22 @@ function checkoutItems(cart: CartResponse): CartItem[] {
   });
 }
 
+/** The recipient and address the shopper already gave the Bale bot. */
+export type BaleRecipient = {
+  fullName: string;
+  phone: string;
+  provinceId: number;
+  provinceTitle: string;
+  cityId: number;
+  cityTitle: string;
+  postalCode: string;
+  address: string;
+};
+
 type BaleCart = {
   checkoutId: string;
+  recipient?: BaleRecipient;
+  shippingMethodId?: number | null;
   cartItems: CartItem[];
   totalItems: number;
   totalPrice: number;
@@ -45,9 +59,13 @@ export function useBaleCheckoutCart() {
   return useContext(BaleCartContext);
 }
 
-export function BaleCheckoutCartProvider({ checkoutId, initialCart, children }: {
+export function BaleCheckoutCartProvider({
+  checkoutId, initialCart, recipient, shippingMethodId, children,
+}: {
   checkoutId: string;
   initialCart: CartResponse;
+  recipient?: BaleRecipient;
+  shippingMethodId?: number | null;
   children: ReactNode;
 }) {
   const [cart, setCart] = useState(initialCart);
@@ -60,6 +78,8 @@ export function BaleCheckoutCartProvider({ checkoutId, initialCart, children }: 
     );
     return {
       checkoutId,
+      recipient,
+      shippingMethodId,
       cartItems,
       totalItems: cartItems.reduce((sum, item) => sum + item.quantity, 0),
       totalPrice,
@@ -67,6 +87,6 @@ export function BaleCheckoutCartProvider({ checkoutId, initialCart, children }: 
       cartDiscountTotal: Math.max(0, subtotalBeforeDiscount - totalPrice),
       refreshCart: async () => setCart(await CartService.getUserCart(checkoutId)),
     };
-  }, [cart, checkoutId]);
+  }, [cart, checkoutId, recipient, shippingMethodId]);
   return <BaleCartContext.Provider value={value}>{children}</BaleCartContext.Provider>;
 }

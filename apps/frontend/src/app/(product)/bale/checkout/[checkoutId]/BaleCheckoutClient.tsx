@@ -4,7 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import PageContainer from "@/components/layout/PageContainer";
 import ShoppingCartBillForm from "@/components/ShoppingCart/Bill";
-import { BaleCheckoutCartProvider, useBaleCheckoutCart } from "@/contexts/BaleCheckoutCart";
+import {
+  BaleCheckoutCartProvider,
+  useBaleCheckoutCart,
+  type BaleRecipient,
+} from "@/contexts/BaleCheckoutCart";
 import { centralAuth, centralLoginUrl, subscribeToAuthState } from "@/lib/central-auth";
 import { apiClient, CartService } from "@/services";
 import type { CartResponse, CheckoutGatewayCode } from "@/services/cart/types/cart";
@@ -17,6 +21,8 @@ type Handoff = {
   orderId: number | null;
   expiresAt: string;
   baleReturnUrl: string;
+  recipient?: BaleRecipient;
+  shippingMethodId?: number | null;
   resume?: { gateway: CheckoutGatewayCode; attemptId: string; quoteHash: string };
 };
 
@@ -171,7 +177,12 @@ export default function BaleCheckoutClient({ checkoutId }: { checkoutId: string 
           </div>
         </div>
       ) : ready ? (
-        <BaleCheckoutCartProvider checkoutId={checkoutId} initialCart={ready.cart}>
+        <BaleCheckoutCartProvider
+          checkoutId={checkoutId}
+          initialCart={ready.cart}
+          recipient={ready.handoff.recipient}
+          shippingMethodId={ready.handoff.shippingMethodId}
+        >
           <SelectedItems />
           <ShoppingCartBillForm baleReturnUrl={ready.handoff.baleReturnUrl} />
         </BaleCheckoutCartProvider>

@@ -28,6 +28,7 @@
     "expiresAt": { "type": "datetime", "required": true, "private": true, "column": { "notNullable": true } },
     "userId": { "type": "integer", "private": true },
     "orderId": { "type": "integer", "unique": true, "private": true },
-    "attemptId": { "type": "string", "unique": true, "private": true }
+    "attemptId": { "type": "string", "unique": true, "private": true },
+    "handoff": { "type": "json", "private": true }
   }
 }

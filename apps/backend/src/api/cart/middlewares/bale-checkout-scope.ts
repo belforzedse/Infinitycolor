@@ -33,6 +33,28 @@ export default (_config: unknown, { strapi }: { strapi: Strapi }) =>
         checkout,
         cart: await loadBaleCheckoutCart(strapi, checkout),
       };
+      // The recipient given to the bot is part of the order the bot quoted:
+      // shipping, quote and finalize always use it, whatever the page sends.
+      const recipient = checkout.handoff?.recipient;
+      if (recipient && body && typeof body === "object" && !Array.isArray(body)) {
+        delete body.addressId;
+        body.addressPayload = {
+          shipping_city: recipient.cityId,
+          PostalCode: recipient.postalCode,
+          FullAddress: recipient.address,
+          FullName: recipient.fullName,
+          Phone: recipient.phone,
+          save: body.addressPayload?.save !== false,
+        };
+        body.recipient = { FullName: recipient.fullName, Phone: recipient.phone };
+        // A reserve shipment carries its own address, so it cannot apply here.
+        delete body.reserveGroupId;
+        delete body.reserveShipping;
+        // The page's phone field holds the recipient's number, which may be
+        // someone else's. Gateways (SnappPay credit above all) must get the
+        // signed-in payer's own mobile, which finalize falls back to.
+        delete body.mobile;
+      }
     } else if (userId > 0) {
       // A regular checkout may not resume or abandon a Bale payment by passing
       // an attempt id copied from another tab.

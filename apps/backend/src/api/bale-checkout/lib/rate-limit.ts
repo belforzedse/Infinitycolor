@@ -5,6 +5,8 @@ import { BaleApiError, baleUnavailable } from "./protocol";
 const limits = {
   inventory: { capacity: 120, refillMs: 500 },
   create: { capacity: 30, refillMs: 2_000 },
+  catalog: { capacity: 240, refillMs: 250 },
+  quote: { capacity: 60, refillMs: 1_000 },
   status: { capacity: 120, refillMs: 500 },
   claim: { capacity: 12, refillMs: 5_000 },
   read: { capacity: 60, refillMs: 1_000 },

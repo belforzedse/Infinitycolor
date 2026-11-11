@@ -11,28 +11,32 @@ export async function loadBaleInventory(strapi: Strapi, lookup: InventoryLookup)
   const rows = await strapi.db.query(VARIATION).findMany({
     where: { ...keyFilter, IsPublished: true, product: publicProductFilters() },
     select: ["id", "SKU", "Price", "DiscountPrice"],
-    populate: {
-      product: { select: ["Title"] },
-      product_variation_color: { select: ["Title"] },
-      product_variation_size: { select: ["Title"] },
-      product_variation_model: { select: ["Title"] },
-      product_stock: { select: ["Count", "reservedCount"] },
-    },
+    populate: { product: { select: ["Title"] }, ...BALE_VARIATION_POPULATE },
     orderBy: { id: "asc" },
   });
-  return rows.map((row) => {
-    const priceToman = chargeableVariationPrice(row);
-    return {
-      variationId: Number(row.id),
-      sku: String(row.SKU),
-      productTitle: row.product?.Title ?? "",
-      color: row.product_variation_color?.Title ?? null,
-      size: row.product_variation_size?.Title ?? null,
-      model: row.product_variation_model?.Title ?? null,
-      priceToman,
-      availableQuantity: priceToman > 0 ? getAvailableStockCount(row.product_stock) : 0,
-    };
-  });
+  return rows.map((row) => baleInventoryRow(row, row.product?.Title ?? ""));
+}
+
+export const BALE_VARIATION_POPULATE = {
+  product_variation_color: { select: ["Title"] },
+  product_variation_size: { select: ["Title"] },
+  product_variation_model: { select: ["Title"] },
+  product_stock: { select: ["Count", "reservedCount"] },
+} as const;
+
+/** One purchasable variation as the bot sees it. Price is per item, in toman. */
+export function baleInventoryRow(row: any, productTitle: string) {
+  const priceToman = chargeableVariationPrice(row);
+  return {
+    variationId: Number(row.id),
+    sku: String(row.SKU),
+    productTitle,
+    color: row.product_variation_color?.Title ?? null,
+    size: row.product_variation_size?.Title ?? null,
+    model: row.product_variation_model?.Title ?? null,
+    priceToman,
+    availableQuantity: priceToman > 0 ? getAvailableStockCount(row.product_stock) : 0,
+  };
 }
 
 export async function validateBaleItemAvailability(strapi: Strapi, items: BaleItem[]) {

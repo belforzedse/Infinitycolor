@@ -59,3 +59,29 @@ it("bounds requests before queries and rejects disguised client-supplied checkou
     items: [{ variationId: 10, quantity: 55 }, { variationId: 10, quantity: 46 }],
   })).toThrow("Order up to 100 of each item.");
 });
+
+it("normalizes the recipient the bot collected and refuses a shipping method without an address", () => {
+  const { parseBaleCheckoutRequest } = jest.requireActual("../lib/protocol");
+  const items = [{ variationId: 3, quantity: 1 }];
+  expect(parseBaleCheckoutRequest({
+    items,
+    recipient: {
+      fullName: "  علی   رضایی ", phone: "۰۹۱۲ ۳۴۵ ۶۷۸۹", cityId: "12",
+      postalCode: "۱۲۳۴۵-۶۷۸۹۰", address: "تهران، خیابان آزادی، پلاک ۱",
+    },
+    shippingMethodId: 4,
+  })).toEqual({
+    items,
+    recipient: {
+      fullName: "علی رضایی", phone: "09123456789", cityId: 12,
+      postalCode: "1234567890", address: "تهران، خیابان آزادی، پلاک ۱",
+    },
+    shippingMethodId: 4,
+  });
+  expect(parseBaleCheckoutRequest({ items })).toEqual({ items, recipient: null, shippingMethodId: null });
+  expect(() => parseBaleCheckoutRequest({ items, shippingMethodId: 4 })).toThrow("needs a recipient");
+  expect(() => parseBaleCheckoutRequest({ items, note: "x" })).toThrow();
+  expect(() => parseBaleCheckoutRequest({
+    items, recipient: { fullName: "<b>x</b>", phone: "09123456789", cityId: 1, postalCode: "1234567890", address: "long enough address" },
+  })).toThrow();
+});
