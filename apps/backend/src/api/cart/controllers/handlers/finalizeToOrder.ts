@@ -13,6 +13,7 @@ import {
   isCheckoutGatewayEnabled,
   normalizeCheckoutGatewayCode,
 } from "../../../payment-gateway/services/checkout-gateway-availability";
+import { gatewayExpectedAmountIrr } from "../../../payment-attempt/services/payment-legs";
 import { redactSensitive } from "../../../../utils/redactSensitive";
 import {
   claimPaymentAttemptForInitiation,
@@ -27,6 +28,11 @@ import {
 import { generateSnappayCallbackNonce, isValidSnappayCallbackNonce } from "../../../payment-gateway/services/snappay-security";
 import { snappayProviderPaymentIsUnresolved } from "../../../payment-gateway/services/snappay-generation";
 import { settleOrderWithWallet } from "./wallet-settlement";
+import {
+  attemptMatchesCheckout,
+  baleCheckoutPaymentExists,
+  type BaleCheckoutScope,
+} from "../../services/lib/bale-checkout-scope";
 import { consumeCheckoutCartLinesSafely } from "../../services/lib/order-cart-cleanup";
 import {
   findAttachableGroup,
@@ -84,6 +90,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       user = (await fetchUserWithRole(strapi, targetUserId)) || { id: targetUserId };
     }
 
+    const bale: BaleCheckoutScope | undefined = ctx.state?.baleCheckoutScope;
     const requestedGateway = String(gateway || "mellat").toLowerCase();
     const selectedGateway = normalizeCheckoutGatewayCode(requestedGateway) || "mellat";
     const managesPaymentAttempt = true;
@@ -109,6 +116,15 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const existingAttempt = normalizedAttemptId
       ? await findPaymentAttempt(strapi, Number(user.id), normalizedAttemptId)
       : null;
+    if (bale?.checkout.orderId && bale.checkout.attemptId !== normalizedAttemptId) {
+      const conflict = baleCheckoutPaymentExists(bale.checkout.orderId);
+      return ctx.conflict(conflict.message, { data: conflict });
+    }
+    if (existingAttempt && !attemptMatchesCheckout(existingAttempt, bale)) {
+      return ctx.conflict("شناسه پرداخت به این سفارش تعلق ندارد.", {
+        data: { success: false, errorCode: "CHECKOUT_ATTEMPT_CONFLICT" },
+      });
+    }
     const resumeDecision = existingAttempt
       ? existingAttemptBlocksReplacement(existingAttempt, selectedGateway, normalizedQuoteHash)
       : null;
@@ -404,6 +420,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           user.id,
           resolvedShippingId,
           { addressId: resolvedAddressId },
+          ...(bale ? [{ cart: bale.cart }] : []),
         );
         resolvedShippingCost = Number(calculatedShipping.price || 0);
         shippingSnapshot = {
@@ -520,7 +537,9 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     const cartService = strapi.service("api::cart.cart");
-    const result = await cartService.finalizeCartToOrder(user.id, shippingData);
+    const result = bale
+      ? await cartService.finalizeCartToOrder(user.id, shippingData, bale)
+      : await cartService.finalizeCartToOrder(user.id, shippingData);
 
     if (!result.success) {
       const diagnostics = {
@@ -539,6 +558,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             ...diagnostics,
           },
         };
+      }
+      if (result.status === 410) {
+        ctx.status = 410;
+        return { data: result };
       }
       if (result.status === 409) {
         const orderId = Number(result.orderId);
@@ -626,7 +649,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     // What the bank is asked for. Wallet credit is a tender, so the gateway
     // only ever sees the remainder; with no wallet leg this is the full total
     // and every existing gateway call is byte-for-byte what it was.
-    const gatewayAmountToman = Number(paymentAllocation?.gatewayToman ?? totalAmount);
+    const gatewayAmountToman = paymentAllocation?.gatewayToman ??
+      gatewayExpectedAmountIrr(paymentAttempt, Math.round(totalAmount * 10)) / 10;
 
     strapi.log.info(`Processing payment for Order ${order.id}:`, {
       orderId: order.id,

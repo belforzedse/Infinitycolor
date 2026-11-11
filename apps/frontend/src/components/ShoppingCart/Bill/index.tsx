@@ -37,6 +37,8 @@ import toast from "react-hot-toast";
 import WalletService, { type WalletHold } from "@/services/wallet";
 import { holdsAreReconciling } from "@/utils/walletHolds";
 import { useCart } from "@/contexts/CartContext";
+import { useBaleCheckoutCart } from "@/contexts/BaleCheckoutCart";
+import BaleRecipientSummary from "./BaleRecipientSummary";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 import {
@@ -93,12 +95,12 @@ function isDeadCheckoutHold(
   return outcome === "expired" || outcome === "released" || outcome === "ineligible";
 }
 
-function abandonDeadCheckoutHold(attemptId?: string) {
-  const deadAttemptId = String(attemptId || readCheckoutAttemptId() || "").trim();
-  clearCheckoutIdentity();
-  const continuable = readContinuableCheckoutIdentity();
+function abandonDeadCheckoutHold(attemptId?: string, baleCheckoutId?: string) {
+  const deadAttemptId = String(attemptId || readCheckoutAttemptId(baleCheckoutId) || "").trim();
+  clearCheckoutIdentity(baleCheckoutId);
+  const continuable = readContinuableCheckoutIdentity(baleCheckoutId);
   if (deadAttemptId && continuable?.attemptId === deadAttemptId) {
-    clearContinuableCheckoutIdentity();
+    clearContinuableCheckoutIdentity(baleCheckoutId);
   }
 }
 
@@ -141,7 +143,7 @@ export type FormData = {
   notes?: string;
 };
 
-type Props = Record<string, never>;
+type Props = { baleReturnUrl?: string };
 
 /**
  * One-line destination for the inherited reserve address. Matches the label the
@@ -330,7 +332,27 @@ const checkoutErrorPresentation = (
   }
 };
 
-function ShoppingCartBillForm({}: Props) {
+function ShoppingCartBillForm({ baleReturnUrl }: Props) {
+  const regularCart = useCart();
+  const baleCart = useBaleCheckoutCart();
+  const baleCheckoutId = baleCart?.checkoutId;
+  const baleRecipient = baleCart?.recipient;
+  // A Bale link fixes the delivery address, so it never joins or opens a
+  // reserve shipment (whose address would replace the one given to the bot).
+  const reserveEnabled = RESERVE_FEATURE_ENABLED && !baleRecipient;
+  const discountStorageKey = baleCheckoutId ? `bale:${baleCheckoutId}:discountCode` : "discountCode";
+  const cartService = useMemo(() => baleCheckoutId ? {
+    ...CartService,
+    checkCartStock: (id?: string) => CartService.checkCartStock(id, baleCheckoutId),
+    getCheckoutQuote: (input: Parameters<typeof CartService.getCheckoutQuote>[0]) =>
+      CartService.getCheckoutQuote(input, baleCheckoutId),
+    finalizeCart: (input: Parameters<typeof CartService.finalizeCart>[0]) =>
+      CartService.finalizeCart(input, baleCheckoutId),
+    applyDiscount: (input: Parameters<typeof CartService.applyDiscount>[0]) =>
+      CartService.applyDiscount(input, baleCheckoutId),
+    getSnappEligible: (input: Parameters<typeof CartService.getSnappEligible>[0]) =>
+      CartService.getSnappEligible(input, baleCheckoutId),
+  } : CartService, [baleCheckoutId]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitInProgressRef = React.useRef(false);
@@ -406,7 +428,7 @@ function ShoppingCartBillForm({}: Props) {
         setIsAuthTokenReady(true);
         if (userLoading || currentUser || hasRedirected || token) return;
         setHasRedirected(true);
-        window.location.href = centralLoginUrl("/checkout");
+        window.location.href = centralLoginUrl(baleCheckoutId ? currentPath : "/checkout");
       })
       .catch(() => {
         if (!cancelled) setIsAuthTokenReady(true);
@@ -414,7 +436,7 @@ function ShoppingCartBillForm({}: Props) {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, userLoading, hasRedirected]);
+  }, [baleCheckoutId, currentUser, userLoading, hasRedirected]);
 
   const {
     register,
@@ -427,6 +449,18 @@ function ShoppingCartBillForm({}: Props) {
     defaultValues: {
       saveAddress: true,
       acceptTerms: false,
+      // The Bale bot already collected the recipient; the server enforces it too.
+      ...(baleRecipient
+        ? {
+            fullName: baleRecipient.fullName,
+            phoneNumber: baleRecipient.phone,
+            address: null,
+            province: { id: baleRecipient.provinceId, name: baleRecipient.provinceTitle },
+            city: { id: baleRecipient.cityId, name: baleRecipient.cityTitle },
+            postalCode: baleRecipient.postalCode,
+            fullAddress: baleRecipient.address,
+          }
+        : {}),
     },
   });
 
@@ -488,8 +522,9 @@ function ShoppingCartBillForm({}: Props) {
   // fallback to normal shipping is explained rather than silently applied.
   const [reserveWindowClosed, setReserveWindowClosed] = useState(false);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
-  const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice, isCartReady } =
-    useCart();
+  const { totalPrice, totalItems, cartItems, refreshCart } = baleCart ?? regularCart;
+  const { clearCart, setStockNotice } = regularCart;
+  const isCartReady = Boolean(baleCart) || regularCart.isCartReady;
   const cartItemsRef = React.useRef(cartItems);
   cartItemsRef.current = cartItems;
   const totalItemsRef = React.useRef(totalItems);
@@ -598,15 +633,15 @@ function ShoppingCartBillForm({}: Props) {
   // Persist/restore discount code
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("discountCode");
+      const saved = localStorage.getItem(discountStorageKey);
       if (saved) setDiscountCode(saved);
     } catch {}
   }, []);
 
   useEffect(() => {
     try {
-      if (discountCode) localStorage.setItem("discountCode", discountCode);
-      else localStorage.removeItem("discountCode");
+      if (discountCode) localStorage.setItem(discountStorageKey, discountCode);
+      else localStorage.removeItem(discountStorageKey);
     } catch {}
   }, [discountCode]);
 
@@ -618,7 +653,7 @@ function ShoppingCartBillForm({}: Props) {
   const activeReserveGroupIdRef = React.useRef<string | null>(null);
 
   const loadActiveReserve = React.useCallback(async () => {
-    if (!RESERVE_FEATURE_ENABLED) return;
+    if (!reserveEnabled) return;
     if (!currentUserId) return;
     try {
       const res = await OrderService.getActiveReserve();
@@ -650,7 +685,7 @@ function ShoppingCartBillForm({}: Props) {
       activeReserveGroupIdRef.current = null;
       setActiveReserve(null);
     }
-  }, [currentUserId]);
+  }, [currentUserId, reserveEnabled]);
 
   useEffect(() => {
     loadActiveReserve();
@@ -677,7 +712,7 @@ function ShoppingCartBillForm({}: Props) {
   }, [canLoadProtectedCheckoutData]);
 
   useEffect(() => {
-    const hasStoredCheckout = Boolean(readCheckoutIdentity()?.attemptId);
+    const hasStoredCheckout = Boolean(readCheckoutIdentity(baleCheckoutId)?.attemptId);
     // Credit covering the whole order needs no bank, so "no gateway is active"
     // is not the shopper's problem in that case.
     const needsBank = !walletContribution.coversTotal;
@@ -718,7 +753,7 @@ function ShoppingCartBillForm({}: Props) {
       const requestKey = discountPreviewKey;
       setDiscountPreviewLoading(true);
       try {
-        const res = await CartService.applyDiscount({
+        const res = await cartService.applyDiscount({
           code: discountCode,
           shippingId,
           ...shippingAddressContext,
@@ -732,7 +767,7 @@ function ShoppingCartBillForm({}: Props) {
           setDiscountCode(undefined);
           lastDiscountPreviewKeyRef.current = null;
           try {
-            localStorage.removeItem("discountCode");
+            localStorage.removeItem(discountStorageKey);
           } catch {}
           toast.error("کد تخفیف شما دیگر معتبر نیست و حذف شد");
         }
@@ -820,7 +855,7 @@ function ShoppingCartBillForm({}: Props) {
 
         requestSeq = snappEligibilitySeqRef.current + 1;
         snappEligibilitySeqRef.current = requestSeq;
-        const res = await CartService.getSnappEligible({
+        const res = await cartService.getSnappEligible({
           amount: snappayLegToman,
         });
         if (cancelled || snappEligibilitySeqRef.current !== requestSeq) return;
@@ -869,7 +904,7 @@ function ShoppingCartBillForm({}: Props) {
       // Name the attempt this checkout would replace, so credit held by the
       // shopper's own abandoned attempt is counted as spendable here instead
       // of locking them out of their balance until the reservation expires.
-      const res = await WalletService.getMyWallet(readCheckoutIdentity()?.attemptId);
+      const res = await WalletService.getMyWallet(readCheckoutIdentity(baleCheckoutId)?.attemptId);
       if (res?.success && res.data) {
         const balanceIrr = Number(res.data.balance || 0);
         const heldIrr = Number(res.data.heldBalance || 0);
@@ -937,6 +972,7 @@ function ShoppingCartBillForm({}: Props) {
   }, [totalPrice, totalItems, currentUser, liveCheckoutHold]);
 
   const clearCartSafely = async () => {
+    if (baleCheckoutId) return;
     try {
       await clearCart();
     } catch (clearError) {
@@ -1074,20 +1110,23 @@ function ShoppingCartBillForm({}: Props) {
    * button only dismissed the message. The payment-result page already polls and
    * reconciles; send the shopper there whenever the failed finalize named an order.
    */
+  const routerRef = React.useRef(router);
+  routerRef.current = router;
   const recoverInFlightPayment = React.useCallback(
     (errorCode: string | undefined, source: unknown, attemptId?: string) => {
       if (!isCheckoutStatusRecoveryCode(errorCode)) return false;
-      const recoveryOrderId = orderIdFromCheckoutFailure(source);
+      const recoveryOrderId = orderIdFromCheckoutFailure(source, baleCheckoutId);
       if (!recoveryOrderId) return false;
       const path = persistPendingPaymentResult(
         recoveryOrderId,
-        attemptId || readCheckoutAttemptId(),
+        attemptId || readCheckoutAttemptId(baleCheckoutId),
+        baleCheckoutId,
       );
       toast.success("در حال بررسی نتیجه پرداخت...", { id: "checkout-error" });
-      router.push(path);
+      routerRef.current.push(path);
       return true;
     },
-    [router],
+    [baleCheckoutId],
   );
 
   /**
@@ -1125,6 +1164,13 @@ function ShoppingCartBillForm({}: Props) {
         return false;
       }
 
+      if (baleCheckoutId) {
+        const message = "موجودی سفارش تغییر کرده است. از ربات بله لینک تازه بگیرید.";
+        if (options.announce) failPayment(message);
+        else setError(message);
+        return true;
+      }
+
       await refreshCartRef.current({ silent: true });
       if (hadNamedChanges) {
         setStockNoticeRef.current({ adjustedCartItemIds, removedNames });
@@ -1142,7 +1188,7 @@ function ShoppingCartBillForm({}: Props) {
       }
       return true;
     },
-    [failPayment, resolveStockItemName],
+    [baleCheckoutId, failPayment, resolveStockItemName],
   );
 
   const reconcileCheckoutStock = React.useCallback(async () => {
@@ -1153,7 +1199,10 @@ function ShoppingCartBillForm({}: Props) {
     if (stockReconcileInFlightRef.current) return;
     stockReconcileInFlightRef.current = true;
     try {
-      const stockResult = await CartService.checkCartStock(readCheckoutAttemptId());
+      const stockResult = await cartService.checkCartStock(readCheckoutAttemptId(baleCheckoutId));
+      if (recoverInFlightPayment(stockResult.errorCode, { orderId: stockResult.heldOrderId })) {
+        return;
+      }
       if (stockResult.errorCode === "RESERVATION_LOOKUP_FAILED") {
         return;
       }
@@ -1161,18 +1210,18 @@ function ShoppingCartBillForm({}: Props) {
       resumableCheckoutRef.current = resumable;
       if (resumable?.attemptId && resumable.quoteHash) {
         if (isDeadCheckoutHold(stockResult.reservationOutcome)) {
-          const namedId = readCheckoutAttemptId();
+          const namedId = readCheckoutAttemptId(baleCheckoutId);
           if (namedId && namedId !== resumable.attemptId) {
-            abandonDeadCheckoutHold(namedId);
+            abandonDeadCheckoutHold(namedId, baleCheckoutId);
           }
         }
-        hydrateCheckoutIdentityFromServer(resumable);
+        hydrateCheckoutIdentityFromServer(resumable, baleCheckoutId);
         setLiveCheckoutHold(true);
       } else if (isLiveCheckoutHold(stockResult.reservationOutcome)) {
         setLiveCheckoutHold(true);
       } else if (isDeadCheckoutHold(stockResult.reservationOutcome)) {
-        const attemptId = readCheckoutAttemptId();
-        abandonDeadCheckoutHold(attemptId);
+        const attemptId = readCheckoutAttemptId(baleCheckoutId);
+        abandonDeadCheckoutHold(attemptId, baleCheckoutId);
         setLiveCheckoutHold(false);
       } else {
         setLiveCheckoutHold(false);
@@ -1185,7 +1234,7 @@ function ShoppingCartBillForm({}: Props) {
     } finally {
       stockReconcileInFlightRef.current = false;
     }
-  }, [applyCheckoutStockCorrection, canLoadProtectedCheckoutData, isCartReady]);
+  }, [applyCheckoutStockCorrection, baleCheckoutId, canLoadProtectedCheckoutData, cartService, isCartReady, recoverInFlightPayment]);
 
   // Drop lines held by an earlier unpaid reservation as soon as checkout loads,
   // and again when bfcache restores the page after a gateway back-nav.
@@ -1209,8 +1258,8 @@ function ShoppingCartBillForm({}: Props) {
   const submitOrder = async (data: FormData, continuation?: CheckoutIdentity) => {
     setError(null);
 
-    const pendingIdentity = continuation || readCheckoutIdentity();
-    const continuableIdentity = continuation ? null : readContinuableCheckoutIdentity();
+    const pendingIdentity = continuation || readCheckoutIdentity(baleCheckoutId);
+    const continuableIdentity = continuation ? null : readContinuableCheckoutIdentity(baleCheckoutId);
     const cartIsEmpty = totalItems <= 0 || cartItems.length === 0;
     const resumeIdentity =
       continuation ||
@@ -1242,7 +1291,7 @@ function ShoppingCartBillForm({}: Props) {
 
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
-    if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !continuationCandidate) {
+    if (reserveEnabled && activeReserve && mergeChoice === null && !continuationCandidate) {
       trackCheckoutError(undefined, "validation");
       failPayment("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
       return;
@@ -1359,9 +1408,13 @@ function ShoppingCartBillForm({}: Props) {
       // Always re-checked: the shopper's previous attempt may itself be what
       // corrected the cart, and nothing is allowed to pay past this guard.
       checkoutOperationRef.current = "stock_check";
-      const stockValid = await CartService.checkCartStock(
+      const stockValid = await cartService.checkCartStock(
         continuationCandidate ? resumeIdentity?.attemptId : undefined,
       );
+      if (recoverInFlightPayment(stockValid.errorCode, { orderId: stockValid.heldOrderId })) {
+        paymentNavigationStarted = true;
+        return;
+      }
 
       if (stockValid.errorCode === "RESERVATION_LOOKUP_FAILED") {
         trackCheckoutError("RESERVATION_LOOKUP_FAILED");
@@ -1372,7 +1425,7 @@ function ShoppingCartBillForm({}: Props) {
       const holdIsLive = isLiveCheckoutHold(stockValid.reservationOutcome);
       if (continuationCandidate && !holdIsLive) {
         if (isDeadCheckoutHold(stockValid.reservationOutcome)) {
-          abandonDeadCheckoutHold(resumeIdentity?.attemptId);
+          abandonDeadCheckoutHold(resumeIdentity?.attemptId, baleCheckoutId);
           setLiveCheckoutHold(false);
           trackCheckoutError(undefined, "reservation_expired");
           failPayment(RESERVATION_EXPIRED_COPY);
@@ -1401,11 +1454,11 @@ function ShoppingCartBillForm({}: Props) {
 
       if (canContinuePendingCheckout && resumeIdentity) {
         if (resumeIdentity !== pendingIdentity) {
-          writeCheckoutIdentity(resumeIdentity);
+          writeCheckoutIdentity(resumeIdentity, baleCheckoutId);
         }
         checkoutAttemptId = resumeIdentity.attemptId;
         checkoutOperationRef.current = "finalize";
-        cartResponse = await CartService.finalizeCart({
+        cartResponse = await cartService.finalizeCart({
           gateway: resumeGateway,
           attemptId: resumeIdentity.attemptId,
           quoteHash: resumeIdentity.quoteHash,
@@ -1429,8 +1482,8 @@ function ShoppingCartBillForm({}: Props) {
       // credit and stock back. Named only when this checkout actually spends
       // wallet credit: an ordinary bank checkout must never disturb another
       // checkout the shopper still has open.
-      const supersedeCandidateId = spendsWalletCredit
-        ? readCheckoutIdentity()?.attemptId
+      const supersedeCandidateId = !baleCheckoutId && spendsWalletCredit
+        ? readCheckoutIdentity(baleCheckoutId)?.attemptId
         : undefined;
 
       const addressPayload =
@@ -1456,7 +1509,7 @@ function ShoppingCartBillForm({}: Props) {
             walletAmountToman: walletContribution.walletToman || undefined,
             supersedeAttemptId: supersedeCandidateId,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
-            discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
+            discountCode: discountCode || localStorage.getItem(discountStorageKey) || undefined,
             note: data.notes || undefined,
           }
         : {
@@ -1476,12 +1529,12 @@ function ShoppingCartBillForm({}: Props) {
             walletAmountToman: walletContribution.walletToman || undefined,
             supersedeAttemptId: supersedeCandidateId,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
-            discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
+            discountCode: discountCode || localStorage.getItem(discountStorageKey) || undefined,
             reserveShipping: reserveShipping || undefined,
           };
 
       checkoutOperationRef.current = "quote";
-      const quote = await CartService.getCheckoutQuote(finalizeData as never);
+      const quote = await cartService.getCheckoutQuote(finalizeData as never);
 
       // The quote now succeeds even when SnappPay's eligibility check fails, so
       // one slow gateway no longer takes the whole checkout down. The shopper
@@ -1519,10 +1572,10 @@ function ShoppingCartBillForm({}: Props) {
         cartSignature,
         cartIsEmpty: false,
         gateway: submittedGateway,
-      });
+      }, baleCheckoutId);
       checkoutAttemptId = resolvedAttempt.attemptId;
       checkoutOperationRef.current = "finalize";
-      cartResponse = await CartService.finalizeCart({
+      cartResponse = await cartService.finalizeCart({
         ...finalizeData,
         gateway: resolvedAttempt.gateway || submittedGateway,
         attemptId: checkoutAttemptId,
@@ -1580,14 +1633,14 @@ function ShoppingCartBillForm({}: Props) {
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
             if (mappedCheckoutError.clearAttempt) {
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
             }
           } else {
             switch (errorCode) {
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":
               displayError = "شروع پرداخت کامل نشد. می‌توانید دوباره تلاش کنید.";
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
               break;
             case "CART_EMPTY":
               displayError = "سبد خرید شما خالی است";
@@ -1664,7 +1717,7 @@ function ShoppingCartBillForm({}: Props) {
             case "CHECKOUT_QUOTE_REQUIRED":
               // The stored attempt id belongs to an older basket. Dropping it lets
               // the next tap start a clean attempt instead of failing the same way.
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
               displayError = "سفارش شما تازه‌سازی شد. لطفاً یک بار دیگر ثبت سفارش را بزنید.";
               break;
             case "PAYMENT_GATEWAY_DISABLED":
@@ -1680,7 +1733,7 @@ function ShoppingCartBillForm({}: Props) {
             case "ORDER_CANCELLED": {
               const leftover = leftoverCheckoutCopy(String(errorCode));
               if (leftover) displayError = leftover;
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
               break;
             }
             default:
@@ -1714,7 +1767,7 @@ function ShoppingCartBillForm({}: Props) {
 
       setOrderId(cartResponse.orderId);
       setOrderNumber(cartResponse.orderId.toString());
-      persistCheckoutOrder(cartResponse.orderId);
+      persistCheckoutOrder(cartResponse.orderId, baleCheckoutId);
 
       checkoutOperationRef.current = "handoff";
       if (cartResponse.redirectUrl && cartResponse.redirectUrl.trim() !== "") {
@@ -1725,20 +1778,22 @@ function ShoppingCartBillForm({}: Props) {
           properties: { gateway: resumeGateway },
         });
         toast.success("در حال انتقال به درگاه پرداخت...");
-        localStorage.setItem("pendingOrderId", cartResponse.orderId.toString());
-        localStorage.setItem("pendingRefId", cartResponse.refId || "");
-        if (checkoutAttemptId) {
-          localStorage.setItem(
-            "pendingPaymentAttemptId",
-            cartResponse.attemptId || checkoutAttemptId,
-          );
+        if (!baleCheckoutId) {
+          localStorage.setItem("pendingOrderId", cartResponse.orderId.toString());
+          localStorage.setItem("pendingRefId", cartResponse.refId || "");
+          if (checkoutAttemptId) {
+            localStorage.setItem(
+              "pendingPaymentAttemptId",
+              cartResponse.attemptId || checkoutAttemptId,
+            );
+          }
         }
 
         if (gateway === "wallet") {
           // Wallet settles immediately; show the same authoritative result surface
           // used by provider callbacks so fulfillment details stay consistent.
           await clearCartSafely();
-          clearCheckoutIdentity();
+          clearCheckoutIdentity(baleCheckoutId);
           setSubmitOrderStep(SubmitOrderStep.Success);
           router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
           paymentNavigationStarted = true;
@@ -1769,7 +1824,7 @@ function ShoppingCartBillForm({}: Props) {
         // result page once the backend reports the order paid.
         await clearCartSafely();
         if (gateway !== "snappay") {
-          clearCheckoutIdentity();
+          clearCheckoutIdentity(baleCheckoutId);
         }
         setSubmitOrderStep(SubmitOrderStep.Success);
         router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
@@ -1790,7 +1845,7 @@ function ShoppingCartBillForm({}: Props) {
         const errorMessage = responseData.message || err?.message;
 
         if (errorCode) {
-          if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId())) {
+          if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId(baleCheckoutId))) {
             paymentNavigationStarted = true;
             return;
           }
@@ -1799,7 +1854,7 @@ function ShoppingCartBillForm({}: Props) {
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
             if (mappedCheckoutError.clearAttempt) {
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
             }
           } else {
             switch (errorCode) {
@@ -1815,18 +1870,18 @@ function ShoppingCartBillForm({}: Props) {
                 nextTotal > 0
                   ? `مبلغ نهایی به ${nextTotal.toLocaleString("fa-IR")} تومان تغییر کرده است. لطفاً دوباره تلاش کنید.`
                   : "قیمت یا موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.";
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
               break;
             }
             case "CHECKOUT_ATTEMPT_CONFLICT":
               displayError =
                 "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.";
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
               break;
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":
               displayError = "شروع پرداخت کامل نشد. می‌توانید دوباره تلاش کنید.";
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
               break;
             case "CART_EMPTY":
               displayError = "سبد خرید شما خالی است";
@@ -1881,7 +1936,7 @@ function ShoppingCartBillForm({}: Props) {
             case "ORDER_CANCELLED": {
               const leftover = leftoverCheckoutCopy(String(errorCode));
               if (leftover) displayError = leftover;
-              clearCheckoutIdentity();
+              clearCheckoutIdentity(baleCheckoutId);
               break;
             }
             default:
@@ -1975,7 +2030,7 @@ function ShoppingCartBillForm({}: Props) {
         currentStep={submitOrderStep}
         steps={["Information", "Delivery", "Payment"]}
       /> */}
-      <CartStockNotice />
+      {!baleCheckoutId && <CartStockNotice />}
       {error && (
         <div
           id="checkout-form-error"
@@ -1984,6 +2039,11 @@ function ShoppingCartBillForm({}: Props) {
           data-testid="checkout-form-error"
         >
           <span>{error}</span>
+          {baleReturnUrl && (
+            <a href={baleReturnUrl} referrerPolicy="no-referrer" className="font-medium underline">
+              بازگشت به بله
+            </a>
+          )}
           {error !== EMPTY_CART_ERROR && (
             <button
               type="button"
@@ -2001,7 +2061,7 @@ function ShoppingCartBillForm({}: Props) {
         </div>
       )}
 
-      {RESERVE_FEATURE_ENABLED && activeReserve && (
+      {reserveEnabled && activeReserve && (
         <ReserveFulfillmentChoice
           reserve={activeReserve}
           value={mergeChoice}
@@ -2014,7 +2074,7 @@ function ShoppingCartBillForm({}: Props) {
         />
       )}
 
-      {RESERVE_FEATURE_ENABLED && reserveWindowClosed && (
+      {reserveEnabled && reserveWindowClosed && (
         <div
           role="status"
           data-testid="reserve-window-closed-notice"
@@ -2026,14 +2086,18 @@ function ShoppingCartBillForm({}: Props) {
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <ShoppingCartBillInformationForm
-          register={register}
-          errors={errors}
-          control={control}
-          setValue={setValue}
-          hideAddressFields={isMergeMode}
-          reserveRecipientName={activeReserve?.recipientName}
-        />
+        {baleRecipient ? (
+          <BaleRecipientSummary recipient={baleRecipient} />
+        ) : (
+          <ShoppingCartBillInformationForm
+            register={register}
+            errors={errors}
+            control={control}
+            setValue={setValue}
+            hideAddressFields={isMergeMode}
+            reserveRecipientName={activeReserve?.recipientName}
+          />
+        )}
 
         <div className="mb-20 flex flex-col gap-6">
           {isMergeMode ? (
@@ -2076,6 +2140,7 @@ function ShoppingCartBillForm({}: Props) {
                 discountCode={discountCode}
                 previewLoading={discountPreviewLoading}
                 addressContext={shippingAddressContext}
+                preferredShippingId={baleCart?.shippingMethodId ?? undefined}
                 walletToman={walletContribution.walletToman}
                 walletTender={
                   <WalletContribution
@@ -2096,7 +2161,7 @@ function ShoppingCartBillForm({}: Props) {
                 to someone who already has a group would invite a checkout that
                 `RESERVE_ALREADY_ACTIVE` is guaranteed to refuse.
               */}
-              {RESERVE_FEATURE_ENABLED && !activeReserve && (
+              {reserveEnabled && !activeReserve && (
                 <ReserveShipping
                   checked={reserveShipping}
                   onChange={setReserveShipping}
@@ -2104,7 +2169,7 @@ function ShoppingCartBillForm({}: Props) {
                   shippingCost={shippingToman}
                 />
               )}
-              {RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === "new" && (
+              {reserveEnabled && activeReserve && mergeChoice === "new" && (
                 <p className="rounded-control border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-neutral-600">
                   چون یک بسته رزروی فعال دارید، نمی‌توانید همزمان بسته رزروی دیگری باز کنید. این
                   سفارش جداگانه و با هزینه ارسال عادی فرستاده می‌شود.
@@ -2131,7 +2196,7 @@ function ShoppingCartBillForm({}: Props) {
               setDiscountCode(undefined);
               setDiscountPreview(undefined);
               try {
-                localStorage.removeItem("discountCode");
+                localStorage.removeItem(discountStorageKey);
               } catch {}
             }}
           />

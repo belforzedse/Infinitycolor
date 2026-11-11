@@ -6,6 +6,16 @@ import * as Sentry from "@sentry/node";
 import { factories } from "@strapi/strapi";
 import { getOrCreateUserCart, type GetUserCartOptions } from "./lib/get-user-cart";
 import { createOrderAndItems } from "./lib/order";
+import {
+  attemptMatchesCheckout,
+  baleCheckoutPaymentExists,
+  checkBaleCheckoutStock,
+  type BaleCheckoutScope,
+} from "./lib/bale-checkout-scope";
+import {
+  linkBaleCheckoutOrder,
+  lockOwnedBaleCheckout,
+} from "../../bale-checkout/services/handoff";
 import { computeCouponDiscount, findFirstActiveGeneralDiscount } from "./lib/discounts";
 import { claimLimitedDiscountUsage } from "./lib/discount-claim";
 import { computeTotals } from "./lib/financials";
@@ -127,7 +137,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     return checkCartStockOp(strapi as any, userId, options);
   },
 
-  async finalizeCartToOrder(userId: number, shippingData: any) {
+  async finalizeCartToOrder(userId: number, shippingData: any, bale?: BaleCheckoutScope) {
     const gateway = String(shippingData?.gateway || "")
       .trim()
       .toLowerCase();
@@ -150,6 +160,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       }
 
       const replay = await findPaymentAttempt(strapi as any, userId, attemptId);
+      if (replay && !attemptMatchesCheckout(replay, bale)) {
+        return { success: false, status: 409, errorCode: "CHECKOUT_ATTEMPT_CONFLICT" };
+      }
       if (replay) {
         const decision = await gateCheckoutResume(
           strapi as any,
@@ -242,7 +255,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
 
     // New purchases do not credit another attempt's reservation. Available
     // stock is Count minus reserved_count; shortfalls still remove/reduce.
-    const stockCheck = await this.checkCartStock(userId);
+    const stockCheck = bale ? checkBaleCheckoutStock(bale) : await this.checkCartStock(userId);
 
     if (stockCheck.errorCode === "RESERVATION_LOOKUP_FAILED") {
       return { ...RESERVATION_LOOKUP_FAILED_RESULT };
@@ -276,6 +289,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       }
       return {
         success: false,
+        ...(bale ? { errorCode: "BALE_CHECKOUT_STOCK_CHANGED" } : {}),
         message: "Stock issues prevent order creation",
         itemsRemoved: stockCheck.itemsRemoved,
         itemsAdjusted: stockCheck.itemsAdjusted,
@@ -307,6 +321,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       try {
         checkoutQuote = await createCheckoutQuote(strapi as any, userId, {
           cart,
+          baleCheckoutId: bale?.checkout.checkoutId,
           shippingId: shippingData.shippingId,
           shippingCost: shippingData.shippingCost,
           discountCode: shippingData.discountCode,
@@ -380,8 +395,22 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     try {
       // Start transaction to ensure all operations succeed or fail together
       const result = await strapi.db.transaction(async ({ trx }) => {
+        // Hold this row across creation and the order/attempt link. Competing
+        // submissions of one link can use different browser-generated IDs.
+        const lockedBale = bale
+          ? await lockOwnedBaleCheckout(trx, bale.checkout.checkoutId, userId)
+          : null;
+        if (bale && (!lockedBale || (!lockedBale.orderId && lockedBale.expiresAt.getTime() <= Date.now()))) {
+          return { success: false, status: 410, errorCode: "BALE_CHECKOUT_EXPIRED" };
+        }
+        if (lockedBale?.orderId && lockedBale.attemptId !== attemptId) {
+          return baleCheckoutPaymentExists(lockedBale.orderId);
+        }
         if (managesPaymentAttempt) {
           const replay = await findPaymentAttempt(strapi as any, userId, attemptId, trx);
+          if (replay && !attemptMatchesCheckout(replay, bale)) {
+            return { success: false, status: 409, errorCode: "CHECKOUT_ATTEMPT_CONFLICT" };
+          }
           if (replay) {
             const decision = await gateCheckoutResume(
               strapi as any,
@@ -562,6 +591,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           shippingData.analyticsCorrelationId
             ? { analyticsCorrelationId: String(shippingData.analyticsCorrelationId) }
             : undefined,
+          bale?.checkout.checkoutId,
         );
 
         strapi.log.info("Order and items created successfully", {
@@ -888,6 +918,10 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           } as any);
         }
 
+        if (lockedBale) {
+          await linkBaleCheckoutOrder(trx, lockedBale, Number(order.id), attemptId);
+        }
+
         // Note: Do not clear the cart here. Cart will be cleared only after
         // a successful payment gateway request in the controller.
 
@@ -908,6 +942,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         const replay = await findPaymentAttempt(strapi as any, userId, attemptId).catch(() => null);
         if (
           replay &&
+          attemptMatchesCheckout(replay, bale) &&
           (await gateCheckoutResume(
             strapi as any,
             userId,

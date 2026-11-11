@@ -17,7 +17,7 @@ export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
 
     // Load user's current cart with items
     const cartService = strapi.service("api::cart.cart");
-    const cart = await cartService.getUserCart(userId);
+    const cart = ctx.state?.baleCheckoutScope?.cart ?? (await cartService.getUserCart(userId));
     if (!cart?.cart_items?.length) {
       return ctx.badRequest("Cart is empty", {
         data: { success: false, error: "empty_cart" },

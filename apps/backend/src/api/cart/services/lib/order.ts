@@ -35,6 +35,7 @@ export const createOrderAndItems = async (
   },
   shippingSnapshot?: { code?: unknown; title?: unknown },
   analyticsData?: { analyticsCorrelationId?: string },
+  baleCheckoutId?: string,
 ) => {
   // Validate cart items before proceeding
   if (!cart.cart_items || cart.cart_items.length === 0) {
@@ -158,6 +159,7 @@ export const createOrderAndItems = async (
     ReservedUntil: reservation?.until,
     Date: new Date(),
     Type: "Automatic" as OrderType,
+    ...(baleCheckoutId ? { BaleCheckoutId: baleCheckoutId } : {}),
     shipping: shippingId,
     ShippingCost: finalShippingCost,
     ShippingMethodCode: shippingSnapshot?.code ? String(shippingSnapshot.code) : undefined,

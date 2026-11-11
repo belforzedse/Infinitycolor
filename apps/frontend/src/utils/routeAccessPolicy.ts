@@ -1,4 +1,5 @@
 const PRIVATE_ROUTE_PREFIXES = [
+  "/bale/checkout",
   "/account",
   "/addresses",
   "/cart",
