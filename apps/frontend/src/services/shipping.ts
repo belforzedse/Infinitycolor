@@ -1,4 +1,5 @@
 import { apiClient } from "./index";
+import { checkoutPath } from "./cart/checkout-path";
 import { CHECKOUT_MAX_RETRIES, CHECKOUT_REQUEST_TIMEOUT_MS } from "@/constants/api";
 
 export interface ShippingMethod {
@@ -105,13 +106,14 @@ export const getShippingMethods = async (
 
 export const getAvailableShippingOptions = async (
   context?: ShippingAddressContext,
+  baleCheckoutId?: string,
 ): Promise<ShippingOption[]> => {
   try {
     const response = await apiClient.post<{
       data?: { success?: boolean; methods?: ShippingOption[] };
       success?: boolean;
       methods?: ShippingOption[];
-    }>("/carts/shipping-options", context || {}, {
+    }>(checkoutPath("/carts/shipping-options", baleCheckoutId), context || {}, {
       timeout: CHECKOUT_REQUEST_TIMEOUT_MS,
       retries: CHECKOUT_MAX_RETRIES,
     });

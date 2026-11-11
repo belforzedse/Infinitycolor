@@ -182,15 +182,22 @@ async function incrementDiscountUsage(strapi: Strapi, order: any, trx: any): Pro
 
 /**
  * Takes stock for an order whose provider payment is already captured but whose
- * stock reservation clock has run out.
+ * stock reservation the expiry sweep has already ended (`Expired`/`Released`).
  *
  * The reservation TTL exists to stop *unpaid* checkouts pinning inventory. Once
  * SnappPay reports SETTLE the money is gone from the customer's credit, so the
  * TTL has no further authority: refusing here is how order 113678 ended up
  * Cancelled with 3,149,000 T captured (verify succeeded at 09:58:31, the sweep
- * cancelled the order at 09:59:00). We take the stock directly instead — there
- * is no reservation left to consume — and only park for an operator when the
- * goods genuinely are not there, which is the one case a human must decide.
+ * cancelled the order at 09:59:00). The sweep already returned the held units to
+ * `reserved_count`, so there is no reservation left to consume: we take the stock
+ * directly, and only park for an operator when the goods genuinely are not
+ * there, which is the one case a human must decide.
+ *
+ * Never call this for an order that is still `Reserved` with a lapsed clock: its
+ * units are still in `reserved_count`, and taking `count` beside them leaked one
+ * reserved unit per order until 2026-11-04 (12 stocks, found via
+ * reservation_status = 'Consumed' AND reserved_until IS NOT NULL). That case
+ * consumes the reservation with `allowLapsed` instead.
  *
  * Note the wallet leg is captured by the caller, *after* this, to keep the
  * global lock order orders -> payment_attempts -> product_stocks -> wallet. If
@@ -315,17 +322,28 @@ export async function finalizeSnappaySettlement(
 
     const reservationStatus = String(order.ReservationStatus || "");
     if (reservationStatus === "Reserved") {
-      const consumed = await consumeOrderReservation(strapi, ids.orderId, trx);
-      if (consumed.outcome === "consumed") {
-        await captureWalletLeg();
-      } else if (consumed.expired) {
-        // The clock ran out while the provider leg was in flight. See below:
-        // a captured payment outranks the reservation TTL.
-        await takeStockForSettledOrder(strapi, ids, order, trx);
-        await captureWalletLeg();
-      } else {
+      // A captured payment outranks the reservation TTL, so consume the hold even
+      // if its clock ran out while the provider leg was in flight. The order row
+      // is locked above, so the expiry sweep cannot end it underneath us; the
+      // units are still in reserved_count and must leave it with count.
+      const consumed = await consumeOrderReservation(strapi, ids.orderId, trx, {
+        allowLapsed: true,
+      });
+      if (consumed.outcome !== "consumed") {
         throw new Error("SNAPPAY_STOCK_FINALIZATION_FAILED:reservation_not_consumed");
       }
+      const reservedUntil = order.ReservedUntil ? new Date(order.ReservedUntil).getTime() : NaN;
+      if (Number.isFinite(reservedUntil) && reservedUntil < Date.now()) {
+        // Keep the rate of late settles measurable now that they complete normally.
+        strapi.log.warn(
+          `SnappPay settled after its reservation lapsed; hold consumed ${JSON.stringify({
+            orderId: ids.orderId,
+            attemptId: ids.attemptId,
+            reservedUntil: new Date(reservedUntil).toISOString(),
+          })}`,
+        );
+      }
+      await captureWalletLeg();
     } else if (reservationStatus === "Expired" || reservationStatus === "Released") {
       // The reservation was already swept before we got here. Same rule.
       await takeStockForSettledOrder(strapi, ids, order, trx);

@@ -6,6 +6,7 @@ import { useAtom } from "jotai";
 import { submitOrderStepAtom } from "@/atoms/Order";
 import ShoppingCartBillDeliveryOptions from "./DeliveryOptions";
 import { useCart } from "@/contexts/CartContext";
+import { useBaleCheckoutCart } from "@/contexts/BaleCheckoutCart";
 import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
 import { getAvailableShippingOptions } from "@/services/shipping";
 import type { Control, UseFormSetValue } from "react-hook-form";
@@ -76,6 +77,8 @@ type Props = {
    * and the figure inside the wallet card can never disagree.
    */
   walletToman?: number;
+  /** Shipping method chosen in the Bale bot, selected once it is offered here. */
+  preferredShippingId?: number;
 };
 
 function ShoppingCartBillDeliveryForm({
@@ -88,15 +91,18 @@ function ShoppingCartBillDeliveryForm({
   previewLoading,
   walletTender,
   walletToman = 0,
+  preferredShippingId,
 }: Props) {
+  const regularCart = useCart();
+  const baleCart = useBaleCheckoutCart();
+  const baleCheckoutId = baleCart?.checkoutId;
   const {
     totalPrice,
     totalItems,
     subtotalBeforeDiscount,
     cartDiscountTotal,
-    openDrawer,
     cartItems = [],
-  } = useCart();
+  } = baleCart ?? regularCart;
   const [, _setSubmitOrderStep] = useAtom(submitOrderStepAtom);
   const [shippingMethods, setShippingMethods] = useState<ShippingOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -144,7 +150,9 @@ function ShoppingCartBillDeliveryForm({
       try {
         setLoading(true);
         setError(null);
-        const methods = await getAvailableShippingOptions(addressContext);
+        const methods = baleCheckoutId
+          ? await getAvailableShippingOptions(addressContext, baleCheckoutId)
+          : await getAvailableShippingOptions(addressContext);
         if (requestSeqRef.current !== requestSeq) return;
         setShippingMethods(methods);
         // No default selection - let user choose explicitly
@@ -160,7 +168,16 @@ function ShoppingCartBillDeliveryForm({
     };
 
     fetchShippingMethods();
-  }, [addressContextKey, cartSignature, hasAddressContext, setValue]);
+  }, [addressContextKey, baleCheckoutId, cartSignature, hasAddressContext, setValue]);
+
+  const preferredAppliedRef = useRef(false);
+  useEffect(() => {
+    if (preferredAppliedRef.current || !preferredShippingId || selectedShipping) return;
+    const preferred = shippingMethods.find((method) => Number(method.id) === preferredShippingId);
+    if (!preferred) return;
+    preferredAppliedRef.current = true;
+    setValue("shippingMethod", preferred);
+  }, [preferredShippingId, selectedShipping, setValue, shippingMethods]);
 
   useEffect(() => {
     if (!selectedShipping) return;
@@ -180,10 +197,16 @@ function ShoppingCartBillDeliveryForm({
           <span className="text-base text-nowrap text-black lg:text-sm">
             {totalPrice.toLocaleString()} تومان
           </span>
-          <button className="flex items-center" type="button" onClick={openDrawer}>
-            <span className="text-sm text-nowrap text-infinity-primary lg:text-xs">مشاهده سبد خرید</span>
-            <ChevronLeftIcon className="h-4 w-4 text-infinity-primary" />
-          </button>
+          {baleCheckoutId ? (
+            <a href="#bale-checkout-items" className="whitespace-nowrap text-sm text-infinity-primary underline">
+              اقلام سفارش
+            </a>
+          ) : (
+            <button className="flex items-center" type="button" onClick={regularCart.openDrawer}>
+              <span className="text-sm text-nowrap text-infinity-primary lg:text-xs">مشاهده سبد خرید</span>
+              <ChevronLeftIcon className="h-4 w-4 text-infinity-primary" />
+            </button>
+          )}
         </div>
       </div>
 

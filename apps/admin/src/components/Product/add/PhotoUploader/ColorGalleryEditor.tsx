@@ -4,6 +4,7 @@ import { useState } from "react";
 import MediaLibraryModal from "@/components/MediaLibrary/MediaLibraryModal";
 import { useProductEditor } from "@/hooks/product/ProductEditorContext";
 import { useCan } from "@/hooks/useCan";
+import { useOwnProductMedia } from "@/hooks/product/useOwnProductMedia";
 import {
   toMediaDataItem,
   type MediaLibraryItem,
@@ -31,6 +32,7 @@ export default function ColorGalleryEditor({
   const canManageMedia = useCan("product.media.manage");
 
   const disabled = !canEdit || state.busy || !canManageMedia;
+  const ownMedia = useOwnProductMedia({ isEditMode: true, disabled });
 
   const handleSelect = (picked: MediaLibraryItem[]) => {
     if (disabled) return;
@@ -103,6 +105,7 @@ export default function ColorGalleryEditor({
           title={`تصاویر ${colorTitle}`}
           selection="multiple"
           allowedTypes={IMAGE_TYPES}
+          ownMedia={ownMedia}
           maxSelection={30}
           lockedIds={new Set(images.map((image) => image.id))}
           lockedLabel="انتخاب‌شده"

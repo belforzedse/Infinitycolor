@@ -1,10 +1,25 @@
 import { Strapi } from "@strapi/strapi";
+import { checkBaleCheckoutStock } from "../../services/lib/bale-checkout-scope";
 import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 export const checkStockHandler = (strapi: Strapi) => async (ctx: any) => {
   try {
     const userId = await resolveCustomerTargetUserId(ctx, strapi);
     if (!userId) return;
+
+    const bale = ctx.state?.baleCheckoutScope;
+    if (bale) {
+      return {
+        data: bale.checkout.orderId
+          ? {
+              success: true,
+              valid: false,
+              errorCode: "BALE_CHECKOUT_PAYMENT_EXISTS",
+              heldOrderId: bale.checkout.orderId,
+            }
+          : checkBaleCheckoutStock(bale),
+      };
+    }
 
     const rawAttemptId = ctx.request.query?.attemptId ?? ctx.request.body?.attemptId;
     const attemptId = String(rawAttemptId || "").trim();

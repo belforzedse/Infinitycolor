@@ -138,6 +138,20 @@ describe("OffersListHomePage", () => {
     });
   });
 
+  it("keeps newest products beyond position 20 reachable on desktop and mobile", () => {
+    const newest = Array.from({ length: 28 }, (_, index) => ({ id: index + 1 })) as ProductCardProps[];
+    const view = render(<OffersListHomePage icon={<span />} title="جدیدترین ها" products={newest} />);
+    for (let page = 0; page < 6; page++) {
+      fireEvent.click(screen.getByRole("button", { name: "صفحه بعدی محصولات" }));
+    }
+    expect(desktopVisibleIds("xl")).toEqual(["25", "26", "27", "28"]);
+    expect(renderedProductIds()).toHaveLength(28);
+    view.unmount();
+    setViewportWidth(390);
+    render(<OffersListHomePage icon={<span />} title="جدیدترین ها" products={newest} />);
+    expect(renderedProductIds()).toHaveLength(28);
+  });
+
   it("keeps every product in one swipeable track on narrow screens", () => {
     setViewportWidth(390);
     const view = render(

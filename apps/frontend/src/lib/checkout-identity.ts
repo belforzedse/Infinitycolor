@@ -24,46 +24,51 @@ export type ResumableCheckoutIdentity = {
   gateway?: string;
 };
 
-const readKey = (key: string): string => {
+const storageFor = (scope?: string) => scope ? window.sessionStorage : window.localStorage;
+const storageKey = (key: string, scope?: string) => scope ? `bale:${scope}:${key}` : key;
+
+const readKey = (key: string, scope?: string): string => {
   if (typeof window === "undefined") return "";
   try {
-    return String(window.localStorage.getItem(key) || "").trim();
+    return String(storageFor(scope).getItem(storageKey(key, scope)) || "").trim();
   } catch {
     return "";
   }
 };
 
-const writeKey = (key: string, value: string | undefined) => {
+const writeKey = (key: string, value: string | undefined, scope?: string) => {
   if (typeof window === "undefined") return;
   try {
     if (!value) {
-      window.localStorage.removeItem(key);
+      storageFor(scope).removeItem(storageKey(key, scope));
       return;
     }
-    window.localStorage.setItem(key, value);
+    storageFor(scope).setItem(storageKey(key, scope), value);
   } catch {
     // Private browsing / hardened modes can throw; callers fall through.
   }
 };
 
 const identityFromKeys = (
+  scope: string | undefined,
   attemptKey: string,
   quoteKey: string,
   orderKey: string,
   gatewayKey: string,
   signatureKey?: string,
 ): CheckoutIdentity | null => {
-  const attemptId = readKey(attemptKey);
-  const quoteHash = readKey(quoteKey);
+  const attemptId = readKey(attemptKey, scope);
+  const quoteHash = readKey(quoteKey, scope);
   if (!attemptId || !quoteHash) return null;
-  const orderId = readKey(orderKey) || undefined;
-  const gateway = readKey(gatewayKey) || undefined;
-  const cartSignature = signatureKey ? readKey(signatureKey) || undefined : undefined;
+  const orderId = readKey(orderKey, scope) || undefined;
+  const gateway = readKey(gatewayKey, scope) || undefined;
+  const cartSignature = signatureKey ? readKey(signatureKey, scope) || undefined : undefined;
   return { attemptId, quoteHash, orderId, gateway, cartSignature };
 };
 
-export function readCheckoutIdentity(): CheckoutIdentity | null {
+export function readCheckoutIdentity(scope?: string): CheckoutIdentity | null {
   return identityFromKeys(
+    scope,
     CHECKOUT_ATTEMPT_STORAGE_KEY,
     CHECKOUT_QUOTE_STORAGE_KEY,
     CHECKOUT_ORDER_STORAGE_KEY,
@@ -72,8 +77,9 @@ export function readCheckoutIdentity(): CheckoutIdentity | null {
   );
 }
 
-export function readContinuableCheckoutIdentity(): CheckoutIdentity | null {
+export function readContinuableCheckoutIdentity(scope?: string): CheckoutIdentity | null {
   return identityFromKeys(
+    scope,
     CONTINUABLE_ATTEMPT_STORAGE_KEY,
     CONTINUABLE_QUOTE_STORAGE_KEY,
     CONTINUABLE_ORDER_STORAGE_KEY,
@@ -81,45 +87,45 @@ export function readContinuableCheckoutIdentity(): CheckoutIdentity | null {
   );
 }
 
-export function writeCheckoutIdentity(identity: CheckoutIdentity): void {
-  writeKey(CHECKOUT_ATTEMPT_STORAGE_KEY, identity.attemptId);
-  writeKey(CHECKOUT_QUOTE_STORAGE_KEY, identity.quoteHash);
-  writeKey(CHECKOUT_ORDER_STORAGE_KEY, identity.orderId);
-  writeKey(CHECKOUT_GATEWAY_STORAGE_KEY, identity.gateway);
-  writeKey(CHECKOUT_SIGNATURE_STORAGE_KEY, identity.cartSignature);
+export function writeCheckoutIdentity(identity: CheckoutIdentity, scope?: string): void {
+  writeKey(CHECKOUT_ATTEMPT_STORAGE_KEY, identity.attemptId, scope);
+  writeKey(CHECKOUT_QUOTE_STORAGE_KEY, identity.quoteHash, scope);
+  writeKey(CHECKOUT_ORDER_STORAGE_KEY, identity.orderId, scope);
+  writeKey(CHECKOUT_GATEWAY_STORAGE_KEY, identity.gateway, scope);
+  writeKey(CHECKOUT_SIGNATURE_STORAGE_KEY, identity.cartSignature, scope);
 }
 
-function writeContinuableIdentity(identity: CheckoutIdentity): void {
-  writeKey(CONTINUABLE_ATTEMPT_STORAGE_KEY, identity.attemptId);
-  writeKey(CONTINUABLE_QUOTE_STORAGE_KEY, identity.quoteHash);
-  writeKey(CONTINUABLE_ORDER_STORAGE_KEY, identity.orderId);
-  writeKey(CONTINUABLE_GATEWAY_STORAGE_KEY, identity.gateway);
+function writeContinuableIdentity(identity: CheckoutIdentity, scope?: string): void {
+  writeKey(CONTINUABLE_ATTEMPT_STORAGE_KEY, identity.attemptId, scope);
+  writeKey(CONTINUABLE_QUOTE_STORAGE_KEY, identity.quoteHash, scope);
+  writeKey(CONTINUABLE_ORDER_STORAGE_KEY, identity.orderId, scope);
+  writeKey(CONTINUABLE_GATEWAY_STORAGE_KEY, identity.gateway, scope);
 }
 
-export function clearCheckoutIdentity(): void {
-  writeKey(CHECKOUT_ATTEMPT_STORAGE_KEY, undefined);
-  writeKey(CHECKOUT_QUOTE_STORAGE_KEY, undefined);
-  writeKey(CHECKOUT_ORDER_STORAGE_KEY, undefined);
-  writeKey(CHECKOUT_GATEWAY_STORAGE_KEY, undefined);
-  writeKey(CHECKOUT_SIGNATURE_STORAGE_KEY, undefined);
+export function clearCheckoutIdentity(scope?: string): void {
+  writeKey(CHECKOUT_ATTEMPT_STORAGE_KEY, undefined, scope);
+  writeKey(CHECKOUT_QUOTE_STORAGE_KEY, undefined, scope);
+  writeKey(CHECKOUT_ORDER_STORAGE_KEY, undefined, scope);
+  writeKey(CHECKOUT_GATEWAY_STORAGE_KEY, undefined, scope);
+  writeKey(CHECKOUT_SIGNATURE_STORAGE_KEY, undefined, scope);
 }
 
-export function clearContinuableCheckoutIdentity(): void {
-  writeKey(CONTINUABLE_ATTEMPT_STORAGE_KEY, undefined);
-  writeKey(CONTINUABLE_QUOTE_STORAGE_KEY, undefined);
-  writeKey(CONTINUABLE_ORDER_STORAGE_KEY, undefined);
-  writeKey(CONTINUABLE_GATEWAY_STORAGE_KEY, undefined);
+export function clearContinuableCheckoutIdentity(scope?: string): void {
+  writeKey(CONTINUABLE_ATTEMPT_STORAGE_KEY, undefined, scope);
+  writeKey(CONTINUABLE_QUOTE_STORAGE_KEY, undefined, scope);
+  writeKey(CONTINUABLE_ORDER_STORAGE_KEY, undefined, scope);
+  writeKey(CONTINUABLE_GATEWAY_STORAGE_KEY, undefined, scope);
 }
 
-export function persistCheckoutOrder(orderId: number | string | undefined): void {
+export function persistCheckoutOrder(orderId: number | string | undefined, scope?: string): void {
   const id = String(orderId || "").trim();
   if (!id) return;
-  const existing = readCheckoutIdentity();
+  const existing = readCheckoutIdentity(scope);
   if (!existing) {
-    writeKey(CHECKOUT_ORDER_STORAGE_KEY, id);
+    writeKey(CHECKOUT_ORDER_STORAGE_KEY, id, scope);
     return;
   }
-  writeCheckoutIdentity({ ...existing, orderId: id });
+  writeCheckoutIdentity({ ...existing, orderId: id }, scope);
 }
 
 /**
@@ -129,6 +135,7 @@ export function persistCheckoutOrder(orderId: number | string | undefined): void
  */
 export function hydrateCheckoutIdentityFromServer(
   resumable: ResumableCheckoutIdentity | null | undefined,
+  scope?: string,
 ): CheckoutIdentity | null {
   const attemptId = String(resumable?.attemptId || "").trim();
   const quoteHash = String(resumable?.quoteHash || "").trim();
@@ -140,25 +147,25 @@ export function hydrateCheckoutIdentityFromServer(
     orderId: String(resumable?.orderId || "").trim() || undefined,
     gateway: String(resumable?.gateway || "").trim() || undefined,
   };
-  const existing = readCheckoutIdentity();
+  const existing = readCheckoutIdentity(scope);
   if (existing?.attemptId === next.attemptId && existing.quoteHash === next.quoteHash) {
     const merged: CheckoutIdentity = {
       ...existing,
       orderId: existing.orderId || next.orderId,
       gateway: existing.gateway || next.gateway,
     };
-    writeCheckoutIdentity(merged);
+    writeCheckoutIdentity(merged, scope);
     return merged;
   }
   if (existing?.orderId && existing.attemptId && existing.attemptId !== next.attemptId) {
-    writeContinuableIdentity(existing);
+    writeContinuableIdentity(existing, scope);
   }
-  writeCheckoutIdentity(next);
+  writeCheckoutIdentity(next, scope);
   return next;
 }
 
-export function readCheckoutAttemptId(): string | undefined {
-  return readCheckoutIdentity()?.attemptId || readKey(CHECKOUT_ATTEMPT_STORAGE_KEY) || undefined;
+export function readCheckoutAttemptId(scope?: string): string | undefined {
+  return readCheckoutIdentity(scope)?.attemptId || readKey(CHECKOUT_ATTEMPT_STORAGE_KEY, scope) || undefined;
 }
 
 const newAttemptId = () =>
@@ -237,9 +244,9 @@ export function resolveCheckoutAttemptId(input: {
   cartSignature: string;
   cartIsEmpty: boolean;
   gateway?: string;
-}): ResolvedCheckoutAttempt {
+}, scope?: string): ResolvedCheckoutAttempt {
   const quoteHash = String(input.quoteHash || "").trim();
-  const existing = readCheckoutIdentity();
+  const existing = readCheckoutIdentity(scope);
   const existingGatewayMatches = checkoutGatewaysMatch(existing?.gateway, input.gateway);
 
   if (
@@ -255,13 +262,13 @@ export function resolveCheckoutAttemptId(input: {
     };
   }
 
-  const continuable = readContinuableCheckoutIdentity();
+  const continuable = readContinuableCheckoutIdentity(scope);
   if (
     continuable &&
     checkoutGatewaysMatch(continuable.gateway, input.gateway) &&
     (continuable.quoteHash === quoteHash || input.cartIsEmpty)
   ) {
-    writeCheckoutIdentity(continuable);
+    writeCheckoutIdentity(continuable, scope);
     return {
       attemptId: continuable.attemptId,
       quoteHash: continuable.quoteHash,
@@ -271,7 +278,7 @@ export function resolveCheckoutAttemptId(input: {
   }
 
   if (existing?.orderId && existing.attemptId) {
-    writeContinuableIdentity(existing);
+    writeContinuableIdentity(existing, scope);
   }
 
   const attemptId = newAttemptId();
@@ -281,13 +288,13 @@ export function resolveCheckoutAttemptId(input: {
       quoteHash,
       gateway: input.gateway,
       cartSignature: input.cartSignature,
-    });
+    }, scope);
   }
   return {
     attemptId,
     quoteHash,
     gateway: input.gateway,
     continueExisting: false,
-    supersedesAttemptId: existing?.attemptId || undefined,
+    supersedesAttemptId: scope ? undefined : existing?.attemptId || undefined,
   };
 }

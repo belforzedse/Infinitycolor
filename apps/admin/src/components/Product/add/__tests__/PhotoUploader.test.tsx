@@ -81,6 +81,23 @@ describe("PhotoUploader media library", () => {
     mockListMediaLibrary.mockReset();
   });
 
+  it("shows only this product's uploaded images in its product tab", async () => {
+    mockListMediaLibrary.mockResolvedValue(libraryResponse([libraryItem(20), libraryItem(2), libraryItem(1)]));
+    const store = createStore();
+    store.set(editProductDataAtom, {
+      Title: "محصول", CoverImage: null,
+      Media: Array.from({ length: 9 }, (_, index) => index + 1).map((id) => ({ id, attributes: { name: `file-${id}.webp`, url: `/uploads/file-${id}.webp`, mime: "image/webp" } })),
+      Files: [],
+    } as unknown as EditProductData);
+    render(<Provider store={store}><EditGallery /></Provider>);
+    fireEvent.click(screen.getByTestId("gallery-library-open"));
+    await waitFor(() => expect(screen.getAllByTestId("media-library-tile")).toHaveLength(3));
+    fireEvent.click(screen.getByRole("tab", { name: /تصاویر این محصول/ }));
+    expect(screen.getAllByTestId("media-library-tile").map((tile) => tile.getAttribute("data-file-id"))).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+    expect(screen.getAllByTestId("media-library-tile").every((tile) => tile.getAttribute("aria-disabled") === "true")).toBe(true);
+    expect(screen.queryByText("روی تصاویر کلیک کنید تا انتخاب شوند")).not.toBeInTheDocument();
+  });
+
   it("appends only new files to a saved product's gallery", async () => {
     mockListMediaLibrary.mockResolvedValue(
       libraryResponse([libraryItem(3), libraryItem(2), libraryItem(1)]),

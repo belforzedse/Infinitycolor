@@ -10,6 +10,7 @@ import type { PaymentAllocation } from "./payment-allocation";
 
 export type CheckoutQuoteInput = {
   cart?: any;
+  baleCheckoutId?: string;
   shippingId?: number | null;
   shippingCost?: number;
   discountCode?: string | null;
@@ -121,6 +122,7 @@ export async function createCheckoutQuote(
     version: 1,
     userId: Number(userId),
     cartId: Number(cart?.id || 0),
+    ...(input.baleCheckoutId ? { baleCheckoutId: input.baleCheckoutId } : {}),
     lineItems,
     shippingId: Number(input.shippingId || 0),
     shipping,

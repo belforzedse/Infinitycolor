@@ -6,6 +6,7 @@ import {
   readCheckoutIdentity,
   resolveCheckoutAttemptId,
   shouldResumeStoredCheckout,
+  writeCheckoutIdentity,
 } from "../checkout-identity";
 
 describe("checkout identity", () => {
@@ -306,4 +307,21 @@ describe("checkout identity", () => {
       gateway: "mellat",
     });
   });
+});
+
+it("separates Bale attempt keys from the regular cart and other links", () => {
+  writeCheckoutIdentity({ attemptId: "regular", quoteHash: "regular-quote" });
+  writeCheckoutIdentity({ attemptId: "bale-first", quoteHash: "first-quote" }, "first");
+  writeCheckoutIdentity({ attemptId: "bale-second", quoteHash: "second-quote" }, "second");
+  expect(readCheckoutIdentity()?.attemptId).toBe("regular");
+  expect(readCheckoutIdentity("first")?.attemptId).toBe("bale-first");
+  const replacement = resolveCheckoutAttemptId({
+    quoteHash: "new-quote",
+    cartSignature: "first",
+    cartIsEmpty: false,
+  }, "first");
+  expect(replacement.supersedesAttemptId).toBeUndefined();
+  expect(readCheckoutIdentity("second")?.attemptId).toBe("bale-second");
+  expect(readCheckoutIdentity()?.attemptId).toBe("regular");
+  sessionStorage.clear();
 });

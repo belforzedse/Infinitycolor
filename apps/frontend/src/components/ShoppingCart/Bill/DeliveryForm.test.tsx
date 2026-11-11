@@ -239,3 +239,43 @@ describe("ShoppingCartBillDeliveryForm discount + loading states", () => {
     });
   });
 });
+
+describe("ShoppingCartBillDeliveryForm with a Bale shipping choice", () => {
+  beforeEach(() => {
+    resetCartState();
+    mockedGetAvailableShippingOptions.mockReset();
+  });
+
+  it("selects the method the shopper chose in Bale once the address offers it", async () => {
+    const pishtaz = { id: 7, title: "پیشتاز", price: 45_000 } as never;
+    mockedGetAvailableShippingOptions.mockResolvedValue([
+      { id: 3, title: "تیپاکس", price: 60_000 } as never,
+      pishtaz,
+    ]);
+    const setValue = jest.fn();
+    await renderForm(
+      <ShoppingCartBillDeliveryForm
+        {...baseProps}
+        setValue={setValue as never}
+        addressContext={{ addressPayload: { shipping_city: 12 } }}
+        preferredShippingId={7}
+      />,
+    );
+    await waitFor(() => expect(setValue).toHaveBeenCalledWith("shippingMethod", pishtaz));
+  });
+
+  it("leaves the choice to the shopper when Bale's method is not offered", async () => {
+    mockedGetAvailableShippingOptions.mockResolvedValue([{ id: 3, title: "تیپاکس", price: 60_000 } as never]);
+    const setValue = jest.fn();
+    await renderForm(
+      <ShoppingCartBillDeliveryForm
+        {...baseProps}
+        setValue={setValue as never}
+        addressContext={{ addressPayload: { shipping_city: 12 } }}
+        preferredShippingId={7}
+      />,
+    );
+    await waitFor(() => expect(mockedGetAvailableShippingOptions).toHaveBeenCalled());
+    expect(setValue).not.toHaveBeenCalledWith("shippingMethod", expect.objectContaining({ id: 3 }));
+  });
+});

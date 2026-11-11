@@ -108,14 +108,28 @@ describe("SnappPay settlement when the reservation clock has lapsed", () => {
     expect(orderStatusUpdate(updates)).toEqual(expect.objectContaining({ Status: "Started" }));
   });
 
-  it("recovers when the clock lapses between the provider leg and the consume", async () => {
-    consumeMock.mockResolvedValue({ outcome: "skipped", reason: "expired", expired: true } as any);
+  it("consumes a still-Reserved hold whose clock lapsed instead of taking stock beside it", async () => {
+    // Taking count while the hold stayed in reserved_count leaked one reserved
+    // unit per order (12 prod stocks, 2026-11-04).
+    consumeMock.mockResolvedValue({ outcome: "consumed" } as any);
     const { strapi, updates } = createHarness("Reserved");
 
     await expect(finalizeSnappaySettlement(strapi, ids)).resolves.toEqual({ replayed: false });
 
-    expect(decrementMock).toHaveBeenCalledWith(strapi, 91, 2, expect.anything());
+    expect(consumeMock).toHaveBeenCalledWith(strapi, 22, expect.anything(), { allowLapsed: true });
+    expect(decrementMock).not.toHaveBeenCalled();
     expect(orderStatusUpdate(updates)).toEqual(expect.objectContaining({ Status: "Started" }));
+  });
+
+  it("does not settle a Reserved order whose hold could not be consumed", async () => {
+    consumeMock.mockResolvedValue({ outcome: "skipped", reason: "already_resolved", expired: false } as any);
+    const { strapi, updates } = createHarness("Reserved");
+
+    await expect(finalizeSnappaySettlement(strapi, ids)).rejects.toThrow(
+      "SNAPPAY_STOCK_FINALIZATION_FAILED:reservation_not_consumed",
+    );
+    expect(decrementMock).not.toHaveBeenCalled();
+    expect(orderStatusUpdate(updates)).toBeUndefined();
   });
 
   it("still consumes the reservation normally when it has not lapsed", async () => {

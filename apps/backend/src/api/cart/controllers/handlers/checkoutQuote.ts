@@ -28,6 +28,7 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
     const userId = await resolveCustomerTargetUserId(ctx, strapi);
     if (!userId) return;
 
+    const bale = ctx.state?.baleCheckoutScope;
     const selectedGateway = normalizeCheckoutGatewayCode(gateway);
     if (!selectedGateway || !(await isCheckoutGatewayEnabled(strapi, selectedGateway, userId))) {
       return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
@@ -65,6 +66,7 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
         userId,
         shippingId,
         { addressId, addressPayload },
+        ...(bale ? [{ cart: bale.cart }] : []),
       );
       shippingCost = Number(method.price || 0);
     }
@@ -81,6 +83,7 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
     let quote;
     try {
       quote = await createCheckoutQuote(strapi, userId, {
+        ...(bale ? { cart: bale.cart, baleCheckoutId: bale.checkout.checkoutId } : {}),
         shippingId: Number(shippingId),
         shippingCost,
         discountCode,

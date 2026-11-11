@@ -8,12 +8,14 @@ export const shippingPreviewHandler = (strapi: Strapi) => async (ctx: any) => {
     const userId = await resolveCustomerTargetUserId(ctx, strapi);
     if (!userId) return;
 
+    const bale = ctx.state?.baleCheckoutScope;
     const shippingService = strapi.service("api::shipping.shipping");
     if (shippingId) {
-      const method = await shippingService.calculateMethodForCart(userId, shippingId, {
-        addressId,
-        addressPayload,
-      });
+      const method = await shippingService.calculateMethodForCart(
+        userId, shippingId,
+        { addressId, addressPayload },
+        ...(bale ? [{ cart: bale.cart }] : []),
+      );
       ctx.body = {
         success: true,
         shipping: method.price,
@@ -22,10 +24,11 @@ export const shippingPreviewHandler = (strapi: Strapi) => async (ctx: any) => {
       return;
     }
 
-    const methods = await shippingService.getAvailableMethodsForCart(userId, {
-      addressId,
-      addressPayload,
-    });
+    const methods = await shippingService.getAvailableMethodsForCart(
+      userId,
+      { addressId, addressPayload },
+      ...(bale ? [{ cart: bale.cart }] : []),
+    );
     ctx.body = {
       success: true,
       shipping: null,

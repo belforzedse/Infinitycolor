@@ -50,6 +50,20 @@ export function productEditErrorCode(error: unknown): string | undefined {
   return e?.details?.code || e?.errorCode || e?.data?.errorCode;
 }
 
+const LEASE_CHECK_RETRY_SECONDS = 3;
+
+/**
+ * A failed status read or renewal whose cause says nothing about ownership:
+ * no response, a rejected/expired API token, a timeout, rate limiting or a
+ * server error. Lease codes (EDIT_*), 403 and other definite answers are not.
+ */
+function isTransientLeaseCheckFailure(error: unknown): boolean {
+  if (productEditErrorCode(error)?.startsWith("EDIT_")) return false;
+  const status = (error as { status?: unknown } | null)?.status;
+  if (typeof status !== "number" || status === 0) return true;
+  return status === 401 || status === 408 || status === 429 || status >= 500;
+}
+
 /** One tab/mount owns one in-memory proof. It is never stored in browser storage. */
 export class ProductEditorSession {
   readonly editorInstanceId = crypto.randomUUID();
@@ -144,7 +158,12 @@ export class ProductEditorSession {
           }>(
             `/products/${this.productId}/edit-lease/renew`,
             {},
-            { retries: 0, headers: this.headers(false) },
+            // Background check: a 401 here is retried, never a login redirect or toast.
+            {
+              retries: 0,
+              suppressAuthRedirect: true,
+              headers: this.headers(false),
+            },
           );
           if (this.disposed || this.state.phase !== "editing") return;
           this.setExpiry(response.data.lease);
@@ -155,12 +174,28 @@ export class ProductEditorSession {
         await this.readStatus();
       }
       this.schedule();
-    } catch {
-      if (!this.disposed && this.state.phase === "editing") {
+    } catch (error) {
+      if (this.disposed) return;
+      if (this.state.phase !== "editing") {
+        this.schedule();
+        return;
+      }
+      if (!isTransientLeaseCheckFailure(error)) {
         this.freeze(
           "ارتباط برای ادامه ویرایش تأیید نشد. تغییرات شما محفوظ است.",
         );
-      } else this.schedule();
+        return;
+      }
+      // A slow or flaky connection (an expired 60-second API token, a timeout,
+      // a dropped response) must not end the edit while the lease is still
+      // ours. Retry soon; the expiry timer still freezes at the last
+      // server-confirmed deadline, and the server checks the lease on every
+      // write, so nothing here extends ownership without confirmation.
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = setTimeout(
+        () => void this.tick(),
+        LEASE_CHECK_RETRY_SECONDS * 1000,
+      );
     }
   }
   async readStatus() {
@@ -169,6 +204,7 @@ export class ProductEditorSession {
       {
         cache: "no-store",
         retries: 0,
+        suppressAuthRedirect: true,
         ...(this.proof ? { headers: this.headers(false) } : {}),
       },
     );

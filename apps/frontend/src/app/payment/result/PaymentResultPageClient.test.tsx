@@ -149,6 +149,27 @@ describe("PaymentResultPageClient", () => {
     expect(push).toHaveBeenCalledWith("/orders/42");
   });
 
+  it.each([true, false])("returns to Bale without touching the regular cart (paid=%s)", async (paid) => {
+    const baleReturnUrl = "https://ble.ir/Infinitycolor_bot?start=checkout-ref";
+    localStorage.setItem("pendingCheckoutAttemptId", "regular-attempt");
+    localStorage.setItem("pendingOrderId", "41");
+    getStatus.mockResolvedValue(response({
+      status: paid ? "Started" : "Cancelled",
+      paymentStatus: paid ? "Succeeded" : "Failed",
+      isPaid: paid,
+      canRetry: !paid,
+      baleReturnUrl,
+    }));
+
+    render(<PaymentResultPageClient />);
+
+    expect(await screen.findByRole("link", { name: "بازگشت به بله" })).toHaveAttribute("href", baleReturnUrl);
+    expect(screen.queryByRole("button", { name: "بازگشت به سبد و تلاش دوباره" })).not.toBeInTheDocument();
+    expect(clearCart).not.toHaveBeenCalled();
+    expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe("regular-attempt");
+    expect(localStorage.getItem("pendingOrderId")).toBe("41");
+  });
+
   it("preserves the cart after failure and offers an explicit retry path", async () => {
     localStorage.setItem("pendingCheckoutAttemptId", "attempt-42");
     getStatus.mockResolvedValue(response({

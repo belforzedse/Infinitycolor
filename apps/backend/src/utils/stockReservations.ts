@@ -309,11 +309,22 @@ export async function releaseOrderReservation(
 export async function consumeOrderReservation(
   strapi: Strapi,
   orderId: number,
-  trx?: any
+  trx?: any,
+  options?: {
+    /**
+     * Consume a reservation that is still `Reserved` even though its
+     * `reserved_until` has passed. Only for a payment the provider has already
+     * captured: the TTL exists to stop unpaid checkouts pinning stock, so it has
+     * no authority once the money is taken. The held units are still counted in
+     * `reserved_count` until the expiry sweep runs, so they must be consumed
+     * (count and reserved_count together), never taken beside the reservation.
+     */
+    allowLapsed?: boolean;
+  }
 ): Promise<ConsumeOrderReservationResult> {
   if (!trx) {
     return strapi.db.transaction(async ({ trx }) =>
-      consumeOrderReservation(strapi, orderId, trx)
+      consumeOrderReservation(strapi, orderId, trx, options)
     );
   }
 
@@ -323,7 +334,7 @@ export async function consumeOrderReservation(
       orderId,
       "Consumed",
       trx,
-      { requireNotExpired: true }
+      { requireNotExpired: options?.allowLapsed !== true }
     );
     if (!transitioned) {
       // Either already processed, not reserved, or expired.

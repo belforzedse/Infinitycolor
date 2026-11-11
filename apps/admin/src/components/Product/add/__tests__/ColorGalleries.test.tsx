@@ -24,9 +24,9 @@ jest.mock("@/hooks/product/ProductEditorContext", () => ({
 jest.mock(
   "@/components/MediaLibrary/MediaLibraryModal",
   () =>
-    function MockMediaLibraryModal({ isOpen, onConfirm }: any) {
+    function MockMediaLibraryModal({ isOpen, onConfirm, ownMedia }: any) {
       return isOpen ? (
-        <button onClick={() => onConfirm(mockPicked)}>confirm library</button>
+        <><output data-testid="color-own-media">{ownMedia.map((item: MediaLibraryItem) => item.id).join(",")}</output><button onClick={() => onConfirm(mockPicked)}>confirm library</button></>
       ) : null;
     },
 );
@@ -135,6 +135,7 @@ it("loads one gallery per color, assigns/reorders/removes images independently a
   fireEvent.click(
     section("قرمز").getByRole("button", { name: "انتخاب یا آپلود تصویر" }),
   );
+  expect(section("قرمز").getByTestId("color-own-media")).toHaveTextContent("99");
   fireEvent.click(section("قرمز").getByText("confirm library"));
   fireEvent.click(section("قرمز").getByText("reorder photos"));
   mockPicked = [item(30)];

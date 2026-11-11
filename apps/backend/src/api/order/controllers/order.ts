@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { baleReturnUrl } from "../../bale-checkout/services/handoff";
 import { reconcileMellatOrder } from "../../payment-gateway/services/mellat-coordinator";
 import { captureOrderDeliverySnapshot, effectiveOrderDeliveryAddress } from "../../../utils/orderDeliverySnapshot";
 import { parseOrderAddressInput, OrderAddressValidationError } from "./helpers/adminUpdateAddress";
@@ -665,6 +666,9 @@ export default factories.createCoreController(
               ? Number(reserveGroup.rootOrder.id) !== Number(order.id)
               : undefined,
             orderId: order.id,
+            ...((order as any).BaleCheckoutId ? {
+              baleReturnUrl: baleReturnUrl((order as any).BaleCheckoutId),
+            } : {}),
             status: order.Status,
             paymentStatus,
             isPaid,

@@ -1,3 +1,4 @@
+import { checkoutPath } from "./checkout-path";
 import type { PaymentCapabilities } from "@repo/api/commerce";
 import { apiClient } from "../index";
 import type {
@@ -48,13 +49,14 @@ const isReservationLookupFailed = (error: unknown): error is ReservationLookupFa
 
 export const checkCartStock = async (
   attemptId?: string,
+  baleCheckoutId?: string,
 ): Promise<CartStockCheckResponse> => {
   const normalizedAttemptId = String(attemptId || "").trim();
   const query = normalizedAttemptId
     ? `?attemptId=${encodeURIComponent(normalizedAttemptId)}`
     : "";
   try {
-    const response = await apiClient.get<CartStockCheckResponse>(`/carts/check-stock${query}`);
+    const response = await apiClient.get<CartStockCheckResponse>(checkoutPath(`/carts/check-stock${query}`, baleCheckoutId));
     return unwrap<CartStockCheckResponse>(response);
   } catch (error: unknown) {
     if (!isReservationLookupFailed(error)) throw error;
@@ -71,8 +73,9 @@ export const checkCartStock = async (
 
 export const getCheckoutQuote = async (
   data: CheckoutQuoteRequest,
+  baleCheckoutId?: string,
 ): Promise<CheckoutQuoteResponse> => {
-  const response = await apiClient.post<CheckoutQuoteResponse>("/carts/quote", data);
+  const response = await apiClient.post<CheckoutQuoteResponse>(checkoutPath("/carts/quote", baleCheckoutId), data);
   return unwrap<CheckoutQuoteResponse>(response);
 };
 
@@ -82,6 +85,7 @@ export const getSnappEligible = async (
     shippingId?: number;
     discountCode?: string;
   } = {},
+  baleCheckoutId?: string,
 ): Promise<SnappEligibilityResponse> => {
   const qs = new URLSearchParams();
   if (params.amount) qs.set("amount", String(params.amount));
@@ -94,7 +98,7 @@ export const getSnappEligible = async (
 
 
   try {
-    const response = await apiClient.get<SnappEligibilityResponse>(url, {
+    const response = await apiClient.get<SnappEligibilityResponse>(checkoutPath(url, baleCheckoutId), {
       timeout: CHECKOUT_REQUEST_TIMEOUT_MS,
       retries: CHECKOUT_MAX_RETRIES,
     });

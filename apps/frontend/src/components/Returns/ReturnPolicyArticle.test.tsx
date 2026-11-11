@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import ReturnPolicyArticle from "./ReturnPolicyArticle";
-import { RETURNS_CLAUSES, RETURNS_HEADING, RETURNS_INTRO, RETURNS_WHATSAPP } from "@/constants/legal";
+import { RETURNS_CLAUSES, RETURNS_HEADING, RETURNS_INTRO, RETURNS_SUPPORT_NUMBER } from "@/constants/legal";
 
 describe("ReturnPolicyArticle", () => {
   it("renders the exchange and return rules as numbered clauses", () => {
@@ -16,10 +16,11 @@ describe("ReturnPolicyArticle", () => {
     expect(screen.getByText(RETURNS_CLAUSES[4].notice ?? "")).toBeInTheDocument();
   });
 
-  it("links the support WhatsApp number in the pre-shipment clause", () => {
+  it("links the Bale support number in the pre-shipment clause", () => {
     render(<ReturnPolicyArticle />);
 
-    const whatsappLink = screen.getByRole("link", { name: RETURNS_WHATSAPP });
-    expect(whatsappLink).toHaveAttribute("href", `https://wa.me/98${RETURNS_WHATSAPP.slice(1)}`);
+    const supportLink = screen.getByRole("link", { name: RETURNS_SUPPORT_NUMBER });
+    expect(supportLink).toHaveAttribute("href", `tel:+98${RETURNS_SUPPORT_NUMBER.slice(1)}`);
+    expect(screen.queryByText(/واتساپ/)).not.toBeInTheDocument();
   });
 });

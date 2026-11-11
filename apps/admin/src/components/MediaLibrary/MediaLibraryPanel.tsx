@@ -452,7 +452,7 @@ export default function MediaLibraryPanel({
 
       <div className="flex shrink-0 flex-col gap-3 border-t border-slate-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-6">
         <div className="flex min-w-0 items-center gap-2">
-          {selected.length === 0 ? (
+          {selected.length === 0 && tab === "own" && ownMedia.every((item) => lockedIds?.has(item.id) || unavailableReason(item)) ? null : selected.length === 0 ? (
             <span className="text-xs text-slate-400">
               {selection === "multiple"
                 ? "روی تصاویر کلیک کنید تا انتخاب شوند"

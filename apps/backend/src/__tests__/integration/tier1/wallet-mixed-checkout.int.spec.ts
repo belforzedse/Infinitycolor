@@ -188,7 +188,11 @@ async function quoteAndFinalize(
   return { quote, result, context };
 }
 
-async function settleMixedSnappayOrder(shopper: { user: { id: number } }, attemptName: string) {
+async function settleMixedSnappayOrder(
+  shopper: { user: { id: number } },
+  attemptName: string,
+  opts: { beforeSettle?: (orderId: number) => Promise<void> } = {},
+) {
   const snappayOrchestrator = strapi.service("api::payment-gateway.snappay-orchestrator");
   const originalEligibility = snappayOrchestrator.checkEligibility;
   snappayOrchestrator.checkEligibility = jest.fn().mockResolvedValue(undefined);
@@ -221,6 +225,7 @@ async function settleMixedSnappayOrder(shopper: { user: { id: number } }, attemp
     where: { id: providerTx.id },
     data: { GatewayStatus: "SETTLE" },
   });
+  await opts.beforeSettle?.(Number(result.order.id));
   await finalizeSnappaySettlement(strapi, {
     attemptId: Number(attempt.id),
     orderId: Number(result.order.id),
@@ -231,6 +236,53 @@ async function settleMixedSnappayOrder(shopper: { user: { id: number } }, attemp
 
   return { result, attempt, providerTx };
 }
+
+const stockOfVariation = async (variationId: number) => {
+  const result = await strapi.db.connection.raw(
+    `SELECT ps.count, COALESCE(ps.reserved_count, 0) AS reserved_count
+       FROM product_stocks ps
+       JOIN product_variations_product_stock_links l ON l.product_stock_id = ps.id
+      WHERE l.product_variation_id = ?`,
+    [variationId],
+  );
+  const row = result.rows[0];
+  return { count: Number(row.count), reserved: Number(row.reserved_count) };
+};
+
+describe("SnappPay settlement after the reservation clock lapsed", () => {
+  it("consumes the still-held reservation, leaving no reserved unit behind", async () => {
+    // Prod 2026-11-04: a settle that landed after reserved_until but before the
+    // sweep took count beside the hold, so reserved_count kept one unit forever.
+    const shopper = await seedShopper();
+    const { result } = await settleMixedSnappayOrder(shopper, "snappay-lapsed", {
+      beforeSettle: async (orderId) => {
+        expect(await stockOfVariation(shopper.variation.id)).toEqual({ count: 5, reserved: 1 });
+        await strapi.db.connection.raw(
+          `UPDATE orders SET reserved_until = ? WHERE id = ? AND reservation_status = 'Reserved'`,
+          [new Date(Date.now() - 60_000), orderId],
+        );
+      },
+    });
+
+    expect(await stockOfVariation(shopper.variation.id)).toEqual({ count: 4, reserved: 0 });
+    const order = (
+      await strapi.db.connection.raw(
+        `SELECT status, reservation_status, reserved_until FROM orders WHERE id = ?`,
+        [result.order.id],
+      )
+    ).rows[0];
+    expect(order).toMatchObject({
+      status: "Started",
+      reservation_status: "Consumed",
+      reserved_until: null,
+    });
+    // The wallet leg is still captured exactly once.
+    expect(await wallet(shopper.user.id)).toMatchObject({
+      balanceIrr: START_BALANCE_IRR - WALLET_TOMAN * 10,
+      heldIrr: 0,
+    });
+  });
+});
 
 describe("mixed wallet + gateway checkout", () => {
   it("settles wallet + SnappPay and refunds only the wallet-funded leg locally", async () => {

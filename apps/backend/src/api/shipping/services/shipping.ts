@@ -133,7 +133,8 @@ export default factories.createCoreService("api::shipping.shipping", ({ strapi }
     }
 
     const roleTypes = new Set<string>();
-    try {
+    // A Bale bot quote has no account yet (userId 0): role rules cannot match.
+    if (Number(userId) > 0) try {
       const user: any = await strapi.entityService.findOne(
         "plugin::users-permissions.user",
         userId,

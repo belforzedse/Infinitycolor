@@ -1,3 +1,4 @@
+import { checkoutPath } from "./checkout-path";
 import { apiClient } from "../index";
 import { unwrap } from "./helpers/response";
 import type { FinalizeCartRequest, FinalizeCartResponse, CartItemResponse, GuestCartMergeResponse } from "./types/cart";
@@ -71,8 +72,8 @@ export const removeCartItem = async (cartItemId: number): Promise<{ message: str
   return unwrap<{ message: string }>(response);
 };
 
-export const finalizeCart = async (data: FinalizeCartRequest): Promise<FinalizeCartResponse> => {
-  const response = await apiClient.post<FinalizeCartResponse>("/carts/finalize", data);
+export const finalizeCart = async (data: FinalizeCartRequest, baleCheckoutId?: string): Promise<FinalizeCartResponse> => {
+  const response = await apiClient.post<FinalizeCartResponse>(checkoutPath("/carts/finalize", baleCheckoutId), data);
   return unwrap<FinalizeCartResponse>(response);
 };
 
