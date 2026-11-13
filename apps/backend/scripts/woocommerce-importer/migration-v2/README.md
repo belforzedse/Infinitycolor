@@ -1,8 +1,8 @@
 # WordPress migration v2
 
-This runner migrates the approved Infinity Color WordPress/WooCommerce data into
-the production Strapi API. Execute network-heavy commands on `alp-prod`; do not
-run them from a developer workstation.
+This runner imports WordPress and WooCommerce data into the Strapi API. Its
+fixtures and test suite run locally. To execute a migration, configure a source
+and destination that you operate.
 
 ## Safety contract
 

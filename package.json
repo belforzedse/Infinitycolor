@@ -15,10 +15,6 @@
     "test": "turbo run test",
     "test:admin": "pnpm --filter @repo/admin test",
     "check-types": "turbo run check-types",
-    "install:workspace": "bash .cursor/scripts/pnpm-install-with-fallback.sh",
-    "install:frontend": "bash .cursor/scripts/pnpm-install-with-fallback.sh --filter @repo/frontend...",
-    "install:admin": "bash .cursor/scripts/pnpm-install-with-fallback.sh --filter @repo/admin...",
-    "install:social": "bash .cursor/scripts/pnpm-install-with-fallback.sh --filter @repo/social...",
     "doctor": "node scripts/dev-doctor.mjs",
     "seed:local": "node scripts/seed-local-demo.mjs",
     "onboarding:test": "node --test scripts/dev-doctor.test.mjs scripts/seed-local-demo.test.mjs"

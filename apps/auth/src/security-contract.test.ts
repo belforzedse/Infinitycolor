@@ -636,31 +636,6 @@ test("Better Auth source freezes absolute sessions and the native secure cookie 
   assert.doesNotMatch(source, /useSecureCookies:\s*false/);
 });
 
-test("the production proxy chain preserves only the sanitized client IP for auth", () => {
-  const publicNginx = fs.readFileSync(
-    path.resolve(process.cwd(), "../../deploy/production/nginx.conf"),
-    "utf8",
-  );
-  const gatewayNginx = fs.readFileSync(
-    path.resolve(process.cwd(), "../../deploy/production/gateway.conf"),
-    "utf8",
-  );
-  const compose = fs.readFileSync(
-    path.resolve(process.cwd(), "../../deploy/production/compose.yaml"),
-    "utf8",
-  );
-
-  assert.match(
-    publicNginx,
-    /server_name auth\.infinitycolor\.co;[\s\S]{0,800}proxy_set_header X-Real-IP \$remote_addr;/,
-  );
-  assert.match(
-    gatewayNginx,
-    /server_name auth\.infinitycolor\.co;[\s\S]{0,800}proxy_set_header X-Real-IP \$http_x_real_ip;/,
-  );
-  assert.match(compose, /127\.0\.0\.1:\$\{GATEWAY_PORT\}:8080/);
-});
-
 test("profile completion requires the session and sanitized flow, not pre-auth phone", () => {
   const plugin = fs.readFileSync(
     path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),

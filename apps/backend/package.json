@@ -9,7 +9,6 @@
     "name": "bel4"
   },
   "scripts": {
-    "add:variations": "node scripts/add-product-variations.js",
     "build": "strapi build",
     "build:prod": "cross-env NODE_ENV=production strapi build",
     "debug:mellat": "node scripts/debug-mellat.js",
@@ -30,7 +29,6 @@
     "import:sync:verify": "node scripts/woocommerce-importer/catalog-sync.js verify",
     "import:stories": "node scripts/woocommerce-importer/import-stories.js",
     "retry:images": "node scripts/retry-failed-images.js",
-    "seed:admin": "node scripts/seed-admin-user.js",
     "seed:e2e": "node scripts/seed-e2e-storefront.js",
     "seed:report-fixtures": "node scripts/seed-report-fixtures.js",
     "regenerate:slugs": "node scripts/regenerate-product-slugs.js",
@@ -41,7 +39,6 @@
     "worker:prod": "NODE_ENV=production node dist/src/queue/worker.js",
     "scheduler": "tsx src/queue/scheduler.ts",
     "scheduler:prod": "NODE_ENV=production node dist/src/queue/scheduler.js",
-    "test:api": "node scripts/test-api-connection.js",
     "test": "jest --detectOpenHandles",
     "test:unit": "jest --detectOpenHandles",
     "test:integration": "jest --config jest.integration.config.js --runInBand --detectOpenHandles",
